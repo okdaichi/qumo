@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"sync"
 	"sync/atomic"
 
 	"github.com/okdaichi/gomoqt/moqt"
@@ -9,13 +10,18 @@ import (
 var GroupCacheCount = 8
 
 type groupCache struct {
+	mu     sync.Mutex // Protects frames slice for defensive programming
 	seq    moqt.GroupSequence
 	frames []*moqt.Frame
 }
 
 // Append appends a frame to the group cache.
 // The frame is cloned and stored in the cache.
+// Thread-safe: can be called concurrently (though typically called from single goroutine).
 func (gc *groupCache) append(f *moqt.Frame) {
+	gc.mu.Lock()
+	defer gc.mu.Unlock()
+
 	clone := DefaultFramePool.Get()
 
 	// Clone the frame because the frame will be reused.
@@ -25,7 +31,12 @@ func (gc *groupCache) append(f *moqt.Frame) {
 	gc.frames = append(gc.frames, clone)
 }
 
+// next returns the frame at the given index.
+// Thread-safe: can be called concurrently.
 func (gc *groupCache) next(index int) *moqt.Frame {
+	gc.mu.Lock()
+	defer gc.mu.Unlock()
+
 	if index < 0 || index >= len(gc.frames) {
 		return nil
 	}
