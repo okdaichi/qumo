@@ -8,7 +8,8 @@ import (
 	"github.com/okdaichi/gomoqt/moqt"
 )
 
-var SleepDuration = 100 * time.Microsecond
+// Optimized timeout for best CPU/latency tradeoff (based on benchmarks)
+const NotifyTimeout = 1 * time.Millisecond
 
 func Serve(w moqt.SetupResponseWriter, r *moqt.SetupRequest) {
 	sess, err := moqt.Accept(w, r, nil)
@@ -86,10 +87,10 @@ func (h *RelayHandler) subscribe(name moqt.TrackName) *trackDistributor {
 
 func newTrackRelayer(src *moqt.TrackReader, onClose func()) *trackDistributor {
 	relayer := &trackDistributor{
-		src:     src,
-		ring:    newGroupRing(),
-		notify:  make(chan struct{}, 1),
-		onClose: onClose,
+		src:         src,
+		ring:        newGroupRing(),
+		subscribers: make(map[chan struct{}]struct{}),
+		onClose:     onClose,
 	}
 
 	go relayer.relay(context.Background())
@@ -102,12 +103,18 @@ type trackDistributor struct {
 
 	ring *groupRing
 
-	notify chan struct{}
+	// Broadcast channel pattern: each subscriber gets its own notification channel
+	mu          sync.RWMutex
+	subscribers map[chan struct{}]struct{}
 
 	onClose func()
 }
 
 func (r *trackDistributor) serveTrack(tw *moqt.TrackWriter) {
+	// Subscribe to notifications
+	notify := r.subscribe()
+	defer r.unsubscribe(notify)
+
 	last := r.ring.head()
 	if last > 0 {
 		last--
@@ -154,12 +161,12 @@ func (r *trackDistributor) serveTrack(tw *moqt.TrackWriter) {
 			continue
 		}
 
-		// Wait for new data
+		// Wait for new data with optimized timeout
 		select {
-		case <-r.notify:
+		case <-notify:
 			// New group available, retry immediately
-		case <-time.After(SleepDuration):
-			// Timeout fallback
+		case <-time.After(NotifyTimeout):
+			// Timeout fallback (1ms for optimal CPU/latency balance)
 		case <-tw.Context().Done():
 			return
 		}
@@ -169,6 +176,24 @@ func (r *trackDistributor) serveTrack(tw *moqt.TrackWriter) {
 func (r *trackDistributor) close() {
 	r.src.Close()
 	r.onClose()
+}
+
+// subscribe registers a new subscriber and returns its notification channel
+func (r *trackDistributor) subscribe() chan struct{} {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	ch := make(chan struct{}, 1) // Buffered to prevent blocking
+	r.subscribers[ch] = struct{}{}
+
+	return ch
+}
+
+// unsubscribe removes a subscriber
+func (r *trackDistributor) unsubscribe(ch chan struct{}) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.subscribers, ch)
 }
 
 func (r *trackDistributor) relay(ctx context.Context) {
@@ -182,10 +207,16 @@ func (r *trackDistributor) relay(ctx context.Context) {
 
 		r.ring.add(gr)
 
-		// Notify waiting subscribers (non-blocking)
-		select {
-		case r.notify <- struct{}{}:
-		default:
+		// Broadcast notification to all subscribers
+		r.mu.RLock()
+		for ch := range r.subscribers {
+			select {
+			case ch <- struct{}{}:
+				// Notification sent
+			default:
+				// Channel full, subscriber will wake up on timeout
+			}
 		}
+		r.mu.RUnlock()
 	}
 }
