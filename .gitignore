@@ -9,7 +9,6 @@
 *.dylib
 
 # Project binaries
-qumo-relay
 bin/
 
 # Test binary, built with `go test -c`

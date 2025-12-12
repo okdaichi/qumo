@@ -16,11 +16,11 @@ import (
 )
 
 type config struct {
-	Address  string
-	CertFile string
-	KeyFile  string
-	Upstream string
-	Relay    relay.Config
+	Address     string
+	CertFile    string
+	KeyFile     string
+	Upstream    string
+	RelayConfig relay.Config
 }
 
 func main() {
@@ -40,8 +40,8 @@ func main() {
 	}
 
 	// Apply relay configuration
-	relay.NewFrameCapacity = config.Relay.FrameCapacity
-	relay.GroupCacheSize = config.Relay.GroupCacheSize
+	relay.NewFrameCapacity = config.RelayConfig.FrameCapacity
+	relay.GroupCacheSize = config.RelayConfig.GroupCacheSize
 
 	log.Printf("Starting qumo-relay server on %s", config.Address)
 
@@ -117,7 +117,7 @@ func loadConfig(filename string) (*config, error) {
 		CertFile: ymlConfig.Server.CertFile,
 		KeyFile:  ymlConfig.Server.KeyFile,
 		Upstream: ymlConfig.Relay.Upstream,
-		Relay: relay.Config{
+		RelayConfig: relay.Config{
 			Upstream:       ymlConfig.Relay.Upstream,
 			FrameCapacity:  ymlConfig.Relay.FrameCapacity,
 			GroupCacheSize: ymlConfig.Relay.GroupCacheSize,
