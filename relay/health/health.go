@@ -42,16 +42,25 @@ func (h *StatusHandler) SetUpstreamRequired(required bool) {
 
 // IncrementConnections increments the active connection count
 func (h *StatusHandler) IncrementConnections() {
+	if h == nil {
+		return
+	}
 	h.activeConnections.Add(1)
 }
 
 // DecrementConnections decrements the active connection count
 func (h *StatusHandler) DecrementConnections() {
+	if h == nil {
+		return
+	}
 	h.activeConnections.Add(-1)
 }
 
 // SetUpstreamConnected sets the upstream connection status
 func (h *StatusHandler) SetUpstreamConnected(connected bool) {
+	if h == nil {
+		return
+	}
 	h.upstreamConnected.Store(connected)
 }
 
