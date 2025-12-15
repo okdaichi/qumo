@@ -10,10 +10,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 
+	"github.com/okdaichi/qumo/observability"
 	"github.com/okdaichi/qumo/relay"
 	"github.com/okdaichi/qumo/relay/health"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"gopkg.in/yaml.v3"
 )
 
@@ -52,6 +55,21 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
+	// Initialize observability
+	otelEndpoint := getEnv("OTEL_ENDPOINT", "")
+	err = observability.Setup(ctx, observability.Config{
+		Service:      "qumo-relay",
+		Version:      "v0.1.0",
+		TraceAddr:    otelEndpoint,
+		LogAddr:      getEnv("OTEL_LOG_ENDPOINT", otelEndpoint), // defaults to same as trace
+		SamplingRate: getEnvFloat("OTEL_SAMPLING_RATE", 1.0),
+		Metrics:      true,
+	})
+	if err != nil {
+		log.Fatalf("Failed to initialize observability: %v", err)
+	}
+	defer observability.Shutdown(ctx)
+
 	// Create health check handler
 	healthHandler := health.NewStatusHandler()
 
@@ -75,6 +93,7 @@ func main() {
 		mux.HandleFunc("/health", healthHandler.ServeHTTP)
 		mux.HandleFunc("/health/live", healthHandler.ServeLive)
 		mux.HandleFunc("/health/ready", healthHandler.ServeReady)
+		mux.Handle("/metrics", promhttp.Handler())
 
 		httpServer = &http.Server{
 			Addr:    config.HealthCheckAddr,
@@ -82,9 +101,13 @@ func main() {
 		}
 
 		go func() {
-			log.Printf("Starting health check server on %s", config.HealthCheckAddr)
+			log.Printf("HTTP server starting on %s", config.HealthCheckAddr)
+			log.Println("  /health       - Health check")
+			log.Println("  /health/live  - Liveness probe")
+			log.Println("  /health/ready - Readiness probe")
+			log.Println("  /metrics      - Prometheus metrics")
 			if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				log.Printf("Health check server error: %v", err)
+				log.Printf("HTTP server error: %v", err)
 			}
 		}()
 	}
@@ -183,4 +206,27 @@ func setupTLS(certFile, keyFile string) (*tls.Config, error) {
 		Certificates: []tls.Certificate{cert},
 		NextProtos:   []string{"h3"}, // HTTP/3 for QUIC
 	}, nil
+}
+
+func getEnv(key, fallback string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return fallback
+}
+
+func getEnvBool(key string, fallback bool) bool {
+	if value := os.Getenv(key); value != "" {
+		return value == "true" || value == "1"
+	}
+	return fallback
+}
+
+func getEnvFloat(key string, fallback float64) float64 {
+	if value := os.Getenv(key); value != "" {
+		if f, err := strconv.ParseFloat(value, 64); err == nil {
+			return f
+		}
+	}
+	return fallback
 }

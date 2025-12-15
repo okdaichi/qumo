@@ -71,14 +71,10 @@ func (s *Server) ListenAndServe() error {
 			}
 
 			// Track connection
-			if s.Health != nil {
-				s.Health.IncrementConnections()
-			}
+			s.Health.IncrementConnections()
 			defer func() {
 				downstream.CloseWithError(moqt.NoError, moqt.SessionErrorText(moqt.NoError))
-				if s.Health != nil {
-					s.Health.DecrementConnections()
-				}
+				s.Health.DecrementConnections()
 			}()
 
 			err = Relay(ctx, downstream, func(handler *RelayHandler) {
@@ -104,21 +100,15 @@ func (s *Server) ListenAndServe() error {
 		upstream, err := s.client.Dial(ctx, s.Config.Upstream, clientMux)
 		if err != nil {
 			log.Printf("Failed to connect to upstream: %v", err)
-			if s.Health != nil {
-				s.Health.SetUpstreamConnected(false)
-			}
+			s.Health.SetUpstreamConnected(false)
 			return
 		}
-		if s.Health != nil {
-			s.Health.SetUpstreamConnected(true)
-		}
+		s.Health.SetUpstreamConnected(true)
 		log.Printf("Connected to upstream: %s", s.Config.Upstream)
 
 		defer func() {
 			upstream.CloseWithError(moqt.NoError, moqt.SessionErrorText(moqt.NoError))
-			if s.Health != nil {
-				s.Health.SetUpstreamConnected(false)
-			}
+			s.Health.SetUpstreamConnected(false)
 		}()
 
 		err = Relay(ctx, upstream, func(handler *RelayHandler) {
