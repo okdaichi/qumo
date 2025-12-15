@@ -9,27 +9,24 @@ import (
 )
 
 // Optimized timeout for best CPU/latency tradeoff (based on benchmarks)
-const NotifyTimeout = 1 * time.Millisecond
+var NotifyTimeout = 1 * time.Millisecond
 
-func Serve(w moqt.SetupResponseWriter, r *moqt.SetupRequest) {
-	sess, err := moqt.Accept(w, r, nil)
+func Relay(ctx context.Context, sess *moqt.Session, op func(handler *RelayHandler)) error {
+	peer, err := sess.AcceptAnnounce("/")
 	if err != nil {
-		return
+		return err
 	}
 
-	upstream, err := sess.AcceptAnnounce("/")
-	if err != nil {
-		return
-	}
-
-	for ann := range upstream.Announcements(context.Background()) {
+	for ann := range peer.Announcements(context.Background()) {
 		handler := &RelayHandler{
 			Announcement: ann,
 			Session:      sess,
 		}
 
-		moqt.Announce(ann, handler)
+		op(handler)
 	}
+
+	return nil
 }
 
 var _ moqt.TrackHandler = (*RelayHandler)(nil)

@@ -11,7 +11,7 @@ import (
 
 // TestFramePoolGetPut tests basic pool functionality
 func TestFramePoolGetPut(t *testing.T) {
-	pool := NewFramePool()
+	pool := NewFramePool(NewFrameCapacity)
 
 	// Get frame
 	frame := pool.Get()
@@ -20,8 +20,8 @@ func TestFramePoolGetPut(t *testing.T) {
 	}
 
 	// Verify capacity
-	if frame.Cap() != DefaultNewFrameCapacity {
-		t.Errorf("Expected capacity %d, got %d", DefaultNewFrameCapacity, frame.Cap())
+	if frame.Cap() != defaultNewFrameCapacity {
+		t.Errorf("Expected capacity %d, got %d", defaultNewFrameCapacity, frame.Cap())
 	}
 
 	// Put frame back
@@ -36,7 +36,7 @@ func TestFramePoolGetPut(t *testing.T) {
 
 // TestFramePoolReset tests that frames are reset when returned
 func TestFramePoolReset(t *testing.T) {
-	pool := NewFramePool()
+	pool := NewFramePool(NewFrameCapacity)
 
 	// Get frame and write data
 	frame := pool.Get()
@@ -58,7 +58,7 @@ func TestFramePoolReset(t *testing.T) {
 
 // TestFramePoolConcurrent tests thread-safe pool operations
 func TestFramePoolConcurrent(t *testing.T) {
-	pool := NewFramePool()
+	pool := NewFramePool(NewFrameCapacity)
 
 	const goroutines = 50
 	const iterations = 1000
@@ -83,8 +83,8 @@ func TestFramePoolConcurrent(t *testing.T) {
 
 // TestFramePoolMultipleInstances tests that different pools are independent
 func TestFramePoolMultipleInstances(t *testing.T) {
-	pool1 := NewFramePool()
-	pool2 := NewFramePool()
+	pool1 := NewFramePool(NewFrameCapacity)
+	pool2 := NewFramePool(NewFrameCapacity)
 
 	frame1 := pool1.Get()
 	frame2 := pool2.Get()
@@ -118,7 +118,7 @@ func TestDefaultFramePool(t *testing.T) {
 
 // TestFramePoolReuse tests that frames are actually reused
 func TestFramePoolReuse(t *testing.T) {
-	pool := NewFramePool()
+	pool := NewFramePool(NewFrameCapacity)
 
 	// Pre-allocate some frames
 	frames := make([]*moqt.Frame, 10)
@@ -157,7 +157,7 @@ func TestFramePoolCapacity(t *testing.T) {
 
 	// Create pool with different capacity
 	NewFrameCapacity = 3000
-	pool := NewFramePool()
+	pool := NewFramePool(NewFrameCapacity)
 
 	frame := pool.Get()
 	if frame.Cap() != 3000 {
@@ -167,7 +167,7 @@ func TestFramePoolCapacity(t *testing.T) {
 
 // BenchmarkFramePoolGet benchmarks frame allocation
 func BenchmarkFramePoolGet(b *testing.B) {
-	pool := NewFramePool()
+	pool := NewFramePool(NewFrameCapacity)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -178,7 +178,7 @@ func BenchmarkFramePoolGet(b *testing.B) {
 
 // BenchmarkFramePoolGetPutConcurrent benchmarks concurrent access
 func BenchmarkFramePoolGetPutConcurrent(b *testing.B) {
-	pool := NewFramePool()
+	pool := NewFramePool(NewFrameCapacity)
 
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
@@ -193,7 +193,7 @@ func BenchmarkFramePoolGetPutConcurrent(b *testing.B) {
 func BenchmarkFramePoolNoReuse(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		frame := moqt.NewFrame(DefaultNewFrameCapacity)
+		frame := moqt.NewFrame(defaultNewFrameCapacity)
 		frame.Write([]byte("data"))
 		_ = frame
 	}
@@ -201,7 +201,7 @@ func BenchmarkFramePoolNoReuse(b *testing.B) {
 
 // BenchmarkFramePoolWithReuse benchmarks with pooling
 func BenchmarkFramePoolWithReuse(b *testing.B) {
-	pool := NewFramePool()
+	pool := NewFramePool(NewFrameCapacity)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -214,7 +214,7 @@ func BenchmarkFramePoolWithReuse(b *testing.B) {
 // TestFramePoolEdgeCases tests boundary conditions
 func TestFramePoolEdgeCases(t *testing.T) {
 	t.Run("get_from_empty_pool", func(t *testing.T) {
-		pool := NewFramePool()
+		pool := NewFramePool(NewFrameCapacity)
 		frame := pool.Get()
 		if frame == nil {
 			t.Fatal("Get from empty pool should not return nil")
@@ -232,7 +232,7 @@ func TestFramePoolEdgeCases(t *testing.T) {
 	})
 
 	t.Run("get_put_get_same", func(t *testing.T) {
-		pool := NewFramePool()
+		pool := NewFramePool(NewFrameCapacity)
 
 		frame1 := pool.Get()
 		pool.Put(frame1)
@@ -246,7 +246,7 @@ func TestFramePoolEdgeCases(t *testing.T) {
 	})
 
 	t.Run("multiple_puts_same_frame", func(t *testing.T) {
-		pool := NewFramePool()
+		pool := NewFramePool(NewFrameCapacity)
 		frame := pool.Get()
 
 		// Put multiple times (undefined behavior, but shouldn't panic)
@@ -263,7 +263,7 @@ func TestFramePoolStress(t *testing.T) {
 	}
 
 	t.Run("high_frequency_get_put", func(t *testing.T) {
-		pool := NewFramePool()
+		pool := NewFramePool(NewFrameCapacity)
 
 		var wg sync.WaitGroup
 		const goroutines = 50
@@ -285,7 +285,7 @@ func TestFramePoolStress(t *testing.T) {
 	})
 
 	t.Run("imbalanced_get_put", func(t *testing.T) {
-		pool := NewFramePool()
+		pool := NewFramePool(NewFrameCapacity)
 
 		var wg sync.WaitGroup
 
@@ -321,7 +321,7 @@ func TestFramePoolStress(t *testing.T) {
 // TestFramePoolMemoryEfficiency tests memory usage
 func TestFramePoolMemoryEfficiency(t *testing.T) {
 	t.Run("verify_reuse_reduces_allocations", func(t *testing.T) {
-		pool := NewFramePool()
+		pool := NewFramePool(NewFrameCapacity)
 
 		// Pre-warm the pool
 		frames := make([]*moqt.Frame, 100)
@@ -353,13 +353,13 @@ func TestFramePoolMemoryEfficiency(t *testing.T) {
 	})
 
 	t.Run("pool_size_under_pressure", func(t *testing.T) {
-		pool := NewFramePool()
+		pool := NewFramePool(NewFrameCapacity)
 
 		// Hold many frames simultaneously
 		frames := make([]*moqt.Frame, 10000)
 		for i := 0; i < 10000; i++ {
 			frames[i] = pool.Get()
-			frames[i].Write(make([]byte, DefaultNewFrameCapacity))
+			frames[i].Write(make([]byte, defaultNewFrameCapacity))
 		}
 
 		// Return all
@@ -388,7 +388,7 @@ func TestFramePoolCapacityVariations(t *testing.T) {
 			defer func() { NewFrameCapacity = original }()
 
 			NewFrameCapacity = cap
-			pool := NewFramePool()
+			pool := NewFramePool(NewFrameCapacity)
 
 			frame := pool.Get()
 			if frame.Cap() != cap {
@@ -413,7 +413,7 @@ func TestFramePoolCapacityVariations(t *testing.T) {
 // TestFramePoolResetBehavior tests reset behavior in detail
 func TestFramePoolResetBehavior(t *testing.T) {
 	t.Run("reset_clears_data", func(t *testing.T) {
-		pool := NewFramePool()
+		pool := NewFramePool(NewFrameCapacity)
 		frame := pool.Get()
 
 		// Write data
@@ -433,7 +433,7 @@ func TestFramePoolResetBehavior(t *testing.T) {
 	})
 
 	t.Run("reset_preserves_capacity", func(t *testing.T) {
-		pool := NewFramePool()
+		pool := NewFramePool(NewFrameCapacity)
 		frame := pool.Get()
 
 		originalCap := frame.Cap()
@@ -450,7 +450,7 @@ func TestFramePoolResetBehavior(t *testing.T) {
 // TestFramePoolConcurrentPatterns tests real-world concurrent patterns
 func TestFramePoolConcurrentPatterns(t *testing.T) {
 	t.Run("producer_consumer", func(t *testing.T) {
-		pool := NewFramePool()
+		pool := NewFramePool(NewFrameCapacity)
 		frameChan := make(chan *moqt.Frame, 100)
 		var wg sync.WaitGroup
 
@@ -485,7 +485,7 @@ func TestFramePoolConcurrentPatterns(t *testing.T) {
 	})
 
 	t.Run("burst_load", func(t *testing.T) {
-		pool := NewFramePool()
+		pool := NewFramePool(NewFrameCapacity)
 
 		// Sudden burst of Gets
 		frames := make([]*moqt.Frame, 1000)
@@ -509,8 +509,8 @@ func TestFramePoolConcurrentPatterns(t *testing.T) {
 // TestFramePoolIsolation tests pool isolation
 func TestFramePoolIsolation(t *testing.T) {
 	t.Run("pools_are_independent", func(t *testing.T) {
-		pool1 := NewFramePool()
-		pool2 := NewFramePool()
+		pool1 := NewFramePool(NewFrameCapacity)
+		pool2 := NewFramePool(NewFrameCapacity)
 
 		frame1 := pool1.Get()
 		frame2 := pool2.Get()
@@ -534,7 +534,7 @@ func TestFramePoolIsolation(t *testing.T) {
 	})
 
 	t.Run("default_pool_isolation", func(t *testing.T) {
-		custom := NewFramePool()
+		custom := NewFramePool(NewFrameCapacity)
 
 		frame1 := DefaultFramePool.Get()
 		frame2 := custom.Get()
@@ -555,7 +555,7 @@ func TestFramePoolIsolation(t *testing.T) {
 // TestFramePoolStatistics tests pool behavior over time
 func TestFramePoolStatistics(t *testing.T) {
 	t.Run("reuse_rate", func(t *testing.T) {
-		pool := NewFramePool()
+		pool := NewFramePool(NewFrameCapacity)
 
 		// Pre-populate
 		frames := make([]*moqt.Frame, 100)
@@ -588,7 +588,7 @@ func TestFramePoolStatistics(t *testing.T) {
 // BenchmarkFramePoolPatterns benchmarks realistic usage patterns
 func BenchmarkFramePoolPatterns(b *testing.B) {
 	b.Run("write_and_return", func(b *testing.B) {
-		pool := NewFramePool()
+		pool := NewFramePool(NewFrameCapacity)
 		data := make([]byte, 1000)
 
 		b.ResetTimer()
@@ -600,7 +600,7 @@ func BenchmarkFramePoolPatterns(b *testing.B) {
 	})
 
 	b.Run("parallel_write_and_return", func(b *testing.B) {
-		pool := NewFramePool()
+		pool := NewFramePool(NewFrameCapacity)
 		data := make([]byte, 1000)
 
 		b.ResetTimer()
@@ -614,7 +614,7 @@ func BenchmarkFramePoolPatterns(b *testing.B) {
 	})
 
 	b.Run("hold_and_return", func(b *testing.B) {
-		pool := NewFramePool()
+		pool := NewFramePool(NewFrameCapacity)
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
@@ -632,7 +632,7 @@ func BenchmarkFramePoolPatterns(b *testing.B) {
 // BenchmarkFramePoolVsNaive compares pool vs naive allocation
 func BenchmarkFramePoolVsNaive(b *testing.B) {
 	b.Run("with_pool", func(b *testing.B) {
-		pool := NewFramePool()
+		pool := NewFramePool(NewFrameCapacity)
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			frame := pool.Get()
@@ -643,12 +643,12 @@ func BenchmarkFramePoolVsNaive(b *testing.B) {
 	b.Run("without_pool", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_ = moqt.NewFrame(DefaultNewFrameCapacity)
+			_ = moqt.NewFrame(defaultNewFrameCapacity)
 		}
 	})
 
 	b.Run("with_pool_and_write", func(b *testing.B) {
-		pool := NewFramePool()
+		pool := NewFramePool(NewFrameCapacity)
 		data := make([]byte, 500)
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
@@ -662,7 +662,7 @@ func BenchmarkFramePoolVsNaive(b *testing.B) {
 		data := make([]byte, 500)
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			frame := moqt.NewFrame(DefaultNewFrameCapacity)
+			frame := moqt.NewFrame(defaultNewFrameCapacity)
 			frame.Write(data)
 		}
 	})

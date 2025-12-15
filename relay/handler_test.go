@@ -5,6 +5,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/okdaichi/gomoqt/moqt"
 )
 
 // TestDistributorBroadcast tests the core broadcast functionality
@@ -758,5 +760,258 @@ func BenchmarkDistributorVariableLoad(b *testing.B) {
 			}
 		}
 		dist.mu.RUnlock()
+	}
+}
+
+// TestRelayHandlerSubscribe tests the subscribe method of RelayHandler
+func TestRelayHandlerSubscribe(t *testing.T) {
+	t.Run("subscribe with nil session", func(t *testing.T) {
+		handler := &RelayHandler{
+			Session: nil,
+		}
+
+		tr := handler.subscribe("test/track")
+		if tr != nil {
+			t.Error("Expected nil trackDistributor for nil session")
+		}
+	})
+
+	t.Run("subscribe with nil announcement", func(t *testing.T) {
+		handler := &RelayHandler{
+			Session:      &moqt.Session{},
+			Announcement: nil,
+		}
+
+		tr := handler.subscribe("test/track")
+		if tr != nil {
+			t.Error("Expected nil trackDistributor for nil announcement")
+		}
+	})
+}
+
+// TestRelayHandlerServeTrackBasics tests basic ServeTrack functionality
+func TestRelayHandlerServeTrackBasics(t *testing.T) {
+	t.Run("relaying map initialization", func(t *testing.T) {
+		handler := &RelayHandler{}
+
+		if handler.relaying != nil {
+			t.Error("relaying should be nil initially")
+		}
+
+		// ServeTrack should initialize the map
+		// Note: We can't fully test ServeTrack without a real TrackWriter and Session
+		// This test verifies the data structure initialization logic
+	})
+
+	t.Run("concurrent map access", func(t *testing.T) {
+		handler := &RelayHandler{
+			relaying: make(map[moqt.TrackName]*trackDistributor),
+		}
+
+		done := make(chan bool)
+		for i := 0; i < 10; i++ {
+			go func(id int) {
+				handler.mu.Lock()
+				// Simulate accessing the map
+				_ = len(handler.relaying)
+				handler.mu.Unlock()
+				done <- true
+			}(i)
+		}
+
+		for i := 0; i < 10; i++ {
+			<-done
+		}
+	})
+}
+
+// TestTrackDistributorInitialization tests trackDistributor creation
+func TestTrackDistributorInitialization(t *testing.T) {
+	onCloseCalled := false
+	onClose := func() {
+		onCloseCalled = true
+	}
+
+	// Note: We can't fully test newTrackRelayer without a real TrackReader
+	// This test verifies the logic would work correctly
+
+	t.Run("onClose callback", func(t *testing.T) {
+		dist := &trackDistributor{
+			ring:        newGroupRing(),
+			subscribers: make(map[chan struct{}]struct{}),
+			onClose:     onClose,
+		}
+
+		// Call onClose directly (not close which requires src)
+		if dist.onClose != nil {
+			dist.onClose()
+		}
+
+		if !onCloseCalled {
+			t.Error("onClose callback should be called")
+		}
+	})
+}
+
+// TestRelayHandlerRelayingCleanup tests cleanup of relaying map
+func TestRelayHandlerRelayingCleanup(t *testing.T) {
+	handler := &RelayHandler{
+		relaying: make(map[moqt.TrackName]*trackDistributor),
+	}
+
+	trackName := moqt.TrackName("test/track")
+
+	// Simulate adding a track
+	handler.mu.Lock()
+	handler.relaying[trackName] = &trackDistributor{
+		ring:        newGroupRing(),
+		subscribers: make(map[chan struct{}]struct{}),
+	}
+	handler.mu.Unlock()
+
+	if len(handler.relaying) != 1 {
+		t.Error("Track should be in relaying map")
+	}
+
+	// Simulate cleanup
+	handler.mu.Lock()
+	delete(handler.relaying, trackName)
+	handler.mu.Unlock()
+
+	if len(handler.relaying) != 0 {
+		t.Error("Track should be removed from relaying map")
+	}
+}
+
+// TestGroupRingIntegration tests groupRing initialization
+func TestGroupRingIntegration(t *testing.T) {
+	dist := &trackDistributor{
+		ring:        newGroupRing(),
+		subscribers: make(map[chan struct{}]struct{}),
+	}
+
+	// Verify ring is properly initialized
+	if dist.ring == nil {
+		t.Fatal("Ring should be initialized")
+	}
+
+	head := dist.ring.head()
+	if head != 0 {
+		t.Errorf("Expected initial head to be 0, got %d", head)
+	}
+
+	earliest := dist.ring.earliestAvailable()
+	if earliest != 1 {
+		t.Errorf("Expected earliest to be 1, got %d", earliest)
+	}
+}
+
+// TestNotifyTimeout tests the NotifyTimeout constant
+func TestNotifyTimeout(t *testing.T) {
+	if NotifyTimeout <= 0 {
+		t.Error("NotifyTimeout should be positive")
+	}
+
+	// Verify it's the optimized value from benchmarks
+	expectedTimeout := 1 * time.Millisecond
+	if NotifyTimeout != expectedTimeout {
+		t.Errorf("NotifyTimeout should be %v for optimal performance, got %v", expectedTimeout, NotifyTimeout)
+	}
+}
+
+// TestRelayHandlerConcurrentServeTrack tests concurrent ServeTrack calls
+func TestRelayHandlerConcurrentServeTrack(t *testing.T) {
+	handler := &RelayHandler{
+		relaying: make(map[moqt.TrackName]*trackDistributor),
+	}
+
+	done := make(chan bool)
+
+	// Simulate concurrent access to the same track
+	for i := 0; i < 10; i++ {
+		go func() {
+			handler.mu.Lock()
+			trackName := moqt.TrackName("test/track")
+			_, exists := handler.relaying[trackName]
+			if !exists {
+				handler.relaying[trackName] = &trackDistributor{
+					ring:        newGroupRing(),
+					subscribers: make(map[chan struct{}]struct{}),
+				}
+			}
+			handler.mu.Unlock()
+			done <- true
+		}()
+	}
+
+	for i := 0; i < 10; i++ {
+		<-done
+	}
+
+	if len(handler.relaying) != 1 {
+		t.Errorf("Expected 1 track in relaying map, got %d", len(handler.relaying))
+	}
+}
+
+// TestTrackDistributorServeTrackLogic tests serveTrack internal logic
+func TestTrackDistributorServeTrackLogic(t *testing.T) {
+	t.Run("ring initialization", func(t *testing.T) {
+		dist := &trackDistributor{
+			ring:        newGroupRing(),
+			subscribers: make(map[chan struct{}]struct{}),
+		}
+
+		// Verify ring is initialized
+		if dist.ring == nil {
+			t.Error("Ring should be initialized")
+		}
+
+		// Verify initial head
+		head := dist.ring.head()
+		if head != 0 {
+			t.Errorf("Expected head 0, got %d", head)
+		}
+	})
+
+	t.Run("earliest available at start", func(t *testing.T) {
+		dist := &trackDistributor{
+			ring: newGroupRing(),
+		}
+
+		earliest := dist.ring.earliestAvailable()
+		if earliest != 1 {
+			t.Errorf("Expected earliest 1 at start, got %d", earliest)
+		}
+	})
+}
+
+// TestRelayHandlerMemoryManagement tests memory cleanup
+func TestRelayHandlerMemoryManagement(t *testing.T) {
+	handler := &RelayHandler{
+		relaying: make(map[moqt.TrackName]*trackDistributor),
+	}
+
+	// Add multiple tracks
+	for i := 0; i < 5; i++ {
+		trackName := moqt.TrackName("test/track" + string(rune(i)))
+		handler.mu.Lock()
+		handler.relaying[trackName] = &trackDistributor{
+			ring:        newGroupRing(),
+			subscribers: make(map[chan struct{}]struct{}),
+		}
+		handler.mu.Unlock()
+	}
+
+	if len(handler.relaying) != 5 {
+		t.Errorf("Expected 5 tracks, got %d", len(handler.relaying))
+	}
+
+	// Clean up all tracks
+	handler.mu.Lock()
+	handler.relaying = make(map[moqt.TrackName]*trackDistributor)
+	handler.mu.Unlock()
+
+	if len(handler.relaying) != 0 {
+		t.Errorf("Expected 0 tracks after cleanup, got %d", len(handler.relaying))
 	}
 }

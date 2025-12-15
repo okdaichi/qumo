@@ -5,35 +5,23 @@ server:
   # Address to bind the relay server
   address: "0.0.0.0:4433"
   
-  # TLS certificate configuration
-  tls:
-    cert_file: "certs/server.crt"
-    key_file: "certs/server.key"
+  # TLS certificate files
+  cert_file: "certs/server.crt"
+  key_file: "certs/server.key"
 
 relay:
-  # Maximum number of concurrent connections
-  max_connections: 1000
+  # Upstream server URL (optional)
+  # If specified, this relay will connect to the upstream and relay its streams
+  # Example: "https://origin.example.com:4433"
+  upstream_url: ""
   
-  # Buffer sizes (in bytes)
-  read_buffer_size: 65536
-  write_buffer_size: 65536
+  # Number of group caches to keep in memory
+  # Higher values use more memory but reduce cache misses
+  # Default: 100
+  group_cache_size: 100
+  
+  # Frame buffer size in bytes
+  # Should match your typical media frame size (e.g., 1500 for network MTU)
+  # Default: 1500
+  frame_capacity: 1500
 
-logging:
-  # Log level: debug, info, warn, error
-  level: "info"
-  
-  # Log format: json, text
-  format: "json"
-  
-  # Log output: stdout, stderr, or file path
-  output: "stdout"
-
-monitoring:
-  # Enable Prometheus metrics endpoint
-  enabled: true
-  
-  # Metrics endpoint address
-  address: "0.0.0.0:9090"
-  
-  # Metrics path
-  path: "/metrics"

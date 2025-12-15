@@ -6,11 +6,11 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 
-	"github.com/okdaichi/gomoqt/moqt"
 	"github.com/okdaichi/qumo/relay"
 	"gopkg.in/yaml.v3"
 )
@@ -19,7 +19,7 @@ type config struct {
 	Address     string
 	CertFile    string
 	KeyFile     string
-	Upstream    string
+	UpstreamURL string
 	RelayConfig relay.Config
 }
 
@@ -50,11 +50,10 @@ func main() {
 	defer cancel()
 
 	// Create MOQT server with correct API
-	server := &moqt.Server{
+	server := &relay.Server{
 		Addr:      config.Address,
 		TLSConfig: tlsConfig,
-		// Accept all incoming sessions
-		SetupHandler: moqt.SetupHandlerFunc(relay.Serve),
+		Config:    &config.RelayConfig,
 	}
 
 	// Start server in a goroutine
@@ -68,14 +67,14 @@ func main() {
 
 	// Wait for shutdown signal
 	<-ctx.Done()
-	log.Println("Shutting down server...")
 
+	slog.Info("Shutting down server...")
 	// Graceful shutdown
 	if err := server.Shutdown(context.Background()); err != nil {
 		log.Printf("Error during shutdown: %v", err)
 	}
 
-	log.Println("Server stopped")
+	slog.Info("Server stopped")
 }
 
 func loadConfig(filename string) (*config, error) {
@@ -86,7 +85,7 @@ func loadConfig(filename string) (*config, error) {
 			KeyFile  string `yaml:"key_file"`
 		} `yaml:"server"`
 		Relay struct {
-			Upstream       string `yaml:"upstream"`
+			UpstreamURL    string `yaml:"upstream_url"`
 			GroupCacheSize int    `yaml:"group_cache_size"`
 			FrameCapacity  int    `yaml:"frame_capacity"`
 		} `yaml:"relay"`
@@ -113,12 +112,12 @@ func loadConfig(filename string) (*config, error) {
 	}
 
 	config := &config{
-		Address:  ymlConfig.Server.Address,
-		CertFile: ymlConfig.Server.CertFile,
-		KeyFile:  ymlConfig.Server.KeyFile,
-		Upstream: ymlConfig.Relay.Upstream,
+		Address:     ymlConfig.Server.Address,
+		CertFile:    ymlConfig.Server.CertFile,
+		KeyFile:     ymlConfig.Server.KeyFile,
+		UpstreamURL: ymlConfig.Relay.UpstreamURL,
 		RelayConfig: relay.Config{
-			Upstream:       ymlConfig.Relay.Upstream,
+			Upstream:       ymlConfig.Relay.UpstreamURL,
 			FrameCapacity:  ymlConfig.Relay.FrameCapacity,
 			GroupCacheSize: ymlConfig.Relay.GroupCacheSize,
 		},

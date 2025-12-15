@@ -2,7 +2,10 @@ module github.com/okdaichi/qumo
 
 go 1.25.0
 
-require github.com/okdaichi/gomoqt v0.7.0
+require (
+	github.com/okdaichi/gomoqt v0.7.0
+	gopkg.in/yaml.v3 v3.0.1
+)
 
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
@@ -17,5 +20,4 @@ require (
 	golang.org/x/net v0.48.0 // indirect
 	golang.org/x/sys v0.39.0 // indirect
 	golang.org/x/text v0.32.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
