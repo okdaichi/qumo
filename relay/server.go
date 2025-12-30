@@ -10,7 +10,6 @@ import (
 
 	"github.com/okdaichi/gomoqt/moqt"
 	"github.com/okdaichi/gomoqt/quic"
-	"github.com/okdaichi/qumo/relay/health"
 )
 
 type Server struct {
@@ -21,27 +20,16 @@ type Server struct {
 
 	CheckHTTPOrigin func(r *http.Request) bool
 
-	Client *moqt.Client
-
 	TrackMux *moqt.TrackMux
-
-	clientTrackMux *moqt.TrackMux
 
 	client *moqt.Client
 	server *moqt.Server
-
-	// Health check support (optional)
-	Health *health.StatusHandler
 
 	initOnce sync.Once
 }
 
 func (s *Server) init() {
 	s.initOnce.Do(func() {
-		if s.Config == nil {
-			s.Config = &Config{}
-		}
-
 		if s.TLSConfig == nil {
 			panic("no tls config")
 		}
@@ -49,8 +37,6 @@ func (s *Server) init() {
 		if s.TrackMux == nil {
 			s.TrackMux = moqt.DefaultMux
 		}
-
-		s.clientTrackMux = moqt.NewTrackMux()
 	})
 }
 
@@ -60,34 +46,21 @@ func (s *Server) ListenAndServe() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	serverMux := s.TrackMux
-	clientMux := s.clientTrackMux
-
 	s.server = &moqt.Server{
 		Addr:            s.Addr,
 		TLSConfig:       s.TLSConfig,
 		QUICConfig:      s.QUICConfig,
 		CheckHTTPOrigin: s.CheckHTTPOrigin,
 		SetupHandler: moqt.SetupHandlerFunc(func(w moqt.SetupResponseWriter, r *moqt.SetupRequest) {
-			downstream, err := moqt.Accept(w, r, serverMux)
+			downstream, err := moqt.Accept(w, r, s.TrackMux)
 			if err != nil {
 				slog.Error("failed to accept connection", "err", err)
 				return
 			}
 
-			// Track connection
-			s.Health.IncrementConnections()
-			defer func() {
-				downstream.CloseWithError(moqt.NoError, moqt.SessionErrorText(moqt.NoError))
-				s.Health.DecrementConnections()
-			}()
+			defer downstream.CloseWithError(moqt.NoError, moqt.SessionErrorText(moqt.NoError))
 
-			err = Relay(ctx, downstream, func(handler *RelayHandler) {
-				// Announce to downstream peers with server mux
-				serverMux.Announce(handler.Announcement, handler)
-				// Announce to upstream with client mux
-				clientMux.Announce(handler.Announcement, handler)
-			})
+			err = Relay(ctx, downstream, s.TrackMux)
 
 			if err != nil {
 				slog.Error("relay session ended", "err", err)
@@ -106,24 +79,16 @@ func (s *Server) ListenAndServe() error {
 		}
 
 		wg.Go(func() {
-			upstream, err := s.client.Dial(ctx, s.Config.Upstream, clientMux)
+			upstream, err := s.client.Dial(ctx, s.Config.Upstream, s.TrackMux)
 			if err != nil {
 				log.Printf("Failed to connect to upstream: %v", err)
-				s.Health.SetUpstreamConnected(false)
 				return
 			}
-			s.Health.SetUpstreamConnected(true)
 			log.Printf("Connected to upstream: %s", s.Config.Upstream)
 
-			defer func() {
-				upstream.CloseWithError(moqt.NoError, moqt.SessionErrorText(moqt.NoError))
-				s.Health.SetUpstreamConnected(false)
-			}()
+			defer upstream.CloseWithError(moqt.NoError, moqt.SessionErrorText(moqt.NoError))
 
-			err = Relay(ctx, upstream, func(handler *RelayHandler) {
-				// Announce to downstream peers with server mux
-				serverMux.Announce(handler.Announcement, handler)
-			})
+			err = Relay(ctx, upstream, s.TrackMux)
 			if err != nil {
 				return
 			}

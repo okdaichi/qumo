@@ -6,24 +6,25 @@ import (
 	"github.com/okdaichi/gomoqt/moqt"
 )
 
-var NewFrameCapacity = defaultNewFrameCapacity
+const DefaultNewFrameCapacity int = 1500
 
-const defaultNewFrameCapacity = 1500
-
-var DefaultFramePool = NewFramePool(NewFrameCapacity)
+var DefaultFramePool = NewFramePool(DefaultNewFrameCapacity)
 
 type FramePool struct {
-	pool sync.Pool
+	Capacity int
+	pool     sync.Pool
 }
 
 func NewFramePool(cap int) *FramePool {
-	return &FramePool{
-		pool: sync.Pool{
-			New: func() any {
-				return moqt.NewFrame(cap)
-			},
-		},
+	fp := &FramePool{
+		Capacity: cap,
 	}
+
+	fp.pool.New = func() any {
+		return moqt.NewFrame(fp.Capacity)
+	}
+
+	return fp
 }
 
 func (fp *FramePool) Get() *moqt.Frame {

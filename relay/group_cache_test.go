@@ -79,7 +79,7 @@ func TestGroupCacheNext(t *testing.T) {
 
 // TestGroupRingAdd tests adding groups to ring buffer
 func TestGroupRingAdd(t *testing.T) {
-	ring := newGroupRing()
+	ring := newGroupRing(DefaultGroupCacheSize)
 
 	// Head should start at 0
 	if ring.head() != 0 {
@@ -92,7 +92,7 @@ func TestGroupRingAdd(t *testing.T) {
 
 // TestGroupRingHead tests head position tracking
 func TestGroupRingHead(t *testing.T) {
-	ring := newGroupRing()
+	ring := newGroupRing(DefaultGroupCacheSize)
 
 	// Initial head
 	head := ring.head()
@@ -110,7 +110,7 @@ func TestGroupRingHead(t *testing.T) {
 
 // TestGroupRingEarliestAvailable tests earliest available group calculation
 func TestGroupRingEarliestAvailable(t *testing.T) {
-	ring := newGroupRing()
+	ring := newGroupRing(DefaultGroupCacheSize)
 	size := moqt.GroupSequence(ring.size)
 
 	tests := []struct {
@@ -137,7 +137,7 @@ func TestGroupRingEarliestAvailable(t *testing.T) {
 
 // TestGroupRingGet tests retrieving cached groups
 func TestGroupRingGet(t *testing.T) {
-	ring := newGroupRing()
+	ring := newGroupRing(DefaultGroupCacheSize)
 
 	// Store test cache
 	testCache := &groupCache{
@@ -159,7 +159,7 @@ func TestGroupRingGet(t *testing.T) {
 
 // TestGroupRingWrapAround tests ring buffer wrap-around behavior
 func TestGroupRingWrapAround(t *testing.T) {
-	ring := newGroupRing()
+	ring := newGroupRing(DefaultGroupCacheSize)
 	size := ring.size
 
 	// Simulate adding more groups than ring size
@@ -189,7 +189,7 @@ func TestGroupRingWrapAround(t *testing.T) {
 
 // TestGroupRingConcurrentAccess tests thread-safe access
 func TestGroupRingConcurrentAccess(t *testing.T) {
-	ring := newGroupRing()
+	ring := newGroupRing(DefaultGroupCacheSize)
 
 	// Concurrent writes
 	done := make(chan bool)
@@ -245,7 +245,7 @@ func BenchmarkGroupCacheAppend(b *testing.B) {
 
 // BenchmarkGroupRingGet benchmarks cache retrieval
 func BenchmarkGroupRingGet(b *testing.B) {
-	ring := newGroupRing()
+	ring := newGroupRing(DefaultGroupCacheSize)
 
 	// Populate ring
 	for i := 0; i < ring.size; i++ {
@@ -265,14 +265,14 @@ func BenchmarkGroupRingGet(b *testing.B) {
 // TestGroupRingEdgeCases tests boundary conditions
 func TestGroupRingEdgeCases(t *testing.T) {
 	t.Run("get_before_any_add", func(t *testing.T) {
-		ring := newGroupRing()
+		ring := newGroupRing(DefaultGroupCacheSize)
 		cache := ring.get(1)
 		// Should return nil or stale data, shouldn't panic
 		_ = cache
 	})
 
 	t.Run("earliest_at_boundary", func(t *testing.T) {
-		ring := newGroupRing()
+		ring := newGroupRing(DefaultGroupCacheSize)
 
 		// Exactly at ring size
 		ring.pos.Store(uint64(ring.size))
@@ -290,7 +290,7 @@ func TestGroupRingEdgeCases(t *testing.T) {
 	})
 
 	t.Run("head_overflow", func(t *testing.T) {
-		ring := newGroupRing()
+		ring := newGroupRing(DefaultGroupCacheSize)
 
 		// Simulate large sequence numbers
 		ring.pos.Store(uint64(^uint64(0) - 100)) // Near max uint64
@@ -302,7 +302,7 @@ func TestGroupRingEdgeCases(t *testing.T) {
 
 	t.Run("zero_size_protection", func(t *testing.T) {
 		// Verify ring size is never zero
-		ring := newGroupRing()
+		ring := newGroupRing(DefaultGroupCacheSize)
 		if ring.size == 0 {
 			t.Fatal("Ring size should not be zero")
 		}
@@ -312,21 +312,17 @@ func TestGroupRingEdgeCases(t *testing.T) {
 // TestGroupRingCapacity tests capacity handling
 func TestGroupRingCapacity(t *testing.T) {
 	t.Run("default_capacity", func(t *testing.T) {
-		ring := newGroupRing()
-		if ring.size != GroupCacheSize {
-			t.Errorf("Expected size %d, got %d", GroupCacheSize, ring.size)
+		ring := newGroupRing(DefaultGroupCacheSize)
+		if ring.size != DefaultGroupCacheSize {
+			t.Errorf("Expected size %d, got %d", DefaultGroupCacheSize, ring.size)
 		}
-		if len(ring.caches) != GroupCacheSize {
-			t.Errorf("Expected %d cache slots, got %d", GroupCacheSize, len(ring.caches))
+		if len(ring.caches) != DefaultGroupCacheSize {
+			t.Errorf("Expected %d cache slots, got %d", DefaultGroupCacheSize, len(ring.caches))
 		}
 	})
 
 	t.Run("custom_capacity", func(t *testing.T) {
-		original := GroupCacheSize
-		defer func() { GroupCacheSize = original }()
-
-		GroupCacheSize = 16
-		ring := newGroupRing()
+		ring := newGroupRing(16)
 		if ring.size != 16 {
 			t.Errorf("Expected custom size 16, got %d", ring.size)
 		}
@@ -412,7 +408,7 @@ func TestGroupRingStress(t *testing.T) {
 	}
 
 	t.Run("rapid_position_updates", func(t *testing.T) {
-		ring := newGroupRing()
+		ring := newGroupRing(DefaultGroupCacheSize)
 
 		var wg sync.WaitGroup
 		const goroutines = 10
@@ -434,7 +430,7 @@ func TestGroupRingStress(t *testing.T) {
 	})
 
 	t.Run("concurrent_cache_operations", func(t *testing.T) {
-		ring := newGroupRing()
+		ring := newGroupRing(DefaultGroupCacheSize)
 
 		var wg sync.WaitGroup
 		stopCh := make(chan bool)
@@ -528,7 +524,7 @@ func TestGroupCacheMemory(t *testing.T) {
 // TestGroupRingSequenceNumbers tests sequence number handling
 func TestGroupRingSequenceNumbers(t *testing.T) {
 	t.Run("sequential_sequences", func(t *testing.T) {
-		ring := newGroupRing()
+		ring := newGroupRing(DefaultGroupCacheSize)
 
 		for i := 1; i <= 20; i++ {
 			cache := &groupCache{
@@ -547,7 +543,7 @@ func TestGroupRingSequenceNumbers(t *testing.T) {
 	})
 
 	t.Run("non_sequential_sequences", func(t *testing.T) {
-		ring := newGroupRing()
+		ring := newGroupRing(DefaultGroupCacheSize)
 
 		sequences := []int{1, 5, 3, 10, 7}
 		for _, seq := range sequences {
@@ -674,7 +670,7 @@ func BenchmarkGroupCacheOperations(b *testing.B) {
 // BenchmarkGroupRingOperations benchmarks ring operations
 func BenchmarkGroupRingOperations(b *testing.B) {
 	b.Run("head_read", func(b *testing.B) {
-		ring := newGroupRing()
+		ring := newGroupRing(DefaultGroupCacheSize)
 		ring.pos.Store(12345)
 
 		b.ResetTimer()
@@ -684,7 +680,7 @@ func BenchmarkGroupRingOperations(b *testing.B) {
 	})
 
 	b.Run("earliest_calculation", func(b *testing.B) {
-		ring := newGroupRing()
+		ring := newGroupRing(DefaultGroupCacheSize)
 		ring.pos.Store(100)
 
 		b.ResetTimer()
@@ -694,7 +690,7 @@ func BenchmarkGroupRingOperations(b *testing.B) {
 	})
 
 	b.Run("concurrent_get_head", func(b *testing.B) {
-		ring := newGroupRing()
+		ring := newGroupRing(DefaultGroupCacheSize)
 		ring.pos.Store(100)
 
 		// Populate ring

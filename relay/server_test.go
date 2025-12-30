@@ -506,14 +506,14 @@ func TestServerInitWithQUICConfig(t *testing.T) {
 // TestServerHealthCheckIntegration tests health check handler
 func TestServerHealthCheckIntegration(t *testing.T) {
 	server := &Server{
-		Addr:      "localhost:4433",
-		TLSConfig: &tls.Config{},
-		Health:    &health.StatusHandler{},
+		Addr:          "localhost:4433",
+		TLSConfig:     &tls.Config{},
+		HealthHandler: &health.StatusHandler{},
 	}
 
 	server.init()
 
-	if server.Health == nil {
+	if server.HealthHandler == nil {
 		t.Error("Health handler should be preserved")
 	}
 }

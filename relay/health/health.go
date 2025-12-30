@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+const DefaultAddress = ":8080"
+
 // Status represents the health status of the relay server
 type Status struct {
 	Status            string    `json:"status"` // "healthy", "degraded", "unhealthy"

@@ -1,13 +1,12 @@
 package relay
 
 import (
+	"log/slog"
 	"sync"
 	"sync/atomic"
 
 	"github.com/okdaichi/gomoqt/moqt"
 )
-
-var GroupCacheSize = DefaultGroupCacheSize
 
 const DefaultGroupCacheSize = 8
 
@@ -31,6 +30,8 @@ func (gc *groupCache) append(f *moqt.Frame) {
 	_, _ = f.WriteTo(clone)
 
 	gc.frames = append(gc.frames, clone)
+
+	slog.Debug("appended frame to group cache", "seq", gc.seq, "frame_count", len(gc.frames))
 }
 
 // next returns the frame at the given index.
@@ -42,13 +43,14 @@ func (gc *groupCache) next(index int) *moqt.Frame {
 	if index < 0 || index >= len(gc.frames) {
 		return nil
 	}
+	slog.Debug("retrieved frame from group cache", "seq", gc.seq, "index", index)
 	return gc.frames[index]
 }
 
-func newGroupRing() *groupRing {
+func newGroupRing(size int) *groupRing {
 	ring := &groupRing{
-		caches: make([]atomic.Pointer[groupCache], GroupCacheSize),
-		size:   GroupCacheSize, // Is this needed?
+		caches: make([]atomic.Pointer[groupCache], size),
+		size:   size, // Is this needed?
 	}
 	return ring
 }
@@ -73,10 +75,18 @@ func (ring *groupRing) add(group *moqt.GroupReader) {
 	for frame := range group.Frames(frame) {
 		cache.append(frame)
 	}
+
+	slog.Debug("added group to ring", "seq", cache.seq, "pos", idx)
 }
 
 func (ring *groupRing) get(seq moqt.GroupSequence) *groupCache {
-	return ring.caches[uint64(seq)%uint64(ring.size)].Load()
+	cache := ring.caches[uint64(seq)%uint64(ring.size)].Load()
+	if cache != nil {
+		slog.Debug("retrieved group cache", "seq", seq, "cache_seq", cache.seq)
+	} else {
+		slog.Debug("retrieved group cache", "seq", seq, "cache", "nil")
+	}
+	return cache
 }
 
 func (ring *groupRing) head() moqt.GroupSequence {
