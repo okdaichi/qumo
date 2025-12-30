@@ -1,0 +1,5 @@
+{
+  "imports": {
+    "@okdaichi/moq": "jsr:@okdaichi/moq@0.8.0"
+  }
+}
