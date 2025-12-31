@@ -6,8 +6,6 @@ export interface AppConfig {
   apiUrl: string;
   appName: string;
   isDev: boolean;
-  // Future extensions
-  // auth?: { token: string; user: User }
 }
 
 interface ConfigContextValue {
