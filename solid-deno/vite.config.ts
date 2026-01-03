@@ -3,5 +3,5 @@ import solid from "vite-plugin-solid";
 import deno from "@deno/vite-plugin";
 
 export default defineConfig({
-  plugins: [solid(), deno()],
+	plugins: [solid(), deno()],
 });

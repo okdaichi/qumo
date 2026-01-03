@@ -1,6 +1,14 @@
 {
-  "imports": {
-    "@okdaichi/golikejs": "jsr:@okdaichi/golikejs@0.7.0",
-    "@okdaichi/moq": "jsr:@okdaichi/moq@0.8.0"
-  }
+	"imports": {
+		"@okdaichi/av-nodes": "jsr:@okdaichi/av-nodes@0.5.2",
+		"@okdaichi/golikejs": "jsr:@okdaichi/golikejs@0.7.0",
+		"@okdaichi/moq": "jsr:@okdaichi/moq@0.8.0"
+	},
+	"fmt": {
+		"useTabs": true,
+		"lineWidth": 100,
+		"indentWidth": 4,
+		"singleQuote": false,
+		"semiColons": true
+	}
 }
