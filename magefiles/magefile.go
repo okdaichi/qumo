@@ -310,7 +310,7 @@ func Web() error {
 
 	// Start Vite dev server in the solid-deno project
 	webDir := "solid-deno"
-	cmd := exec.Command("npm", "run", "dev")
+	cmd := exec.Command("deno", "task", "dev")
 	cmd.Dir = webDir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
