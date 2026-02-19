@@ -84,16 +84,26 @@ func RunRelay(args []string) error {
 		go fetcher.Run(ctx)
 	}
 
-	mux := http.NewServeMux()
-	mux.Handle("/health", &healthHandler{
+	// All handlers are registered on DefaultServeMux, which moqt.Server
+	// uses internally for HTTP/3 WebTransport routing.
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if err := relayServer.HandleWebTransport(w, r); err != nil {
+			slog.Error("failed to handle web transport", "err", err)
+		}
+	})
+	http.Handle("/health", &healthHandler{
 		statusFunc: relayServer.Status,
 	})
-	mux.Handle("/metrics", promhttp.Handler())
+	http.Handle("/metrics", promhttp.Handler())
 
 	httpServer := &http.Server{
-		Addr:    config.Address,
-		Handler: mux,
+		Addr: config.Address,
 	}
+
+	log.Println("Server started successfully")
+	log.Println("  /             - WebTransport & MoQ endpoint")
+	log.Println("  /health       - Health check (?probe=live|ready)")
+	log.Println("  /metrics      - Prometheus metrics")
 
 	// Delegate to testable helper that runs servers until ctx is cancelled
 	serveComponents(ctx, relayServer, httpServer, 10*time.Second)
@@ -101,9 +111,9 @@ func RunRelay(args []string) error {
 	return nil
 }
 
-// serverRunner is a minimal interface implemented by both *relay.Server and
+// server is a minimal interface implemented by both *relay.Server and
 // *http.Server so we can unit-test the run/shutdown flow with fakes.
-type serverRunner interface {
+type server interface {
 	ListenAndServe() error
 	Shutdown(ctx context.Context) error
 }
@@ -111,7 +121,7 @@ type serverRunner interface {
 // serveComponents starts the provided servers and blocks until ctx is cancelled.
 // It intentionally mirrors the previous RunRelay behavior: ListenAndServe
 // errors are logged but do not abort the shutdown sequence.
-func serveComponents(ctx context.Context, relaySrv serverRunner, httpSrv serverRunner, shutdownTimeout time.Duration) {
+func serveComponents(ctx context.Context, relaySrv server, httpSrv server, shutdownTimeout time.Duration) {
 	// Start servers (errors from ListenAndServe are logged but ignored here)
 	go func() {
 		if err := relaySrv.ListenAndServe(); err != nil {
@@ -127,11 +137,6 @@ func serveComponents(ctx context.Context, relaySrv serverRunner, httpSrv serverR
 			log.Printf("HTTP server error: %v", err)
 		}
 	}()
-
-	log.Println("Server started successfully")
-	log.Println("  /             - WebTransport & MoQ endpoint")
-	log.Println("  /health       - Health check (?probe=live|ready)")
-	log.Println("  /metrics      - Prometheus metrics")
 
 	// Wait for cancellation
 	<-ctx.Done()
