@@ -8,7 +8,20 @@ export function Dashborad() {
 	const { username, regenerate } = createUsername();
 	const client = new Client();
 	const mux = DefaultTrackMux;
-	const session = client.dial("https://localhost:6670", mux);
+	const relayUrl = import.meta.env.VITE_RELAY_URL ?? "https://localhost:4433";
+	const session = client.dial(relayUrl, mux);
+	// Debug: log session lifecycle
+	session.then((s) => {
+		console.log("[client] session connected to", relayUrl);
+		try {
+			(globalThis as Record<string, unknown>).__session = s; // expose for interactive debugging
+			(globalThis as Record<string, unknown>).__mux = mux;
+			console.log("[client] session methods:", Object.getOwnPropertyNames(Object.getPrototypeOf(s)));
+			console.log("[client] mux keys:", Object.keys(mux));
+		} catch (err) {
+			console.warn("[client] debug expose failed:", err);
+		}
+	}).catch((e) => console.error("[client] session failed:", e));
 	return (
 		<>
 			<div
