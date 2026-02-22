@@ -41,7 +41,7 @@ func TestServer_Init(t *testing.T) {
 				t.Error("Expected panic but got none")
 			}
 		}()
-		server.init()
+		server.ListenAndServe()
 	})
 
 	t.Run("init with custom config", func(t *testing.T) {
@@ -159,8 +159,8 @@ func TestServer_Muxes_SeparateInstances(t *testing.T) {
 	require.NotNil(t, server.TrackMux, "TrackMux should be initialized")
 }
 
-// TestServer_Init_WithNilTLSConfig tests that server panics without TLS config
-func TestServer_Init_WithNilTLSConfig(t *testing.T) {
+// TestServer_ListenAndServe_WithNilTLSConfig tests that ListenAndServe returns an error without TLS config
+func TestServer_ListenAndServe_WithNilTLSConfig(t *testing.T) {
 	server := &Server{
 		Addr:      "localhost:4433",
 		TLSConfig: nil,
@@ -171,7 +171,7 @@ func TestServer_Init_WithNilTLSConfig(t *testing.T) {
 			t.Error("Expected panic but got none")
 		}
 	}()
-	server.init()
+	server.ListenAndServe()
 }
 
 // TestServer_Config_Persistence tests that provided config is preserved

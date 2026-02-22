@@ -17,9 +17,6 @@ function App() {
 					Relay URL: <code>{import.meta.env.VITE_RELAY_URL}</code>
 				</p>
 				<p>
-					API URL: <code>{import.meta.env.VITE_HEALTH_URL}</code>
-				</p>
-				<p>
 					Mode: <code>{import.meta.env.DEV ? "Development" : "Production"}</code>
 				</p>
 				<div style={{ "margin-top": "16px" }}>

@@ -4,7 +4,7 @@ import { type Session, SubscribeErrorCode } from "@okdaichi/moq";
 import { deserializeMediaFrame } from "../publish/media_frame.ts";
 import { useBroadcastPath } from "../useBroadcastPath.ts";
 import { background, withCancel } from "@okdaichi/golikejs/context";
-// import type { VideoMetadata } from "../metadata/mod.ts";
+import type { VideoMetadata } from "../metadata/mod.ts";
 
 export function SubscribeBoard(props: { session: Promise<Session> }) {
 	const [isSubscribed, setIsSubscribed] = createSignal(false);
@@ -54,27 +54,22 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 
 			const session = await props.session;
 
-			// Accept announce to get broadcast path
-			const [announced, annErr] = await session.acceptAnnounce("/");
-			if (annErr) {
-				throw annErr;
-			}
+			// (Old protocol) we previously waited for an announcement ACK on our
+			// broadcast path, but the relay network now uses an SDN controller and
+			// relays no longer forward announces to clients.  Instead we simply
+			// connect directly to the desired path.  The caller already knows the
+			// broadcast path (derived from the username) so there's nothing to wait
+			// for.  Keep the acceptAnnounce call available if we ever want to show
+			// discovery later, but it must not block the subscription.
+			//
+			// const [announced, annErr] = await session.acceptAnnounce("/");
+			// if (annErr) {
+			//     throw annErr;
+			// }
 
-			// Wait until we receive an announcement that is our own broadcast path as an ACK
-			while (true) {
-				const [announcement, err] = await announced.receive(new Promise(() => {}));
-				if (err) {
-					throw err;
-				}
+			console.log("[Subscribe] skipping announce handshake, using path", broadcastPath);
 
-				if (announcement.broadcastPath === broadcastPath) {
-					break;
-				}
-			}
-
-			// Subscribe to video metadata track
-			// TODO: Re-enable when metadata track is properly implemented on publisher side
-			/*
+			// Subscribe to video metadata track (used to configure decoder codec/size)
 			session.subscribe(broadcastPath, "video.meta").then(
 				async ([videoMetaTrack, videoMetaErr]) => {
 					if (videoMetaErr) {
@@ -88,11 +83,12 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 
 					await group.readFrame((frame) => {
 						const meta = JSON.parse(new TextDecoder().decode(frame)) as VideoMetadata;
+						// Configure decoder from publisher-provided metadata
 						videoDecodeNode?.configure(meta);
+						console.log("Video decoder configured from metadata:", meta);
 					});
 				},
 			);
-			*/
 
 			// Subscribe to video track
 			console.log("[Subscribe] Subscribing to video track...");
@@ -184,20 +180,15 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 		console.log("Stopped subscribing");
 	};
 
-	// Auto-reconfigure when canvas size changes
+	// Keep canvas-size aware but do NOT hardcode codec — decoder will be
+	// configured from publisher `video.meta` when available.
 	createEffect(() => {
 		const width = canvasWidth();
 		const height = canvasHeight();
 
 		if (videoDecodeNode && width > 0 && height > 0) {
-			// Configure VideoDecodeNode with hardcoded codec info (VP9)
-			// TODO: Need mechanism to receive resolution info from publisher
-			videoDecodeNode.configure({
-				codec: "vp09.00.10.08",
-				codedWidth: width,
-				codedHeight: height,
-			});
-			console.log(`Video decoder configured for ${width}x${height}`);
+			// Informational only: actual codec/configuration comes from `video.meta`.
+			console.log(`Video decoder canvas size set to ${width}x${height}`);
 		}
 	});
 

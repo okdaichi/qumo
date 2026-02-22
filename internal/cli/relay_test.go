@@ -457,7 +457,7 @@ func TestServeComponents_ShutdownOnContextCancel(t *testing.T) {
 	defer cancel()
 
 	// Run serveComponents in background
-	go serveComponents(ctx, relayMock, httpMock, 1*time.Second)
+	go func() { _ = serveComponents(ctx, relayMock, httpMock, 1*time.Second) }()
 
 	// wait for both ListenAndServe to have been invoked
 	<-relayMock.listenCalled
@@ -491,7 +491,7 @@ func TestServeComponents_IgnoresImmediateListenError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go serveComponents(ctx, relayMock, httpMock, 1*time.Second)
+	go func() { _ = serveComponents(ctx, relayMock, httpMock, 1*time.Second) }()
 
 	// relayMock.listenCalled will be closed quickly even though it returned
 	<-relayMock.listenCalled
@@ -504,5 +504,31 @@ func TestServeComponents_IgnoresImmediateListenError(t *testing.T) {
 		// ok
 	case <-time.After(500 * time.Millisecond):
 		t.Fatal("http shutdown was not called after context cancel")
+	}
+}
+
+// panicServer simulates a server whose ListenAndServe panics.
+// serveComponents should recover the panic and return an error.
+type panicServer struct{}
+
+func (p *panicServer) ListenAndServe() error          { panic("boom") }
+func (p *panicServer) Shutdown(context.Context) error { return nil }
+
+func TestServeComponents_ReturnsErrorOnPanic(t *testing.T) {
+	relayPanic := &panicServer{}
+	httpMock := newMockServer(nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- serveComponents(ctx, relayPanic, httpMock, 1*time.Second) }()
+
+	select {
+	case err := <-errCh:
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "panic")
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("serveComponents did not return after panic")
 	}
 }

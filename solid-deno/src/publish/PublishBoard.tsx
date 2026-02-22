@@ -74,6 +74,7 @@ export function PublishBoard(props: { mux: TrackMux }) {
 	let cancelPublish: CancelFunc;
 
 	const startStreaming = async () => {
+		console.log("[publish] startStreaming invoked");
 		[publishCtx, cancelPublish] = withCancel(background());
 
 		try {
@@ -90,6 +91,7 @@ export function PublishBoard(props: { mux: TrackMux }) {
 			sourceNode.connect(videoContext.destination);
 			sourceNode.connect(videoEncodeNode);
 			sourceNode.start();
+			console.log("[publish] sourceNode started");
 
 			setIsStreaming(true);
 			console.log(`Started streaming from ${sourceType()}`);
@@ -99,11 +101,40 @@ export function PublishBoard(props: { mux: TrackMux }) {
 			console.error("Failed to start streaming:", err);
 		}
 
+		// Debug: catch unhandled rejections in this function scope
+		globalThis.addEventListener('unhandledrejection', (ev) => {
+			console.error('[publish] unhandledrejection:', (ev as PromiseRejectionEvent).reason);
+		});
+
 		// Video metadata
+		console.log("[publish] creating videoMetaStream/writer");
 		const videoMetaStream = new TransformStream<VideoMetadata>(); // TODO: specify type
 		const videoMetaWriter = videoMetaStream.writable.getWriter();
 		// const videoMetaReader = videoMetaStream.readable.getReader();
 		let videoMeta: VideoMetadata | undefined;
+
+		// Seed initial video metadata so subscribers can configure decoder early.
+		// This helps when encoder doesn't immediately expose decoderConfig on the first keyframe.
+		try {
+			console.log("[publish] seeding initial video.meta — building seedConfig");
+			const seedConfig = await videoEncoderConfig({
+				width: canvasWidth(),
+				height: canvasHeight(),
+				bitrate: 2_500_000,
+				frameRate: 30,
+				tryHardware: true,
+			});
+			const seedMeta = { ...(seedConfig as unknown as VideoDecoderConfig), startGroup: 0 } as unknown as VideoMetadata;
+			try {
+				console.log("[publish] writing seedMeta to videoMetaWriter:", seedMeta);
+				await videoMetaWriter.write(seedMeta);
+				console.log("[publish] seeded initial video.meta:", seedMeta);
+			} catch (werr) {
+				console.error("[publish] failed to seed initial video.meta:", werr);
+			}
+		} catch (err) {
+			console.error("[publish] failed to build seed video config:", err);
+		}
 
 		// Audio metadata
 		const audioMetaStream = new TransformStream<AudioMetadata>(); // TODO: specify type
@@ -112,12 +143,15 @@ export function PublishBoard(props: { mux: TrackMux }) {
 		let audioMeta: AudioMetadata | undefined;
 
 		// Publish
-		mux.publishFunc(
-			publishCtx.done(),
-			broadcastPath,
-			async (track) => {
-				console.log("[publishFunc] Track handler called for:", track.trackName);
-				switch (track.trackName) {
+		console.log("[publish] calling mux.publishFunc with broadcastPath=", broadcastPath);
+		try {
+			console.log("[publish] invoking mux.publishFunc now");
+			mux.publishFunc(
+				publishCtx.done(),
+				broadcastPath,
+				async (track) => {
+					console.log("[publishFunc] Track handler called for:", track.trackName);
+					switch (track.trackName) {
 					case "video": {
 						console.log("[publishFunc] Starting video track processing");
 						if (!videoEncodeNode) {
@@ -143,12 +177,13 @@ export function PublishBoard(props: { mux: TrackMux }) {
 										}
 										currentGroup = group;
 
-										if (decoderConfig) {
-											videoMeta = {
+										if (decoderConfig) {										console.log("[publish] encoder provided decoderConfig:", decoderConfig);											videoMeta = {
 												...decoderConfig,
 												startGroup: currentGroup.sequence,
 											};
-											await videoMetaWriter.write(videoMeta);
+										console.log("[publish] enqueueing video.meta:", videoMeta);
+										await videoMetaWriter.write(videoMeta);
+										console.log("[publish] video.meta written");
 										}
 										break;
 									}
@@ -174,6 +209,47 @@ export function PublishBoard(props: { mux: TrackMux }) {
 						await done;
 						break;
 					}
+
+					// New: publish video metadata so subscribers can auto-configure decoder
+					case "video.meta": {
+						console.log("[publishFunc] Starting video.meta track");
+						const reader = videoMetaStream.readable.getReader();
+						try {
+							while (true) {
+								const { value: meta, done: streamDone } = await reader.read();
+								if (streamDone) break;
+								console.log("[publishFunc video.meta] received meta from stream:", meta);
+								const json = JSON.stringify(meta);
+								const buf = new TextEncoder().encode(json);
+
+								const [group, openErr] = await track.openGroup();
+								if (openErr) {
+									console.error("video.meta: openGroup error", openErr);
+									break;
+								}
+
+								const metaFrame = new MediaFrame({
+									timestamp: Date.now() * 1000,
+									byteLength: buf.byteLength,
+									copyTo(target: ArrayBuffer | ArrayBufferView) {
+										new Uint8Array(target as ArrayBuffer).set(buf);
+									},
+								});
+
+								const writeErr = await group.writeFrame(metaFrame);
+								if (writeErr) {
+									console.error("video.meta: writeFrame error", writeErr);
+								} else {
+									console.log("[publishFunc video.meta] wrote meta frame (group=%d)", group.sequence);
+								}
+								void group.close();
+							}
+						} finally {
+							reader.releaseLock?.();
+						}
+						break;
+					}
+
 					case "audio": {
 						if (!audioEncodeNode) {
 							throw new Error("Audio encode node not initialized");
@@ -213,6 +289,16 @@ export function PublishBoard(props: { mux: TrackMux }) {
 				}
 			},
 		);
+
+			// broadcast path announcement is taken care of by the mux; the session
+			// object exposed to the page currently does not implement a public
+			// `announce` method any more.  We retain the debug hook above but stop
+			// trying to invoke it explicitly.
+		} catch (err) {
+			const errorMessage = err instanceof Error ? err.message : String(err);
+			setError(errorMessage);
+			console.error("[publish] streaming error:", err);
+		}
 	};
 
 	const stopStreaming = () => {
