@@ -23,13 +23,13 @@ qumo-relay のオブザーバビリティスタック構成。
 ```bash
 # 起動
 cd deploy
-docker-compose up -d
+docker compose up -d
 
 # 確認
-docker-compose ps
+docker compose ps
 
 # ログ
-docker-compose logs -f otel-collector
+docker compose logs -f otel-collector
 ```
 
 ## アクセス
@@ -48,7 +48,7 @@ export OTEL_ENDPOINT=localhost:4317
 export OTEL_SAMPLING_RATE=1.0
 
 # 起動
-./qumo-relay -config configs/config.yaml
+./qumo-relay -config config.relay.yaml
 ```
 
 または config.yaml で設定：
@@ -62,7 +62,7 @@ server:
 
 ```
 deploy/
-├── docker-compose.yaml       # Docker Compose 定義
+├── docker compose.yaml       # Docker Compose 定義
 ├── otel-collector-config.yaml # OTel Collector 設定
 ├── prometheus.yaml           # Prometheus 設定
 └── grafana/
@@ -116,7 +116,7 @@ service:
 curl http://localhost:13133/
 
 # ログ確認
-docker-compose logs otel-collector
+docker compose logs otel-collector
 ```
 
 ### メトリクスが表示されない

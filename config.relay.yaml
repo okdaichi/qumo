@@ -1,0 +1,38 @@
+# Configuration for qumo relay server
+
+server:
+  # Address to bind the relay server (QUIC/MOQT)
+  address: "0.0.0.0:4433"
+  
+  # TLS certificate files
+  cert_file: "certs/server.crt"
+  key_file: "certs/server.key"
+  
+  # Health check HTTP endpoint (optional)
+  # Used by load balancers and Kubernetes for health/readiness probes
+  # Endpoints: /health, /healthz, /ready
+  health_check_addr: ":8080"
+
+relay:
+  # Number of group caches to keep in memory
+  # Higher values use more memory but reduce cache misses
+  # Default: 100
+  group_cache_size: 100
+  
+  # Frame buffer size in bytes
+  # Should match your typical media frame size (e.g., 1500 for network MTU)
+  # Default: 1500
+  frame_capacity: 1500
+
+# SDN auto-announce (optional)
+# When configured, this relay will automatically register received
+# moqt.Announcements with the SDN controller's announce table.
+# Other relays can then discover which relay holds which track.
+# sdn:
+#   url: "https://sdn.example.com:8090"
+#   relay_name: "relay-tokyo-1"  # defaults to relay.node_id if omitted
+#   heartbeat_interval_sec: 30   # re-PUT interval (default: 30)
+#   tls:                         # optional mTLS for relay→SDN
+#     cert_file: "certs/relay.crt"
+#     key_file: "certs/relay.key"
+#     ca_file: "certs/ca.crt"

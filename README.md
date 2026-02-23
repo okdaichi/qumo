@@ -4,200 +4,687 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/okdaichi/qumo)](https://goreportcard.com/report/github.com/okdaichi/qumo)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
-**qumo** is a Media over QUIC (MoQ) relay server and CDN implementation, providing high-performance media streaming over the QUIC transport protocol.
+**qumo** is a high-performance Media over QUIC (MoQ) relay server with intelligent topology management, enabling distributed media streaming over the QUIC transport protocol.
 
 ## Features
 
-- 🚀 High-performance media relay using QUIC
-- 📡 Support for Media over QUIC protocol
-- 🔒 Built-in TLS/security support
-- 📊 Prometheus metrics for monitoring
-- ⚙️ Flexible YAML-based configuration
-- 🐳 Docker support (coming soon)
-
-## Port Configuration
-
-**Standard Ports:**
-- `4433/udp` - QUIC/MoQT relay server
-- `8080/tcp` - Health check & metrics HTTP endpoint
-- `5173/tcp` - Web demo frontend (development only)
-
-**URLs:**
-- Relay: `https://localhost:4433` (or `https://<WSL-IP>:4433` on Windows)
-- Health: `http://localhost:8080/health`
-- Web Demo: `http://localhost:5173`
+- 🚀 **High-Performance Relay**: Built on QUIC for low-latency media streaming
+- 📡 **MoQT Protocol**: Full Media over QUIC Transport support
+- 🧭 **SDN Controller**: Centralized topology and routing management
+-  **Observability**: Prometheus metrics, health probes, and status APIs
+- 🔒 **TLS Security**: Built-in TLS 1.3 support for encrypted connections
+- 💾 **Persistent Topology**: Optional disk-based topology storage
+- 🌐 **HA Support**: Peer synchronization for high-availability deployments
 
 ## Quick Start
 
-### Prerequisites
+### Demo Environment (Try it Now!)
 
-- Go 1.21 or higher
-- Basic understanding of QUIC protocol
-
-### Installation
+Experience a complete MoQT network with 1 SDN controller and 3 relay servers:
 
 ```bash
-go install github.com/okdaichi/qumo/cmd/qumo-relay@latest
+# Start demo environment (network auto-configured)
+docker compose -f docker compose.simple.yml up
+
+# The setup happens automatically - watch the logs!
+# Once you see "✅ Demo network configured!", try:
+
+# View network topology
+curl http://localhost:8090/graph | jq
+
+# Find optimal route from Tokyo to New York
+curl "http://localhost:8090/route?from=relay-tokyo&to=relay-newyork"
+
+# Stop demo (in another terminal)
+docker compose -f docker compose.simple.yml down
 ```
 
-### Building from Source
+**Network Topology (auto-configured):**
+```
+relay-tokyo (Asia) <--250ms--> relay-london (Europe) <--80ms--> relay-newyork (Americas)
+```
+
+**Access Points:**
+- SDN Controller: http://localhost:8090
+- Relay Tokyo: https://localhost:4433 (health: http://localhost:8080)
+- Relay London: https://localhost:4434 (health: http://localhost:8081)
+- Relay New York: https://localhost:4435 (health: http://localhost:8082)
+
+**No shell scripts or manual setup required!** Everything runs in Docker and works the same on Windows, macOS, and Linux.
+
+### For External Users (Easiest)
+
+Get started in 3 steps without cloning the repository:
+
+**Option 1: Super Simple (PostgreSQL-style)**
+
+Just add to your docker compose.yml - no config files or certificates needed:
+
+```yaml
+services:
+  qumo-relay:
+    image: ghcr.io/okdaichi/qumo:latest
+    ports:
+      - "4433:4433/udp"
+      - "8080:8080"
+    environment:
+      - INSECURE=true  # Auto-generates self-signed certs
+
+  # Or use the provided simple compose file:
+  # docker compose -f docker compose.simple.yml up -d
+```
+
+That's it! Visit:
+- Relay health: http://localhost:8080/health
+- Relay metrics: http://localhost:8080/metrics
+
+**Option 2: Full Setup (with real certificates)**
+
+```bash
+# 1. Download config files
+mkdir qumo && cd qumo
+curl -O https://raw.githubusercontent.com/okdaichi/qumo/main/config.relay.yaml
+curl -O https://raw.githubusercontent.com/okdaichi/qumo/main/config.sdn.yaml
+curl -O https://raw.githubusercontent.com/okdaichi/qumo/main/docker compose.external.yml
+
+# 2. Generate TLS certificates
+mkdir -p certs
+mkcert -install
+mkcert -cert-file certs/server.crt -key-file certs/server.key localhost 127.0.0.1 ::1
+
+# 3. Start services
+docker compose -f docker compose.external.yml up -d
+
+# Verify
+curl http://localhost:8090/graph  # SDN Controller
+curl http://localhost:8080/health # Relay Server
+```
+
+### For Developers
+
+See [Installation](#installation) and [Development](#development) sections below.
+
+## Installation
+
+#### Option 1: Install via Go
+
+```bash
+go install github.com/okdaichi/qumo@latest
+```
+
+#### Option 2: Download Binary (Recommended)
+
+Download the latest binary from [GitHub Releases](https://github.com/okdaichi/qumo/releases):
+
+```bash
+# Linux/macOS
+curl -L https://github.com/okdaichi/qumo/releases/latest/download/qumo-linux-amd64 -o qumo
+chmod +x qumo
+./qumo relay -config config.relay.yaml
+
+# Windows
+# Download qumo-windows-amd64.exe from releases page
+```
+
+#### Option 3: Docker (No Build Required)
+
+```bash
+# Pull pre-built image from GitHub Container Registry
+docker pull ghcr.io/okdaichi/qumo:latest
+
+# Or use Docker Hub
+docker pull okdaichi/qumo:latest
+
+# Run relay
+docker run -d \
+  --name qumo-relay \
+  -p 4433:4433/udp \
+  -p 8080:8080 \
+  -v $(pwd)/certs:/app/certs:ro \
+  ghcr.io/okdaichi/qumo:latest relay -config config.relay.yaml
+```
+
+#### Option 4: Build from Source
 
 ```bash
 git clone https://github.com/okdaichi/qumo.git
 cd qumo
-go build -o bin/qumo-relay ./cmd/qumo-relay
+go build -o qumo
 ```
 
-### Running the Relay
+### Generate TLS Certificates (Development)
+
+For local testing, generate self-signed certificates:
 
 ```bash
-# Copy the example configuration
-cp configs/config.example.yaml config.yaml
-
-# Edit the configuration as needed
-# vim config.yaml
-
-# Run the relay server
-./bin/qumo-relay --config config.yaml
+openssl req -x509 -newkey rsa:4096 -keyout certs/server.key \
+  -out certs/server.crt -days 365 -nodes \
+  -subj "/CN=localhost" \
+  -config certs/dev.cnf
 ```
 
-## Configuration
+### Run Relay Server
 
-See [`configs/config.example.yaml`](configs/config.example.yaml) for a complete configuration example with detailed comments.
+```bash
+# Start relay server
+./qumo relay -config config.relay.yaml
+```
 
-Basic configuration structure:
+The relay server will start on:
+- **QUIC/MoQT**: `0.0.0.0:4433` (UDP)
+- **Health/Metrics**: `localhost:8080` (HTTP)
+
+Verify it's running:
+
+```bash
+curl http://localhost:8080/health
+```
+
+## Docker Deployment
+
+Run qumo in isolated containers for development and testing.
+
+### Prerequisites
+
+- Docker Engine 20.10+
+- Docker Compose v2.0+ (optional, for multi-service setup)
+
+### Using Pre-built Images (Recommended)
+
+Pull and run the latest release without building:
+
+```bash
+# Option 1: Download external compose file
+curl -O https://raw.githubusercontent.com/okdaichi/qumo/main/docker compose.external.yml
+
+# Generate certificates (if not already done)
+mkdir -p certs
+mkcert -install
+mkcert -cert-file certs/server.crt -key-file certs/server.key localhost 127.0.0.1 ::1
+
+# Download default config files
+curl -O https://raw.githubusercontent.com/okdaichi/qumo/main/config.relay.yaml
+curl -O https://raw.githubusercontent.com/okdaichi/qumo/main/config.sdn.yaml
+
+# Start services
+docker compose -f docker compose.external.yml up -d
+
+# Option 2: Create docker compose.yml inline
+cat > docker compose.yml <<EOF
+version: '3.8'
+
+services:
+  sdn:
+    image: ghcr.io/okdaichi/qumo:latest
+    container_name: qumo-sdn
+    command: ["sdn", "-config", "config.sdn.yaml"]
+    ports:
+      - "8090:8090"
+    volumes:
+      - ./config.sdn.yaml:/app/config.sdn.yaml:ro
+      - ./data:/app/data
+    restart: unless-stopped
+
+  relay:
+    image: ghcr.io/okdaichi/qumo:latest
+    container_name: qumo-relay
+    command: ["relay", "-config", "config.relay.yaml"]
+    ports:
+      - "4433:4433/udp"
+      - "8080:8080"
+    volumes:
+      - ./config.relay.yaml:/app/config.relay.yaml:ro
+      - ./certs:/app/certs:ro
+    depends_on:
+      - sdn
+    restart: unless-stopped
+EOF
+
+# Start services
+docker compose up -d
+```
+
+### Development Setup (Build from Source)
+
+For contributors or when modifying the code:
+
+1. **Clone repository**:
+   ```bash
+   git clone https://github.com/okdaichi/qumo.git
+   cd qumo
+   ```
+
+2. **Generate TLS certificates** (required for MoQT):
+   ```bash
+   # Install mkcert (first time only)
+   # Windows: winget install FiloSottile.mkcert
+   # macOS: brew install mkcert
+   # Linux: See https://github.com/FiloSottile/mkcert#installation
+
+   # Generate certificates
+   mkdir -p certs
+   mkcert -install
+   mkcert -cert-file certs/server.crt -key-file certs/server.key \
+     localhost 127.0.0.1 ::1
+   ```
+
+2. **Start all services**:
+   ```bash
+   docker compose up -d
+   ```
+
+3. **Verify services**:
+   ```bash
+   # SDN Controller
+   curl http://localhost:8090/graph
+
+   # Relay Health Check
+   curl http://localhost:8080/health
+   ```
+
+4. **View logs**:
+   ```bash
+   # All services
+   docker compose logs -f
+
+   # Specific service
+   docker compose logs -f relay
+   docker compose logs -f sdn
+   ```
+
+5. **Stop services**:
+   ```bash
+   docker compose down
+   ```
+
+### Run Containers Manually
+
+#### Using Pre-built Images
+
+**Run relay server**:
+```bash
+docker run -d \
+  --name qumo-relay \
+  -p 4433:4433/udp \
+  -p 8080:8080 \
+  -v $(pwd)/config.relay.yaml:/app/config.relay.yaml:ro \
+  -v $(pwd)/certs:/app/certs:ro \
+  ghcr.io/okdaichi/qumo:latest relay -config config.relay.yaml
+```
+
+**Run SDN controller**:
+```bash
+docker run -d \
+  --name qumo-sdn \
+  -p 8090:8090 \
+  -v $(pwd)/config.sdn.yaml:/app/config.sdn.yaml:ro \
+  -v $(pwd)/data:/app/data \
+  ghcr.io/okdaichi/qumo:latest sdn -config config.sdn.yaml
+```
+
+#### Build and Run from Source
+
+**Build image**:
+```bash
+docker build -t qumo:latest .
+```
+
+**Run relay server**:
+```bash
+docker run -d \
+  --name qumo-relay \
+  -p 4433:4433/udp \
+  -p 8080:8080 \
+  -v $(pwd)/config.relay.yaml:/app/config.relay.yaml:ro \
+  -v $(pwd)/certs:/app/certs:ro \
+  qumo:latest relay -config config.relay.yaml
+```
+
+**Run SDN controller**:
+```bash
+docker run -d \
+  --name qumo-sdn \
+  -p 8090:8090 \
+  -v $(pwd)/config.sdn.yaml:/app/config.sdn.yaml:ro \
+  -v $(pwd)/data:/app/data \
+  qumo:latest sdn -config config.sdn.yaml
+```
+
+### Port Mapping
+
+| Service | Port | Protocol | Description |
+|---------|------|----------|-------------|
+| Relay   | 4433 | UDP      | MoQT (QUIC) |
+| Relay   | 8080 | TCP      | Health/Metrics |
+| SDN     | 8090 | TCP      | HTTP API |
+
+### Volume Mounts
+
+- `./certs:/app/certs:ro` - TLS certificates (relay)
+- `./data:/app/data` - Persistent topology data (SDN)
+
+### Environment Customization
+
+Override configuration via environment variables:
+
+**Relay Server:**
+- `INSECURE=true` - Auto-generate self-signed certificates (development only)
+- `RELAY_ADDR` - Bind address (default: `0.0.0.0:4433`)
+- `HEALTH_ADDR` - Health check endpoint (default: `:8080`)
+- `CERT_FILE` - TLS certificate path (default: `certs/server.crt`)
+- `KEY_FILE` - TLS key path (default: `certs/server.key`)
+- `GROUP_CACHE_SIZE` - Group cache size (default: `100`)
+- `FRAME_CAPACITY` - Frame buffer size (default: `1500`)
+- `SDN_URL` - SDN controller URL (optional)
+- `RELAY_NAME` - Relay identifier (optional)
+- `HEARTBEAT_INTERVAL` - SDN heartbeat interval in seconds (default: `30`)
+
+**SDN Controller:**
+- `SDN_ADDR` - Bind address (default: `:8090`)
+- `DATA_DIR` - Data directory (default: `./data`)
+- `PEER_URL` - HA peer URL (optional)
+- `SYNC_INTERVAL` - Sync interval in seconds (default: `10`)
+
+**Example:**
+```bash
+docker run -e INSECURE=true -e RELAY_ADDR=:5000 qumo:latest relay -config config.relay.yaml
+```
+
+See [config.relay.yaml](config.relay.yaml) and [config.sdn.yaml](config.sdn.yaml) for available options.
+
+## Integration with Your Project
+
+### As a Microservice (PostgreSQL-style)
+
+Add qumo to your existing docker compose.yml - just like adding a database:
 
 ```yaml
-server:
-  address: "0.0.0.0:4433"
-  cert_file: "certs/server.crt"
-  key_file: "certs/server.key"
+services:
+  # Your existing services
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_PASSWORD: example
+    ports:
+      - "5432:5432"
 
-relay:
-  upstream_url: ""           # Optional upstream server
-  group_cache_size: 100      # Number of groups to cache
-  frame_capacity: 1500       # Frame buffer size in bytes
+  app:
+    image: your-app:latest
+    depends_on:
+      - db
+      - qumo-relay
+
+  # Add qumo - no config files needed!
+  qumo-relay:
+    image: ghcr.io/okdaichi/qumo:latest
+    ports:
+      - "4433:4433/udp"
+      - "8080:8080"
+    environment:
+      - INSECURE=true  # Development mode with auto-generated certs
+    restart: unless-stopped
+```
+
+That's it! Your app can now use:
+- MoQT endpoint: `wss://localhost:4433` (or `qumo-relay:4433` from containers)
+- Health check: `http://qumo-relay:8080/health`
+- Metrics: `http://qumo-relay:8080/metrics`
+
+### Production Setup
+
+For production, provide real certificates:
+
+```yaml
+services:
+  qumo-relay:
+    image: ghcr.io/okdaichi/qumo:latest
+    ports:
+      - "4433:4433/udp"
+      - "8080:8080"
+    volumes:
+      - ./certs:/app/certs:ro  # Mount your real TLS certificates
+      - ./config.relay.yaml:/app/config.relay.yaml:ro
+    restart: unless-stopped
+```
+
+### As a Go Dependency
+
+Use qumo packages in your Go application:
+
+```go
+import (
+    "github.com/okdaichi/qumo/internal/relay"
+    "github.com/okdaichi/qumo/internal/sdn"
+)
+
+// Use relay or SDN components directly
+```
+
+### As a Sidecar (Kubernetes)
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: my-app
+spec:
+  containers:
+  - name: app
+    image: my-app:latest
+  - name: qumo-relay
+    image: ghcr.io/okdaichi/qumo:latest
+    args: ["relay", "-config", "/config/config.relay.yaml"]
+    ports:
+    - containerPort: 4433
+      protocol: UDP
+    - containerPort: 8080
+      protocol: TCP
+    volumeMounts:
+    - name: config
+      mountPath: /config
+    - name: certs
+      mountPath: /app/certs
+  volumes:
+  - name: config
+    configMap:
+      name: qumo-config
+  - name: certs
+    secret:
+      secretName: qumo-certs
+```
+
+## Usage
+
+qumo provides two subcommands for different deployment scenarios.
+
+### relay
+
+Start a media relay server that forwards MoQT streams between publishers and subscribers.
+
+**Start Server:**
+```bash
+qumo relay -config config.relay.yaml
+```
+
+**Configuration:**
+Edit [config.relay.yaml](config.relay.yaml) with your settings.
+
+**Default Ports:**
+- `0.0.0.0:4433` - QUIC/MoQT (UDP)
+- `:8080` - Health/Metrics (HTTP)
+
+**Key Features:**
+- Media track distribution
+- Group caching for performance
+- Prometheus metrics export
+- Auto-announce to SDN controller (opt-in)
+
+**API Endpoints:**
+- `GET /health?probe={live|ready}` - Health probes
+- `GET /metrics` - Prometheus metrics
+
+**Examples:**
+```bash
+# Health check
+curl http://localhost:8080/health
+
+# Readiness probe
+curl http://localhost:8080/health?probe=ready
+
+# Metrics
+curl http://localhost:8080/metrics
+```
+
+**Web Demo:**
+Test with browser-based webcam/audio streaming client:
+```bash
+cd solid-deno
+npm install && npm run dev
+# Open http://localhost:5173
+```
+See [solid-deno/README.md](solid-deno/README.md) for details.
+
+**Auto-Announce (optional):**
+
+When `sdn.url` is set in `config.relay.yaml`, the relay automatically registers received announcements with the SDN controller's announce table. Other relays (or clients) can then query the SDN to discover which relay holds which track.
+
+```yaml
+sdn:
+  url: "https://sdn.example.com:8090"
+  relay_name: "relay-tokyo-1"
+  heartbeat_interval_sec: 30
+  # tls:
+  #   cert_file: "certs/relay.crt"
+  #   key_file: "certs/relay.key"
+  #   ca_file: "certs/ca.crt"
+```
+
+Entries expire after 90 seconds on the SDN side; the relay heartbeat (default 30s) keeps them alive.
+
+### sdn
+
+Start an SDN controller that manages topology and routing across multiple relay nodes.
+
+**Start Controller:**
+```bash
+qumo sdn -config config.sdn.yaml
+```
+
+**Configuration:**
+Edit [config.sdn.yaml](config.sdn.yaml) with your settings.
+
+**Default Port:**
+- `:8090` - HTTP API
+
+**Key Features:**
+- Dynamic relay registration
+- Dijkstra-based routing
+- Track announcement directory
+- Optional persistent storage
+- HA peer synchronization
+
+**API Endpoints:**
+- `PUT /node/<name>` - Register relay
+- `DELETE /node/<name>` - Deregister relay
+- `GET /route?from=X&to=Y` - Compute optimal route
+- `GET /graph` - Get topology
+- `PUT /announce/<track>` - Announce track
+- `GET /announce/lookup?track=X` - Find relays for track
+- `GET /sync` / `PUT /sync` - HA synchronization
+
+**Examples:**
+```bash
+# Get topology
+curl http://localhost:8090/graph
+
+# Compute route
+curl http://localhost:8090/route?from=relay-a&to=relay-b
+
+# Find tracks
+curl http://localhost:8090/announce/lookup?track=camera/video
 ```
 
 ## Architecture
 
-qumo implements a high-performance MOQT relay using:
+### System Overview
 
-- **Frame Pool**: Zero-allocation frame reuse for optimal memory efficiency
-- **Group Cache**: Ring buffer-based caching with configurable size
-- **Broadcast Pattern**: Efficient subscriber notification with buffered channels
-- **Concurrent Safety**: Comprehensive mutex protection and atomic operations
+```mermaid
+graph LR
+    Publisher["Publisher<br/>(Browser)"]
+    Relay["Relay Node<br/>(qumo)"]
+    Subscriber["Subscriber<br/>(Browser)"]
+    SDN["SDN Controller<br/>(qumo)"]
+    Routing["Dijkstra<br/>Routing"]
 
-### Performance Optimizations
-
-- Frame pooling reduces GC pressure
-- Optimized 1ms notification timeout (based on benchmarks)
-- Lock-free operations where possible
-- Efficient ring buffer for group caching
-
-## Project Structure
-
+    Publisher -->|QUIC/MoQ| Relay
+    Relay -->|QUIC/MoQ| Subscriber
+    Relay -->|register/heartbeat| SDN
+    SDN -->|route query| Routing
 ```
-qumo/
-├── cmd/
-│   └── qumo-relay/        # Main relay server application
-├── relay/                 # Core relay implementation
-│   ├── server.go          # MOQT server wrapper
-│   ├── handler.go         # Track relay handler
-│   ├── frame_pool.go      # Memory-efficient frame pooling
-│   ├── group_cache.go     # Ring buffer group cache
-│   └── config.go          # Configuration structures
-├── configs/               # Configuration examples
-├── certs/                 # TLS certificates
-├── docs/                  # Documentation
-└── README.md
-```
-
-## Testing
-
-qumo has comprehensive test coverage:
-
-```bash
-# Run all tests
-go test ./...
-
-# Run tests with coverage
-go test -cover ./...
-
-# Run with race detector
-go test -race ./...
-```
-
-Test coverage:
-- **relay**: 32.7% statement coverage with 67 test cases
-- **cmd/qumo-relay**: 42.9% statement coverage with 12 test cases
-- Focus on concurrent operations, edge cases, and performance
-
-## Documentation
-
-- [Contributing Guidelines](CONTRIBUTING.md)
-- [Code of Conduct](CODE_OF_CONDUCT.md)
-- [Configuration Guide](configs/config.example.yaml)
-
-## Performance
-
-Key performance characteristics:
-
-- **Low Latency**: 1ms notification timeout for optimal balance
-- **Memory Efficient**: Frame pooling prevents allocation overhead
-- **Scalable**: Tested with 1000+ concurrent subscribers
-- **Concurrent**: Thread-safe operations with minimal lock contention
-
-Benchmarks (see `relay/*_test.go`):
-- Frame pool operations: ~0 allocations per Get/Put cycle
-- Broadcast to 1000 subscribers: <1ms
-- Group cache operations: Constant-time access
 
 ## Development
 
-### Running Tests
+**Requirements:** Go 1.26+, Node.js 18+ (for web demo)
 
 ```bash
-# Run all tests
+# Run tests
 go test ./...
 
-# Run tests with coverage
+# Coverage
 go test -coverprofile=coverage.out ./...
-
-# Run tests with race detector
-go test -race ./...
+go tool cover -html=coverage.out
 ```
 
-### Linting
+## Deployment
+
+### Docker (Coming Soon)
 
 ```bash
-golangci-lint run
+# Build image
+docker build -t qumo .
+
+# Run relay
+docker run -p 4433:4433/udp -p 8080:8080 \
+  -v $(pwd)/config.relay.yaml:/config.yaml \
+  -v $(pwd)/certs:/certs \
+  qumo relay -config /config.yaml
 ```
 
-### Contributing
+### Systemd Service
 
-We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.md) for details.
+Create `/etc/systemd/system/qumo-relay.service`:
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'feat: add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+```ini
+[Unit]
+Description=qumo Media Relay Server
+After=network.target
 
-## Community
+[Service]
+Type=simple
+User=qumo
+ExecStart=/usr/local/bin/qumo relay -config /etc/qumo/config.relay.yaml
+Restart=on-failure
+RestartSec=5
 
-- [Discussions](https://github.com/okdaichi/qumo/discussions) - Ask questions and discuss ideas
-- [Issues](https://github.com/okdaichi/qumo/issues) - Report bugs and request features
+[Install]
+WantedBy=multi-user.target
+```
 
-## License
+Enable and start:
 
-This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable qumo-relay
+sudo systemctl start qumo-relay
+```
 
-## Acknowledgments
+### Kubernetes
 
-- Media over QUIC (MoQ) Working Group
-- IETF QUIC Working Group
+See [deploy/README.md](deploy/README.md) for Kubernetes deployment manifests.
 
-## Status
+## Troubleshooting
 
-⚠️ **This project is under active development.** APIs and features may change.
+- **TLS errors**: Regenerate certificates (see Quick Start)
+- **Port in use**: Check with `lsof -i :4433` or `netstat -ano`
+
+```

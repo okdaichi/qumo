@@ -1,6 +1,6 @@
 import { createEffect, createSignal, onCleanup, onMount, Show } from "solid-js";
 import { VideoContext, VideoDecodeNode } from "@okdaichi/av-nodes";
-import { SubscribeErrorCode, type Session } from "@okdaichi/moq";
+import { type Session, SubscribeErrorCode } from "@okdaichi/moq";
 import { deserializeMediaFrame } from "../publish/media_frame.ts";
 import { useBroadcastPath } from "../useBroadcastPath.ts";
 import { background, withCancel } from "@okdaichi/golikejs/context";
@@ -41,9 +41,6 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 	});
 
 	const startSubscribing = async () => {
-		const startTime = performance.now();
-		console.log(`[TRACE] ${(performance.now() - startTime).toFixed(2)}ms: StartSubscribe button clicked`);
-		
 		// Create fresh context for each subscription
 		const [ctx, cancel] = withCancel(background());
 		currentCancel = cancel;
@@ -56,19 +53,14 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 			}
 
 			const session = await props.session;
-			console.log(`[TRACE] ${(performance.now() - startTime).toFixed(2)}ms: Session ready`);
-			console.log(`[TRACE] ${(performance.now() - startTime).toFixed(2)}ms: Session ready`);
 
 			// Accept announce to get broadcast path
-			console.log(`[TRACE] ${(performance.now() - startTime).toFixed(2)}ms: Calling acceptAnnounce`);
 			const [announced, annErr] = await session.acceptAnnounce("/");
 			if (annErr) {
 				throw annErr;
 			}
-			console.log(`[TRACE] ${(performance.now() - startTime).toFixed(2)}ms: acceptAnnounce complete`);
 
 			// Wait until we receive an announcement that is our own broadcast path as an ACK
-			console.log(`[TRACE] ${(performance.now() - startTime).toFixed(2)}ms: Waiting for announcement: ${broadcastPath}`);
 			while (true) {
 				const [announcement, err] = await announced.receive(new Promise(() => {}));
 				if (err) {
@@ -76,7 +68,6 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 				}
 
 				if (announcement.broadcastPath === broadcastPath) {
-					console.log(`[TRACE] ${(performance.now() - startTime).toFixed(2)}ms: Received matching announcement`);
 					break;
 				}
 			}
@@ -105,10 +96,8 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 
 			// Subscribe to video track
 			console.log("[Subscribe] Subscribing to video track...");
-			console.log(`[TRACE] ${(performance.now() - startTime).toFixed(2)}ms: Calling session.subscribe for video`);
 			session.subscribe(broadcastPath, "video").then(
 				([videoTrack, videoErr]) => {
-					console.log(`[TRACE] ${(performance.now() - startTime).toFixed(2)}ms: Subscribe response received`);
 					if (videoErr) {
 						throw videoErr;
 					}
@@ -121,23 +110,23 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 							try {
 								let groupCount = 0;
 								while (isSubscribed()) {
-									console.log(`[TRACE] ${(performance.now() - startTime).toFixed(2)}ms: Accepting group ${groupCount}`);
-									const [group, groupErr] = await videoTrack.acceptGroup(ctx.done());
+									const [group, groupErr] = await videoTrack.acceptGroup(
+										ctx.done(),
+									);
 									if (groupErr) {
-										console.error("moq: Error accepting video group:", groupErr);
+										console.error(
+											"moq: Error accepting video group:",
+											groupErr,
+										);
 										break;
 									}
-									console.log(`[TRACE] ${(performance.now() - startTime).toFixed(2)}ms: Group ${groupCount} accepted`);
 									groupCount++;
 
 									let isKey = true;
-									let frameCount = 0;
+									// let frameCount = 0;
 
 									while (true) {
 										const frameErr = await group.readFrame((frame) => {
-											if (frameCount === 0) {
-												console.log(`[TRACE] ${(performance.now() - startTime).toFixed(2)}ms: First frame received in group ${groupCount - 1}`);
-											}
 											// Deserialize MediaFrame
 											const { timestamp, data } = deserializeMediaFrame(
 												frame,
@@ -151,15 +140,11 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 												data,
 											});
 
-											if (frameCount === 0) {
-												console.log(`[TRACE] ${(performance.now() - startTime).toFixed(2)}ms: First EncodedVideoChunk created, enqueueing to decoder`);
-											}
 											controller.enqueue(chunk);
-											frameCount++;
 											isKey = false;
 										});
 										if (frameErr) {
-											console.log(`moq: readFrame done (frameCount=${frameCount}), err:`, frameErr);
+											console.log(`moq: readFrame done`, "err:", frameErr);
 											break;
 										}
 									}
@@ -179,7 +164,6 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 					});
 
 					// Decode from stream
-					console.log(`[TRACE] ${(performance.now() - startTime).toFixed(2)}ms: Starting decodeFrom`);
 					videoDecodeNode?.decodeFrom(videoStream);
 				},
 			);
@@ -201,7 +185,7 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 	};
 
 	// Auto-reconfigure when canvas size changes
-	createEffect(async () => {
+	createEffect(() => {
 		const width = canvasWidth();
 		const height = canvasHeight();
 
@@ -209,7 +193,7 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 			// Configure VideoDecodeNode with hardcoded codec info (VP9)
 			// TODO: Need mechanism to receive resolution info from publisher
 			videoDecodeNode.configure({
-				codec: 'vp09.00.10.08',
+				codec: "vp09.00.10.08",
 				codedWidth: width,
 				codedHeight: height,
 			});

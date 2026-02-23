@@ -1,10 +1,9 @@
 module github.com/okdaichi/qumo
 
-go 1.25.0
+go 1.26
 
 require (
-	github.com/magefile/mage v1.15.0
-	github.com/okdaichi/gomoqt v0.9.0
+	github.com/okdaichi/gomoqt v0.10.3
 	github.com/prometheus/client_golang v1.23.2
 	github.com/stretchr/testify v1.11.1
 	gopkg.in/yaml.v3 v3.0.1
@@ -21,8 +20,8 @@ require (
 	github.com/prometheus/common v0.66.1 // indirect
 	github.com/prometheus/procfs v0.16.1 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
-	github.com/quic-go/quic-go v0.58.0 // indirect
-	github.com/quic-go/webtransport-go v0.9.1-0.20251115050751-b7714a748e1a // indirect
+	github.com/quic-go/quic-go v0.59.0 // indirect
+	github.com/quic-go/webtransport-go v0.10.0 // indirect
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
 	github.com/stretchr/objx v0.5.3 // indirect
 	go.yaml.in/yaml/v2 v2.4.2 // indirect

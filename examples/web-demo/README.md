@@ -29,6 +29,8 @@ mage web:build
 
 # Clean build artifacts
 mage web:clean
+
+# or use: mage -d ./magefiles <target>
 ```
 
 ## Stack

@@ -1,0 +1,62 @@
+# Git
+.git
+.gitignore
+
+# Build artifacts
+bin/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test artifacts
+*.test
+*.out
+coverage.*
+*.coverprofile
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Dependencies
+vendor/
+
+# Environment
+.env
+.env.local
+
+# Certificates (will be generated or mounted as volume)
+certs/
+
+# Documentation
+*.md
+!README.md
+docs/
+
+# CI/CD
+.github/
+
+# Node modules
+**/node_modules/
+solid-deno/
+
+# Magefiles
+magefiles/
+
+# Nomad
+*.nomad
+
+# Deployment configs
+deploy/
+
+# Examples and demos
+examples/
+benchmarks/
+
+# Go workspace
+go.work
+go.work.sum

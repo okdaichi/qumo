@@ -1,0 +1,14 @@
+# Configuration for qumo SDN controller
+
+graph:
+  # HTTP API listen address
+  listen_addr: ":8090"
+  
+  # Optional: data directory for persistent topology storage
+  data_dir: "./data"
+  
+  # Optional: peer controller URL for HA synchronization
+  peer_url: ""
+  
+  # Sync interval in seconds (default: 10)
+  sync_interval_sec: 10

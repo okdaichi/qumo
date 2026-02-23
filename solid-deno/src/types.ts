@@ -17,11 +17,10 @@ export interface SubscribeConfig {
 
 // Health status (from server API)
 export interface HealthStatus {
-	status: "healthy" | "degraded" | "unhealthy";
+	status: "healthy" | "unhealthy";
 	timestamp: string;
 	uptime: string;
 	active_connections: number;
-	upstream_connected: boolean;
 	version?: string;
 }
 

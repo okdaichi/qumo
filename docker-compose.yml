@@ -1,0 +1,55 @@
+version: '3.8'
+
+services:
+  # SDN Controller
+  sdn:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: qumo-sdn
+    command: ["sdn", "-config", "config.sdn.yaml"]
+    ports:
+      - "8090:8090"
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8090/graph"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    networks:
+      - qumo-net
+
+  # Relay Server
+  relay:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: qumo-relay
+    command: ["relay", "-config", "config.relay.yaml"]
+    ports:
+      - "4433:4433/udp"  # MoQT (QUIC)
+      - "8080:8080"      # HTTP health check
+    volumes:
+      - ./certs:/app/certs:ro
+    depends_on:
+      sdn:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    networks:
+      - qumo-net
+
+networks:
+  qumo-net:
+    driver: bridge
+
+volumes:
+  data:
