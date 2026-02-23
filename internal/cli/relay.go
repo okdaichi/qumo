@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -14,7 +15,10 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/okdaichi/gomoqt/moqt"
+	"github.com/okdaichi/gomoqt/quic"
 	"github.com/okdaichi/qumo/internal/relay"
 	"github.com/okdaichi/qumo/internal/sdn"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -25,8 +29,6 @@ type config struct {
 	Address     string
 	CertFile    string
 	KeyFile     string
-	MetricsAddr string
-	AdminAddr   string
 	RelayConfig relay.Config
 	SDNConfig   *sdn.ClientConfig // nil if auto-announce is disabled
 }
@@ -57,8 +59,13 @@ func RunRelay(args []string) error {
 	relayServer := &relay.Server{
 		Addr:      config.Address,
 		TLSConfig: tlsConfig,
-		Config:    &config.RelayConfig,
-		TrackMux:  trackMux,
+		QUICConfig: &quic.Config{
+			Allow0RTT:                        true,
+			EnableDatagrams:                  true,
+			EnableStreamResetPartialDelivery: true,
+		},
+		Config:   &config.RelayConfig,
+		TrackMux: trackMux,
 		CheckHTTPOrigin: func(r *http.Request) bool {
 			return true //TODO:
 		},
@@ -84,73 +91,130 @@ func RunRelay(args []string) error {
 		go fetcher.Run(ctx)
 	}
 
-	mux := http.NewServeMux()
-	mux.Handle("/health", &healthHandler{
+	// All handlers are registered on DefaultServeMux.
+	// moqt.Server uses DefaultServeMux internally for HTTP/3 QUIC routing,
+	// and the TCP httpServer below also uses it (Handler: nil).
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if err := relayServer.HandleWebTransport(w, r); err != nil {
+			slog.Error("failed to handle web transport", "err", err)
+		}
+	})
+	http.Handle("/health", &healthHandler{
 		statusFunc: relayServer.Status,
 	})
-	mux.Handle("/metrics", promhttp.Handler())
+	http.Handle("/metrics", promhttp.Handler())
 
 	httpServer := &http.Server{
-		Addr:    config.Address,
-		Handler: mux,
+		Addr:              config.Address,
+		ReadHeaderTimeout: 5 * time.Second,
 	}
 
+	log.Println("	Host    :", config.Address)
+	log.Println("	Node ID :", config.RelayConfig.NodeID)
+	log.Println("	Region  :", config.RelayConfig.Region)
+	log.Println("	/       : WebTransport endpoint")
+	log.Println("	/health : liveness/readiness probe")
+	log.Println("	/metrics: Prometheus metrics")
+
 	// Delegate to testable helper that runs servers until ctx is cancelled
-	serveComponents(ctx, relayServer, httpServer, 10*time.Second)
+	if err := serveComponents(ctx, relayServer, httpServer, 10*time.Second); err != nil {
+		slog.Error("serveComponents failed", "err", err)
+		cancel()
+		return err
+	}
 
 	return nil
 }
 
-// serverRunner is a minimal interface implemented by both *relay.Server and
+// server is a minimal interface implemented by both *relay.Server and
 // *http.Server so we can unit-test the run/shutdown flow with fakes.
-type serverRunner interface {
+type server interface {
 	ListenAndServe() error
 	Shutdown(ctx context.Context) error
 }
 
 // serveComponents starts the provided servers and blocks until ctx is cancelled.
-// It intentionally mirrors the previous RunRelay behavior: ListenAndServe
-// errors are logged but do not abort the shutdown sequence.
-func serveComponents(ctx context.Context, relaySrv serverRunner, httpSrv serverRunner, shutdownTimeout time.Duration) {
-	// Start servers (errors from ListenAndServe are logged but ignored here)
-	go func() {
-		if err := relaySrv.ListenAndServe(); err != nil {
-			log.Printf("Server error: %v", err)
-		}
-	}()
+// It recovers panics from ListenAndServe goroutines, returns the first
+// observed error, and performs a graceful shutdown of both servers.
+//
+// Design notes:
+//   - serveComponents owns panic recovery and error reporting but does *not*
+//     call the caller's cancel; the caller decides how to handle returned
+//     errors (and may cancel the parent context).
+//   - We use explicit Shutdown() calls because ListenAndServe blocks until the
+//     server stops (it does not return on context cancellation by itself).
+//   - This function intentionally keeps explicit control flow rather than
+//     using errgroup so the shutdown ordering is clear and testable.
+func serveComponents(ctx context.Context, relaySrv server, httpSrv server, shutdownTimeout time.Duration) error {
+	// Create a derived cancellable context we can cancel when servers exit.
+	derivedCtx, derivedCancel := context.WithCancel(ctx)
+	defer derivedCancel()
 
-	go func() {
-		if err := httpSrv.ListenAndServe(); err != nil {
-			if err == http.ErrServerClosed {
-				return // Normal shutdown
+	g, gctx := errgroup.WithContext(derivedCtx)
+
+	g.Go(func() (retErr error) {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("panic in relay ListenAndServe", "panic", r)
+				derivedCancel()
+				retErr = fmt.Errorf("panic in relay ListenAndServe: %v", r)
 			}
-			log.Printf("HTTP server error: %v", err)
+		}()
+
+		if err := relaySrv.ListenAndServe(); err != nil {
+			derivedCancel()
+			return fmt.Errorf("relay ListenAndServe: %w", err)
 		}
+		derivedCancel()
+		return nil
+	})
+
+	g.Go(func() (retErr error) {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("panic in HTTP ListenAndServe", "panic", r)
+				derivedCancel()
+				retErr = fmt.Errorf("panic in HTTP ListenAndServe: %v", r)
+			}
+		}()
+
+		if err := httpSrv.ListenAndServe(); err != nil {
+			if errors.Is(err, http.ErrServerClosed) {
+				derivedCancel()
+				return nil
+			}
+			derivedCancel()
+			return fmt.Errorf("http ListenAndServe: %w", err)
+		}
+		derivedCancel()
+		return nil
+	})
+
+	// Supervisor: when derived context is done, perform graceful shutdown.
+	shutdownDone := make(chan struct{})
+	go func() {
+		<-gctx.Done()
+
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer shutdownCancel()
+
+		if err := relaySrv.Shutdown(shutdownCtx); err != nil {
+			slog.Error("relay shutdown error", "err", err)
+		}
+		if err := httpSrv.Shutdown(shutdownCtx); err != nil {
+			slog.Error("HTTP server shutdown error", "err", err)
+		}
+
+		close(shutdownDone)
 	}()
 
-	log.Println("Server started successfully")
-	log.Println("  /             - WebTransport & MoQ endpoint")
-	log.Println("  /health       - Health check (?probe=live|ready)")
-	log.Println("  /metrics      - Prometheus metrics")
+	// Wait for goroutines to finish; err will be first non-nil error (if any).
+	err := g.Wait()
 
-	// Wait for cancellation
-	<-ctx.Done()
+	// Ensure shutdown completed before returning.
+	<-shutdownDone
 
-	slog.Info("Shutting down server...")
-
-	// Graceful shutdown with timeout
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
-	defer shutdownCancel()
-
-	if err := relaySrv.Shutdown(shutdownCtx); err != nil {
-		log.Printf("Error during shutdown: %v", err)
-	}
-
-	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
-		log.Printf("Error shutting down http server: %v", err)
-	}
-
-	slog.Info("Server stopped")
+	return err
 }
 
 func loadConfig(filename string) (*config, error) {

@@ -6,9 +6,12 @@ import { UserController, UserProvider } from "./user/UserProvider.tsx";
 
 export function Dashborad() {
 	const { username, regenerate } = createUsername();
+	const relayUrl = import.meta.env.VITE_RELAY_URL ?? "https://localhost:4433";
+
 	const client = new Client();
 	const mux = DefaultTrackMux;
-	const session = client.dial("https://localhost:6670", mux);
+	const session = client.dial(relayUrl, mux);
+	session.catch((e) => console.error("[client] session failed:", e));
 	return (
 		<>
 			<div

@@ -1,20 +1,5 @@
 # Simple Docker Compose - Complete Demo Environment
-#
-# Usage: docker compose -f docker-compose.simple.yml up
-#
-# This demo creates a complete MoQT network:
-#   - 1 SDN Controller (manages topology)
-#   - 3 Relay Servers (relay-tokyo, relay-london, relay-newyork)
-#
-# Relays self-register their topology via heartbeat (no setup service needed).
-# Everything runs in Docker - no shell scripts needed!
-# Works the same on Windows, macOS, and Linux.
-#
-# Access:
-#   - SDN Controller:  http://localhost:8090
-#   - Relay Tokyo:     https://localhost:4433 (Health: http://localhost:8080)
-#   - Relay London:    https://localhost:4434 (Health: http://localhost:8081)
-#   - Relay New York:  https://localhost:4435 (Health: http://localhost:8082)
+# Usage: docker compose -f docker/docker-compose.simple.yml up
 
 services:
   # SDN Controller - Network Brain
@@ -134,29 +119,12 @@ volumes:
   sdn-data:
 
 # How it works:
-#
 # 1. Start everything:
-#    docker compose -f docker-compose.simple.yml up
-#
-#    Each relay self-registers its neighbors via topology heartbeat.
-#    No setup service needed — the SDN graph builds itself!
-#
+#    docker compose -f docker/docker-compose.simple.yml up
 # 2. Explore the network:
-#    # View topology graph
 #    curl http://localhost:8090/graph | jq
-#
-#    # Find shortest path from Tokyo to New York
 #    curl "http://localhost:8090/route?from=relay-tokyo&to=relay-newyork"
-#
-#    # Check relay health
-#    curl http://localhost:8080/health  # Tokyo
-#    curl http://localhost:8081/health  # London
-#    curl http://localhost:8082/health  # New York
-#
 # 3. View logs:
-#    docker compose -f docker-compose.simple.yml logs -f
-#
+#    docker compose -f docker/docker-compose.simple.yml logs -f
 # 4. Stop demo:
-#    docker compose -f docker-compose.simple.yml down
-#
-# No shell scripts required! Works the same on all platforms.
+#    docker compose -f docker/docker-compose.simple.yml down

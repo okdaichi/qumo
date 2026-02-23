@@ -31,9 +31,22 @@ Run `mage help` or `mage -l` to see all available targets.
 - `mage install` - Install to $GOPATH/bin
 - `mage clean` - Clean build artifacts
 
+Manual build with version info (useful if you don't run `mage`):
+
+```bash
+go build -ldflags "-s -w \
+  -X github.com/okdaichi/qumo/internal/version.version=$(git describe --tags --always) \
+  -X github.com/okdaichi/qumo/internal/version.commit=$(git rev-parse --short HEAD) \
+  -X github.com/okdaichi/qumo/internal/version.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  -o qumo .
+```
+
+(Recommended: use `mage build` — it injects the same version metadata automatically.)
+
 ### 🧪 Development
 - `mage test` - Run all tests
 - `mage testVerbose` - Run tests with verbose output
+- `mage coverage` - Run tests and write `coverage.out`
 - `mage fmt` - Format code
 - `mage vet` - Run static analysis
 - `mage lint` - Run golangci-lint
@@ -51,15 +64,17 @@ Run `mage help` or `mage -l` to see all available targets.
 
 ### 🐳 Docker
 - `mage docker:pull` - Pull pre-built image from GHCR
-- `mage docker:build` - Build Docker image
+- `mage docker:build` - Build Docker image (uses `docker/Dockerfile`)
 - `mage docker:up` - Start services with docker compose
 - `mage docker:down` - Stop services
 - `mage docker:logs` - View service logs
 - `mage docker:ps` - List running containers
 - `mage docker:restart` - Restart services
 
+> **Note:** Docker files (Dockerfile, compose manifests, etc.) are located in the `docker/` directory. See `docker/README.md` for manual Docker usage and examples.
+
 ### 🎮 Demo
-- `mage demo:up` - Start demo environment (3 relays + SDN)
+- `mage demo:up` - Start demo environment (3 relays + SDN) — uses `docker/docker-compose.simple.yml`
 - `mage demo:setup` - Configure demo network topology
 - `mage demo:down` - Stop demo environment
 - `mage demo:status` - Check demo status

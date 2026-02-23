@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -35,10 +36,6 @@ type Server struct {
 
 func (s *Server) init() {
 	s.initOnce.Do(func() {
-		if s.TLSConfig == nil {
-			panic("no tls config")
-		}
-
 		if s.TrackMux == nil {
 			s.TrackMux = moqt.DefaultMux
 		}
@@ -54,7 +51,12 @@ func (s *Server) Status() Status {
 	return s.statusHandler.getStatus()
 }
 
+// ListenAndServe starts the relay server.
 func (s *Server) ListenAndServe() error {
+	if s.TLSConfig == nil {
+		panic("relay.Server: TLSConfig is required")
+	}
+
 	s.init()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -74,7 +76,7 @@ func (s *Server) ListenAndServe() error {
 
 			defer downstream.CloseWithError(moqt.NoError, moqt.SessionErrorText(moqt.NoError))
 
-			err = s.Relay(ctx, downstream)
+			err = s.relay(ctx, downstream)
 
 			if err != nil {
 				slog.Error("relay session ended", "err", err)
@@ -90,11 +92,14 @@ func (s *Server) ListenAndServe() error {
 func (s *Server) HandleWebTransport(w http.ResponseWriter, r *http.Request) error {
 	s.init()
 
+	if s.server == nil {
+		return fmt.Errorf("relay.Server: ListenAndServe has not been called")
+	}
+
 	return s.server.HandleWebTransport(w, r)
 }
 
 func (s *Server) Close() error {
-	//
 	s.init()
 
 	if s.server != nil {
@@ -105,29 +110,17 @@ func (s *Server) Close() error {
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
-	//
 	s.init()
 
 	if s.server != nil {
-		done := make(chan error, 1)
-		go func() {
-			done <- s.server.Shutdown(ctx)
-		}()
-
-		select {
-		case err := <-done:
-			if err != nil {
-				return err
-			}
-		case <-ctx.Done():
-			return ctx.Err()
-		}
+		// s.server.Shutdown already respects ctx cancellation.
+		return s.server.Shutdown(ctx)
 	}
 
 	return nil
 }
 
-func (s *Server) Relay(ctx context.Context, sess *moqt.Session) error {
+func (s *Server) relay(ctx context.Context, sess *moqt.Session) error {
 	if s.statusHandler != nil {
 		s.statusHandler.incrementConnections()
 		defer s.statusHandler.decrementConnections()

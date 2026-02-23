@@ -4,6 +4,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/hex"
@@ -11,8 +12,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"runtime"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/magefile/mage/mg"
@@ -64,6 +68,7 @@ func Help() error {
 	fmt.Println("  🧪 Development:")
 	fmt.Println("    mage test         - Run all tests")
 	fmt.Println("    mage testVerbose  - Run tests with verbose output")
+	fmt.Println("    mage coverage     - Run tests and write coverage.out")
 	fmt.Println("    mage fmt          - Format code with go fmt")
 	fmt.Println("    mage vet          - Run go vet for static analysis")
 	fmt.Println("    mage lint         - Run golangci-lint (if installed)")
@@ -177,6 +182,22 @@ func TestVerbose() error {
 	return cmd.Run()
 }
 
+// Coverage runs tests and writes coverage report to coverage.out
+func Coverage() error {
+	fmt.Println("📊 Running tests with coverage...")
+
+	cmd := exec.Command("go", "test", "-coverprofile=coverage.out", "./...")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return err
+	}
+
+	fmt.Println("✅ coverage report written to coverage.out")
+	fmt.Println("Run 'go tool cover -html=coverage.out' to view the report locally")
+	return nil
+}
+
 // Fmt formats all Go code
 func Fmt() error {
 	fmt.Println("✨ Formatting code...")
@@ -227,14 +248,44 @@ func Relay() error {
 	fmt.Println("📡 Starting qumo relay server...")
 	fmt.Println("   Config: ./config.relay.yaml")
 	fmt.Println("   Certs: certs/server.crt, certs/server.key (run 'mage cert')")
-	fmt.Println("   MoQT: https://localhost:4433")
-	fmt.Println("   HTTP: http://localhost:8080")
+	fmt.Println("   Host: https://localhost:4433 (WebTransport/QUIC)")
 	fmt.Println()
 
-	cmd := exec.Command("go", "run", ".", "relay", "-config", "config.relay.yaml")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+	go func() {
+		select {
+		case <-sigCh:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+
+	cmd := exec.CommandContext(ctx, "go", "run", ".", "relay", "-config", "config.relay.yaml")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	// On Windows, exec.CommandContext only kills the direct process (go run),
+	// not the compiled child binary it spawns. Kill the whole process tree.
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return nil
+		}
+		if runtime.GOOS == "windows" {
+			return exec.Command("taskkill", "/F", "/T", "/PID",
+				strconv.Itoa(cmd.Process.Pid)).Run()
+		}
+		return cmd.Process.Kill()
+	}
+
+	err := cmd.Run()
+	if ctx.Err() != nil {
+		return nil // cancelled by signal, not an error
+	}
+	return err
 }
 
 // SDN starts the SDN controller
@@ -293,7 +344,7 @@ func Web() error {
 
 	// Start Vite dev server in the solid-deno project
 	webDir := "solid-deno"
-	cmd := exec.Command("npm", "run", "dev")
+	cmd := exec.Command("deno", "task", "dev")
 	cmd.Dir = webDir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -629,7 +680,7 @@ func (Docker) Up() error {
 	fmt.Println()
 	fmt.Println("✅ Services started!")
 	fmt.Println("   SDN Controller: http://localhost:8090")
-	fmt.Println("   Relay Health:   http://localhost:8080/health")
+	fmt.Println("   Relay Health:   http://localhost:4433/health")
 	fmt.Println()
 	fmt.Println("💡 View logs: mage docker:logs")
 	return nil
@@ -687,7 +738,7 @@ func (Demo) Up() error {
 	fmt.Println("   Network topology will be auto-configured!")
 	fmt.Println()
 
-	cmd := exec.Command("docker", "compose", "-f", "docker-compose.simple.yml", "up")
+	cmd := exec.Command("docker", "compose", "-f", "docker/docker-compose.simple.yml", "up")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
@@ -697,7 +748,7 @@ func (Demo) Up() error {
 func (Demo) Down() error {
 	fmt.Println("🛑 Stopping demo environment...")
 
-	cmd := exec.Command("docker", "compose", "-f", "docker-compose.simple.yml", "down")
+	cmd := exec.Command("docker", "compose", "-f", "docker/docker-compose.simple.yml", "down")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
@@ -708,7 +759,7 @@ func (Demo) Status() error {
 	fmt.Println("📊 Demo Environment Status:")
 	fmt.Println()
 
-	cmd := exec.Command("docker", "compose", "-f", "docker-compose.simple.yml", "ps")
+	cmd := exec.Command("docker", "compose", "-f", "docker/docker-compose.simple.yml", "ps")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -719,8 +770,5 @@ func (Demo) Status() error {
 	fmt.Println("💡 Try these commands:")
 	fmt.Println("   curl http://localhost:8090/graph | jq")
 	fmt.Println("   curl \"http://localhost:8090/route?from=relay-tokyo&to=relay-newyork\"")
-	fmt.Println("   curl http://localhost:8080/health  # Tokyo")
-	fmt.Println("   curl http://localhost:8081/health  # London")
-	fmt.Println("   curl http://localhost:8082/health  # New York")
 	return nil
 }

@@ -1,17 +1,3 @@
-# Docker Compose for External Users
-#
-# This compose file uses pre-built images from GitHub Container Registry.
-# No local build required - ideal for quickly testing or deploying qumo.
-#
-# Usage:
-#   docker compose -f docker compose.external.yml up -d
-#
-# Prerequisites:
-#   1. Create config files (or use the defaults in the repo)
-#   2. Generate TLS certificates:
-#      mkdir -p certs
-#      mkcert -cert-file certs/server.crt -key-file certs/server.key localhost 127.0.0.1 ::1
-
 version: '3.8'
 
 services:
@@ -23,8 +9,8 @@ services:
     ports:
       - "8090:8090"
     volumes:
-      - ./config.sdn.yaml:/app/config.sdn.yaml:ro
-      - ./data:/app/data
+      - ../config.sdn.yaml:/app/config.sdn.yaml:ro
+      - ../data:/app/data
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8090/graph"]
@@ -42,16 +28,16 @@ services:
     command: ["relay", "-config", "config.relay.yaml"]
     ports:
       - "4433:4433/udp"  # MoQT (QUIC)
-      - "8080:8080"      # HTTP health check
+      - "8080:4433"      # host 8080 -> container 4433 (HTTP health/metrics)
     volumes:
-      - ./config.relay.yaml:/app/config.relay.yaml:ro
-      - ./certs:/app/certs:ro
+      - ../config.relay.yaml:/app/config.relay.yaml:ro
+      - ../certs:/app/certs:ro
     depends_on:
       sdn:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:4433/health"]
       interval: 30s
       timeout: 3s
       retries: 3

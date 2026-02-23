@@ -71,6 +71,42 @@ deploy/
             └── datasources.yaml  # Grafana データソース
 ```
 
+## Deployment examples (Systemd & Kubernetes) — experimental
+
+The following operation examples are informational and have not been fully validated by the project maintainers. Use at your own risk; contributions to improve these examples are welcome.
+
+### Systemd Service
+
+Create `/etc/systemd/system/qumo-relay.service`:
+
+```ini
+[Unit]
+Description=qumo Media Relay Server
+After=network.target
+
+[Service]
+Type=simple
+User=qumo
+ExecStart=/usr/local/bin/qumo relay -config /etc/qumo/config.relay.yaml
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Enable and start:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable qumo-relay
+sudo systemctl start qumo-relay
+```
+
+### Kubernetes
+
+No official Kubernetes manifests are included in this repository at the moment. If you need Kubernetes manifests or a Helm chart, open an issue or submit a PR — we can add example manifests here.
+
 ## カスタマイズ
 
 ### サンプリング率の調整

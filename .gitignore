@@ -17,6 +17,7 @@ bin/
 # Code coverage profiles and other test artifacts
 *.out
 coverage.*
+coverage.out
 *.coverprofile
 profile.cov
 

@@ -4,14 +4,14 @@ services:
   # SDN Controller
   sdn:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: docker/Dockerfile
     container_name: qumo-sdn
     command: ["sdn", "-config", "config.sdn.yaml"]
     ports:
       - "8090:8090"
     volumes:
-      - ./data:/app/data
+      - ../data:/app/data
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8090/graph"]
@@ -25,21 +25,21 @@ services:
   # Relay Server
   relay:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: docker/Dockerfile
     container_name: qumo-relay
     command: ["relay", "-config", "config.relay.yaml"]
     ports:
       - "4433:4433/udp"  # MoQT (QUIC)
-      - "8080:8080"      # HTTP health check
+      - "8080:4433"      # host 8080 -> container 4433 (HTTP health/metrics)
     volumes:
-      - ./certs:/app/certs:ro
+      - ../certs:/app/certs:ro
     depends_on:
       sdn:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:4433/health"]
       interval: 30s
       timeout: 3s
       retries: 3

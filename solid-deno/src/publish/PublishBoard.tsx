@@ -1,7 +1,6 @@
 import { createEffect, createSignal, onMount, Show } from "solid-js";
 import { type BroadcastPath, GroupWriter, TrackMux } from "@okdaichi/moq";
 import {
-	AudioEncodeNode,
 	MediaStreamVideoSourceNode,
 	VideoContext,
 	VideoEncodeNode,
@@ -10,7 +9,7 @@ import {
 import { getMediaStream, type MediaSourceType } from "./media.ts";
 import { background, type CancelFunc, type Context, withCancel } from "@okdaichi/golikejs/context";
 import { MediaFrame } from "./media_frame.ts";
-import type { AudioMetadata, VideoMetadata } from "../metadata/mod.ts";
+import type { VideoMetadata } from "../metadata/mod.ts";
 import { useBroadcastPath } from "../useBroadcastPath.ts";
 
 const GOP_DURATION = 1000; // 1 second
@@ -24,13 +23,16 @@ export function PublishBoard(props: { mux: TrackMux }) {
 	const [error, setError] = createSignal<string | null>(null);
 	const [canvasWidth, setCanvasWidth] = createSignal(1280);
 	const [canvasHeight, setCanvasHeight] = createSignal(720);
+	// Signal holding the latest VideoMetadata from the encoder — drives video.meta MoQ track reactively.
+	const [currentVideoMeta, setCurrentVideoMeta] = createSignal<VideoMetadata | undefined>();
 
 	let canvasEle: HTMLCanvasElement | undefined;
 	let lastKeyframeTime = 0;
 	let videoContext: VideoContext | undefined;
 	let sourceNode: MediaStreamVideoSourceNode | null = null;
 	let videoEncodeNode: VideoEncodeNode | undefined;
-	let audioEncodeNode: AudioEncodeNode | undefined;
+	// Writer into the video.meta TransformStream — set when streaming starts.
+	let videoMetaWriterRef: WritableStreamDefaultWriter<VideoMetadata> | undefined;
 
 	onMount(() => {
 		if (canvasEle) {
@@ -70,22 +72,113 @@ export function PublishBoard(props: { mux: TrackMux }) {
 		}
 	});
 
+	// MoQ reactive: whenever the encoder emits updated codec params (e.g. after a resolution
+	// change), write them into the video.meta TransformStream.  The track handler picks them
+	// up and publishes a new MoQ group — subscribers looping on acceptGroup() receive it.
+	createEffect(() => {
+		const meta = currentVideoMeta();
+		if (meta && videoMetaWriterRef) {
+			videoMetaWriterRef.write(meta).catch(console.error);
+		}
+	});
+
 	let publishCtx: Context;
 	let cancelPublish: CancelFunc;
 
 	const startStreaming = async () => {
 		[publishCtx, cancelPublish] = withCancel(background());
 
+		if (!videoContext || !videoEncodeNode) {
+			setError("Video context not initialized");
+			return;
+		}
+
+		// Create metadata streams BEFORE announcing or acquiring media.
+		const videoMetaStream = new TransformStream<VideoMetadata>();
+		videoMetaWriterRef = videoMetaStream.writable.getWriter();
+
+		// Announce tracks to the relay FIRST — before starting media capture.
+		// This ensures the relay has a handler registered before any subscriber
+		// attempts to SUBSCRIBE, preventing RESET_STREAM rejections.
+		mux.publishFunc(
+			publishCtx.done(),
+			broadcastPath,
+			async (track) => {
+				switch (track.trackName) {
+					case "video": {
+						if (!videoEncodeNode) {
+							throw new Error("Encode node not initialized");
+						}
+
+						let currentGroup: GroupWriter | undefined = undefined;
+
+						const { done } = videoEncodeNode.encodeTo({
+							output: async (
+								chunk: EncodedVideoChunk,
+								decoderConfig?: VideoDecoderConfig,
+							) => {
+								if (chunk.type === "key") {
+									if (currentGroup) void currentGroup.close();
+									const [group, err] = await track.openGroup();
+									if (err) return err;
+									currentGroup = group;
+									if (decoderConfig) {
+										// Signal update triggers createEffect → videoMetaWriterRef.write() → MoQ group publish.
+										setCurrentVideoMeta({ ...decoderConfig, startGroup: currentGroup.sequence });
+									}
+								} else if (!currentGroup) {
+									// Drop delta frames until we get a keyframe.
+									return;
+								}
+
+								const err = await currentGroup.writeFrame(new MediaFrame(chunk));
+								if (err) throw err;
+							},
+						});
+
+						await done;
+						break;
+					}
+
+					case "video.meta": {
+					const reader = videoMetaStream.readable.getReader();
+					try {
+						while (true) {
+							const { value: meta, done } = await reader.read();
+							if (done) break;
+							const buf = new TextEncoder().encode(JSON.stringify(meta));
+							const [group, openErr] = await track.openGroup();
+							if (openErr) {
+								console.error("video.meta: openGroup error", openErr);
+								break;
+							}
+							const writeErr = await group.writeFrame(new MediaFrame({
+								timestamp: Date.now() * 1000,
+								byteLength: buf.byteLength,
+								copyTo(target: ArrayBuffer | ArrayBufferView) {
+									new Uint8Array(target as ArrayBuffer).set(buf);
+								},
+							}));
+							if (writeErr) console.error("video.meta: writeFrame error", writeErr);
+							void group.close();
+						}
+					} finally {
+						reader.releaseLock();
+					}
+					break;
+				}
+
+					default:
+						return;
+				}
+			},
+		);
+
+		// Acquire media and start encoding.
 		try {
 			setError(null);
-
-			if (!videoContext || !videoEncodeNode) {
-				throw new Error("Video context not initialized");
-			}
-
 			const stream = await getMediaStream(sourceType());
 
-			// Create and configure source node
 			sourceNode = new MediaStreamVideoSourceNode(videoContext, { mediaStream: stream });
 			sourceNode.connect(videoContext.destination);
 			sourceNode.connect(videoEncodeNode);
@@ -97,126 +190,14 @@ export function PublishBoard(props: { mux: TrackMux }) {
 			const errorMessage = err instanceof Error ? err.message : String(err);
 			setError(errorMessage);
 			console.error("Failed to start streaming:", err);
+			return;
 		}
 
-		// Video metadata
-		const videoMetaStream = new TransformStream<VideoMetadata>(); // TODO: specify type
-		const videoMetaWriter = videoMetaStream.writable.getWriter();
-		// const videoMetaReader = videoMetaStream.readable.getReader();
-		let videoMeta: VideoMetadata | undefined;
-
-		// Audio metadata
-		const audioMetaStream = new TransformStream<AudioMetadata>(); // TODO: specify type
-		const audioMetaWriter = audioMetaStream.writable.getWriter();
-		// const audioMetaReader = audioMetaStream.readable.getReader();
-		let audioMeta: AudioMetadata | undefined;
-
-		// Publish
-		mux.publishFunc(
-			publishCtx.done(),
-			broadcastPath,
-			async (track) => {
-				console.log("[publishFunc] Track handler called for:", track.trackName);
-				switch (track.trackName) {
-					case "video": {
-						console.log("[publishFunc] Starting video track processing");
-						if (!videoEncodeNode) {
-							throw new Error("Encode node not initialized");
-						}
-
-						let currentGroup: GroupWriter | undefined = undefined;
-
-						// Pass the track as the VideoEncodeDestination
-						const { done } = videoEncodeNode.encodeTo({
-							output: async (
-								chunk: EncodedVideoChunk,
-								decoderConfig?: VideoDecoderConfig,
-							) => {
-								switch (chunk.type) {
-									case "key": {
-										if (currentGroup) {
-											void currentGroup.close();
-										}
-										const [group, err] = await track.openGroup();
-										if (err) {
-											return err;
-										}
-										currentGroup = group;
-
-										if (decoderConfig) {
-											videoMeta = {
-												...decoderConfig,
-												startGroup: currentGroup.sequence,
-											};
-											await videoMetaWriter.write(videoMeta);
-										}
-										break;
-									}
-									case "delta": {
-										if (!currentGroup) {
-											// Drop delta frames until we get a keyframe
-											return;
-										}
-
-										break;
-									}
-								}
-
-								const frame = new MediaFrame(chunk);
-
-								const err = await currentGroup.writeFrame(frame);
-								if (err) {
-									throw err;
-								}
-							},
-						});
-
-						await done;
-						break;
-					}
-					case "audio": {
-						if (!audioEncodeNode) {
-							throw new Error("Audio encode node not initialized");
-						}
-
-						const { done } = audioEncodeNode.encodeTo({
-							output: async (
-								chunk: EncodedAudioChunk,
-								decoderConfig?: AudioDecoderConfig,
-							) => {
-								const [group, err] = await track.openGroup();
-								if (err) {
-									return err;
-								}
-
-								if (decoderConfig) {
-									audioMeta = { ...decoderConfig, startGroup: group.sequence };
-									await audioMetaWriter.write(audioMeta);
-								}
-
-								const writeErr = await group.writeFrame(new MediaFrame(chunk));
-								if (writeErr) {
-									// TODO: handle error
-								}
-
-								void group.close();
-							},
-						});
-
-						await done;
-						break;
-					}
-					default: {
-						console.log("[publishFunc] Unknown track:", track.trackName, "- ignoring");
-						return;
-					}
-				}
-			},
-		);
 	};
 
 	const stopStreaming = () => {
 		cancelPublish();
+		videoMetaWriterRef = undefined;
 		if (sourceNode) {
 			sourceNode.stop();
 			sourceNode.dispose();

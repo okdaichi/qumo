@@ -4,20 +4,21 @@ import { type Session, SubscribeErrorCode } from "@okdaichi/moq";
 import { deserializeMediaFrame } from "../publish/media_frame.ts";
 import { useBroadcastPath } from "../useBroadcastPath.ts";
 import { background, withCancel } from "@okdaichi/golikejs/context";
-// import type { VideoMetadata } from "../metadata/mod.ts";
+import type { VideoMetadata } from "../metadata/mod.ts";
 
 export function SubscribeBoard(props: { session: Promise<Session> }) {
 	const [isSubscribed, setIsSubscribed] = createSignal(false);
 	const [error, setError] = createSignal<string | null>(null);
 	const [canvasWidth, setCanvasWidth] = createSignal(1280);
 	const [canvasHeight, setCanvasHeight] = createSignal(720);
+	// Signal for the latest VideoMetadata received over the video.meta MoQ track.
+	const [decoderConfig, setDecoderConfig] = createSignal<VideoMetadata | undefined>();
 
 	const broadcastPath = useBroadcastPath();
 
 	let canvasEle: HTMLCanvasElement | undefined;
 	let videoContext: VideoContext | undefined;
 	let videoDecodeNode: VideoDecodeNode | undefined;
-	// let audioDecodeNode: AudioDecodeNode | undefined;
 
 	// Track current cancel function for cleanup
 	let currentCancel: (() => void) | null = null;
@@ -40,6 +41,16 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 		stopSubscribing();
 	});
 
+	// MoQ reactive: whenever video.meta delivers new codec params, reconfigure the decoder
+	// through the SolidJS reactive graph instead of calling configure() imperatively.
+	createEffect(() => {
+		const config = decoderConfig();
+		if (config) {
+			videoDecodeNode?.configure(config);
+			console.log("[Subscribe] VideoDecoder reactively configured:", config.codec);
+		}
+	});
+
 	const startSubscribing = async () => {
 		// Create fresh context for each subscription
 		const [ctx, cancel] = withCancel(background());
@@ -54,61 +65,55 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 
 			const session = await props.session;
 
-			// Accept announce to get broadcast path
-			const [announced, annErr] = await session.acceptAnnounce("/");
-			if (annErr) {
-				throw annErr;
-			}
+			// Configure decoder immediately with a known-good default so frames
+			// are never fed into an unconfigured VideoDecoder.  video.meta will
+			// reconfigure with exact publisher settings when it arrives.
+			const defaultDecoderConfig: VideoMetadata = {
+				codec: "vp09.00.10.08",
+				codedWidth: canvasWidth(),
+				codedHeight: canvasHeight(),
+				startGroup: 0,
+			};
+			// Signal update triggers createEffect → videoDecodeNode.configure() reactively.
+			setDecoderConfig(defaultDecoderConfig);
 
-			// Wait until we receive an announcement that is our own broadcast path as an ACK
-			while (true) {
-				const [announcement, err] = await announced.receive(new Promise(() => {}));
-				if (err) {
-					throw err;
-				}
-
-				if (announcement.broadcastPath === broadcastPath) {
-					break;
-				}
-			}
-
-			// Subscribe to video metadata track
-			// TODO: Re-enable when metadata track is properly implemented on publisher side
-			/*
+			// Subscribe to video.meta: loop on acceptGroup so every new group
+			// (e.g. encoder reconfigure, resolution change) reconfigures the decoder.
 			session.subscribe(broadcastPath, "video.meta").then(
 				async ([videoMetaTrack, videoMetaErr]) => {
 					if (videoMetaErr) {
-						throw videoMetaErr;
+						console.warn("[Subscribe] video.meta subscribe failed:", videoMetaErr);
+						return;
 					}
 
-					const [group, err] = await videoMetaTrack.acceptGroup(ctx.done());
-					if (err) {
-						throw err;
-					}
+					// Loop: receive every video.meta group published by the encoder.
+					// Each new group calls setDecoderConfig → createEffect → decoder.configure().
+					while (isSubscribed()) {
+						const [group, groupErr] = await videoMetaTrack.acceptGroup(ctx.done());
+						if (groupErr) {
+							console.warn("[Subscribe] video.meta acceptGroup:", groupErr);
+							break;
+						}
 
-					await group.readFrame((frame) => {
-						const meta = JSON.parse(new TextDecoder().decode(frame)) as VideoMetadata;
-						videoDecodeNode?.configure(meta);
-					});
-				},
+						for await (const frame of group.frames()) {
+							const meta = JSON.parse(new TextDecoder().decode(frame.bytes)) as VideoMetadata;
+							setDecoderConfig(meta); // → createEffect → videoDecodeNode.configure(meta)
+							console.log("[Subscribe] video.meta group received, codec:", meta.codec);
+						}
+					}
+					},
 			);
-			*/
 
-			// Subscribe to video track
-			console.log("[Subscribe] Subscribing to video track...");
 			session.subscribe(broadcastPath, "video").then(
-				([videoTrack, videoErr]) => {
+				async ([videoTrack, videoErr]) => {
 					if (videoErr) {
 						throw videoErr;
 					}
 					setIsSubscribed(true);
-					// const audioTrack = await session.subscribe(broadcastPath, "audio");
 
-					// Create TransformStream to convert track data to EncodedVideoChunk stream
 					const videoStream = new ReadableStream<EncodedVideoChunk>({
 						async start(controller) {
 							try {
-								let groupCount = 0;
 								while (isSubscribed()) {
 									const [group, groupErr] = await videoTrack.acceptGroup(
 										ctx.done(),
@@ -120,33 +125,18 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 										);
 										break;
 									}
-									groupCount++;
 
 									let isKey = true;
-									// let frameCount = 0;
 
-									while (true) {
-										const frameErr = await group.readFrame((frame) => {
-											// Deserialize MediaFrame
-											const { timestamp, data } = deserializeMediaFrame(
-												frame,
-											);
-
-											// Create EncodedVideoChunk
-											// First frame of Group is key, rest are delta
-											const chunk = new EncodedVideoChunk({
-												type: isKey ? "key" : "delta",
-												timestamp,
-												data,
-											});
-
-											controller.enqueue(chunk);
-											isKey = false;
+									for await (const frame of group.frames()) {
+										const { timestamp, data } = deserializeMediaFrame(frame.bytes);
+										const chunk = new EncodedVideoChunk({
+											type: isKey ? "key" : "delta",
+											timestamp,
+											data,
 										});
-										if (frameErr) {
-											console.log(`moq: readFrame done`, "err:", frameErr);
-											break;
-										}
+										controller.enqueue(chunk);
+										isKey = false;
 									}
 								}
 								controller.close();
@@ -157,13 +147,13 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 								}
 							} finally {
 								videoTrack.closeWithError(SubscribeErrorCode.InternalError);
-								console.log("[Subscribe] video track closed");
+
 								setIsSubscribed(false);
 							}
 						},
 					});
 
-					// Decode from stream
+					// Decode from stream (decoder already pre-configured with default VP9)
 					videoDecodeNode?.decodeFrom(videoStream);
 				},
 			);
@@ -183,23 +173,6 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 		setIsSubscribed(false);
 		console.log("Stopped subscribing");
 	};
-
-	// Auto-reconfigure when canvas size changes
-	createEffect(() => {
-		const width = canvasWidth();
-		const height = canvasHeight();
-
-		if (videoDecodeNode && width > 0 && height > 0) {
-			// Configure VideoDecodeNode with hardcoded codec info (VP9)
-			// TODO: Need mechanism to receive resolution info from publisher
-			videoDecodeNode.configure({
-				codec: "vp09.00.10.08",
-				codedWidth: width,
-				codedHeight: height,
-			});
-			console.log(`Video decoder configured for ${width}x${height}`);
-		}
-	});
 
 	return (
 		<div class="subscribe-board">
