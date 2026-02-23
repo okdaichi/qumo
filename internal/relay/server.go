@@ -76,7 +76,7 @@ func (s *Server) ListenAndServe() error {
 
 			defer downstream.CloseWithError(moqt.NoError, moqt.SessionErrorText(moqt.NoError))
 
-			err = s.Relay(ctx, downstream)
+			err = s.relay(ctx, downstream)
 
 			if err != nil {
 				slog.Error("relay session ended", "err", err)
@@ -120,7 +120,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return nil
 }
 
-func (s *Server) Relay(ctx context.Context, sess *moqt.Session) error {
+func (s *Server) relay(ctx context.Context, sess *moqt.Session) error {
 	if s.statusHandler != nil {
 		s.statusHandler.incrementConnections()
 		defer s.statusHandler.decrementConnections()
