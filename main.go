@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/okdaichi/qumo/internal/cli"
+	"github.com/okdaichi/qumo/internal/version"
 )
 
 var (
@@ -28,6 +29,12 @@ func run(args []string) int {
 	cmd := args[0]
 	cmdArgs := args[1:]
 
+	// Handle version flags anywhere in args
+	if cmd == "version" || cmd == "--version" || cmd == "-v" {
+		fmt.Println(version.Full())
+		return 0
+	}
+
 	var err error
 	switch cmd {
 	case "relay":
@@ -48,11 +55,12 @@ func run(args []string) int {
 }
 
 func printUsage() {
-	fmt.Fprintln(os.Stderr, "Usage: qumo <command> [flags]")
+	fmt.Fprintf(os.Stderr, "Usage: qumo <command> [flags]  (%s)\n", version.Short())
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Commands:")
 	fmt.Fprintln(os.Stderr, "  relay    Start the MoQ relay server")
 	fmt.Fprintln(os.Stderr, "  sdn      Start the SDN controller")
+	fmt.Fprintln(os.Stderr, "  version  Print version information")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Flags:")
 	fmt.Fprintln(os.Stderr, "  -config string   path to config file")

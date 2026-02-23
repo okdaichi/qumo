@@ -1,8 +1,10 @@
 package topology
 
 import (
+	"context"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -438,4 +440,128 @@ func TestTopology_ConcurrentRegisterAndRoute(t *testing.T) {
 
 	// Should have at least 3 original nodes + 10 new nodes
 	assert.GreaterOrEqual(t, getNodeCount(topo), 13)
+}
+
+func TestTopology_Register_SetsLastSeen(t *testing.T) {
+	topo := &Topology{}
+
+	before := time.Now()
+	topo.Register(RelayInfo{
+		Name:      "relay-a",
+		Neighbors: map[string]float64{},
+	})
+	after := time.Now()
+
+	g := topo.Snapshot()
+	node := g.Nodes["relay-a"]
+	require.NotNil(t, node)
+	assert.False(t, node.LastSeen.IsZero(), "LastSeen should be set")
+	assert.True(t, !node.LastSeen.Before(before) && !node.LastSeen.After(after),
+		"LastSeen should be between before and after")
+}
+
+func TestTopology_Register_UpdatesLastSeen(t *testing.T) {
+	topo := &Topology{}
+
+	topo.Register(RelayInfo{
+		Name:      "relay-a",
+		Neighbors: map[string]float64{},
+	})
+
+	g1 := topo.Snapshot()
+	firstSeen := g1.Nodes["relay-a"].LastSeen
+
+	time.Sleep(5 * time.Millisecond)
+
+	topo.Register(RelayInfo{
+		Name:      "relay-a",
+		Neighbors: map[string]float64{},
+	})
+
+	g2 := topo.Snapshot()
+	secondSeen := g2.Nodes["relay-a"].LastSeen
+	assert.True(t, secondSeen.After(firstSeen), "LastSeen should be updated on re-register")
+}
+
+func TestTopology_SweepStaleNodes_NoTTL(t *testing.T) {
+	topo := &Topology{}
+
+	topo.Register(RelayInfo{Name: "relay-a", Neighbors: map[string]float64{}})
+	removed := topo.SweepStaleNodes()
+	assert.Nil(t, removed, "should not remove anything when NodeTTL is 0")
+	assert.Equal(t, 1, getNodeCount(topo))
+}
+
+func TestTopology_SweepStaleNodes_RemovesExpired(t *testing.T) {
+	topo := &Topology{NodeTTL: 50 * time.Millisecond}
+
+	topo.Register(RelayInfo{Name: "relay-a", Neighbors: map[string]float64{"relay-b": 1}})
+	topo.Register(RelayInfo{Name: "relay-b", Neighbors: map[string]float64{"relay-a": 1}})
+
+	// Before TTL expires — nothing removed
+	removed := topo.SweepStaleNodes()
+	assert.Nil(t, removed)
+	assert.Equal(t, 2, getNodeCount(topo))
+
+	// Wait for TTL to expire
+	time.Sleep(60 * time.Millisecond)
+
+	removed = topo.SweepStaleNodes()
+	assert.Len(t, removed, 2, "both nodes should be removed after TTL")
+	assert.Equal(t, 0, getNodeCount(topo))
+}
+
+func TestTopology_SweepStaleNodes_KeepsFresh(t *testing.T) {
+	topo := &Topology{NodeTTL: 100 * time.Millisecond}
+
+	topo.Register(RelayInfo{Name: "relay-a", Neighbors: map[string]float64{"relay-b": 1}})
+	topo.Register(RelayInfo{Name: "relay-b", Neighbors: map[string]float64{"relay-a": 1}})
+
+	time.Sleep(60 * time.Millisecond)
+
+	// Heartbeat relay-a
+	topo.Register(RelayInfo{Name: "relay-a", Neighbors: map[string]float64{"relay-b": 1}})
+
+	time.Sleep(50 * time.Millisecond)
+
+	// relay-b should be stale, relay-a should still be fresh
+	removed := topo.SweepStaleNodes()
+	assert.Len(t, removed, 1)
+	assert.Equal(t, "relay-b", removed[0])
+
+	g := topo.Snapshot()
+	require.NotNil(t, g.Nodes["relay-a"])
+	// relay-a's edge to relay-b should be gone (dangling edge cleanup)
+	assert.Empty(t, g.Nodes["relay-a"].Edges, "edges to removed relay-b should be cleaned up")
+}
+
+func TestTopology_SweepStaleNodes_SkipsAutoCreated(t *testing.T) {
+	topo := &Topology{NodeTTL: 50 * time.Millisecond}
+
+	// relay-a registers with neighbor relay-b; relay-b is auto-created with zero LastSeen
+	topo.Register(RelayInfo{Name: "relay-a", Neighbors: map[string]float64{"relay-b": 1}})
+
+	time.Sleep(60 * time.Millisecond)
+
+	removed := topo.SweepStaleNodes()
+	// relay-a is stale, but relay-b (auto-created, zero LastSeen) should NOT be swept
+	assert.Len(t, removed, 1)
+	assert.Equal(t, "relay-a", removed[0])
+	assert.Equal(t, 1, getNodeCount(topo), "auto-created relay-b should remain")
+}
+
+func TestTopology_StartSweeper(t *testing.T) {
+	topo := &Topology{NodeTTL: 50 * time.Millisecond}
+
+	topo.Register(RelayInfo{Name: "relay-a", Neighbors: map[string]float64{}})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	topo.StartSweeper(ctx, 30*time.Millisecond)
+
+	// Wait for TTL + sweeper interval
+	time.Sleep(120 * time.Millisecond)
+
+	assert.Equal(t, 0, getNodeCount(topo), "sweeper should have removed stale node")
 }

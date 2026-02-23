@@ -84,7 +84,7 @@ func TestRemoteFetcher_SkipsLocalPaths(t *testing.T) {
 	}
 	fetcher.mu.Lock()
 	fetcher.sessions = make(map[string]*remoteSession)
-	fetcher.tracked = make(map[string]context.CancelFunc)
+	fetcher.tracked = make(map[string]*trackedPath)
 	fetcher.mu.Unlock()
 
 	// Poll should skip /local/stream because it's locally available
@@ -132,7 +132,7 @@ func TestRemoteFetcher_DetectsNewRemotePaths(t *testing.T) {
 	}
 	fetcher.mu.Lock()
 	fetcher.sessions = make(map[string]*remoteSession)
-	fetcher.tracked = make(map[string]context.CancelFunc)
+	fetcher.tracked = make(map[string]*trackedPath)
 	fetcher.client = &moqt.Client{}
 	fetcher.mu.Unlock()
 
@@ -158,11 +158,15 @@ func TestRemoteFetcher_RemovesStaleTracked(t *testing.T) {
 		TrackMux:  mux,
 	}
 	fetcher.sessions = make(map[string]*remoteSession)
-	fetcher.tracked = make(map[string]context.CancelFunc)
-	fetcher.tracked["/old/stream"] = func() {
-		mu.Lock()
-		cancelled = true
-		mu.Unlock()
+	fetcher.tracked = make(map[string]*trackedPath)
+	fetcher.tracked["/old/stream"] = &trackedPath{
+		cancel: func() {
+			mu.Lock()
+			cancelled = true
+			mu.Unlock()
+		},
+		sourceRelay: "relay-old",
+		nextHopAddr: "https://relay-old:4433",
 	}
 
 	// SDN returns no entries (the path is gone)
@@ -224,7 +228,7 @@ func TestRemoteFetcher_FiltersOwnEntries(t *testing.T) {
 	}
 	fetcher.mu.Lock()
 	fetcher.sessions = make(map[string]*remoteSession)
-	fetcher.tracked = make(map[string]context.CancelFunc)
+	fetcher.tracked = make(map[string]*trackedPath)
 	fetcher.client = &moqt.Client{}
 	fetcher.mu.Unlock()
 
@@ -270,7 +274,7 @@ func TestRemoteFetcher_SkipsNoAddress(t *testing.T) {
 	}
 	fetcher.mu.Lock()
 	fetcher.sessions = make(map[string]*remoteSession)
-	fetcher.tracked = make(map[string]context.CancelFunc)
+	fetcher.tracked = make(map[string]*trackedPath)
 	fetcher.client = &moqt.Client{}
 	fetcher.mu.Unlock()
 

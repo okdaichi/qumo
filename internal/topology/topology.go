@@ -1,8 +1,10 @@
 package topology
 
 import (
+	"context"
 	"log/slog"
 	"sync"
+	"time"
 )
 
 // Router abstracts the path-computation algorithm.
@@ -80,6 +82,10 @@ type Topology struct {
 	// Store persists topology snapshots. Optional (nil = no persistence).
 	Store Store
 
+	// NodeTTL is how long a node stays alive without a heartbeat.
+	// Zero means nodes never expire (manual deregistration only).
+	NodeTTL time.Duration
+
 	mu       sync.RWMutex
 	graph    *Graph
 	initOnce sync.Once
@@ -103,6 +109,9 @@ func (t *Topology) Register(reg RelayInfo) {
 		}
 		t.graph.addNode(node)
 	}
+
+	// Update LastSeen on every registration (heartbeat).
+	node.LastSeen = time.Now()
 
 	// Update region if provided.
 	if reg.Region != "" {
@@ -203,10 +212,11 @@ func (t *Topology) deepCopy() *Graph {
 	cp := newGraph()
 	for id, node := range t.graph.Nodes {
 		cpNode := &Node{
-			ID:      node.ID,
-			Region:  node.Region,
-			Address: node.Address,
-			Edges:   make([]Edge, len(node.Edges)),
+			ID:       node.ID,
+			Region:   node.Region,
+			Address:  node.Address,
+			Edges:    make([]Edge, len(node.Edges)),
+			LastSeen: node.LastSeen,
 		}
 		copy(cpNode.Edges, node.Edges)
 		cp.Nodes[id] = cpNode
@@ -250,4 +260,81 @@ func (t *Topology) save() {
 	if err := t.Store.Save(t.graph); err != nil {
 		slog.Error("failed to save topology", "error", err)
 	}
+}
+
+// StartSweeper runs a background goroutine that removes nodes whose
+// LastSeen is older than NodeTTL. It stops when ctx is cancelled.
+// If NodeTTL is 0, the sweeper does nothing.
+func (t *Topology) StartSweeper(ctx context.Context, interval time.Duration) {
+	if t.NodeTTL <= 0 {
+		return
+	}
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				t.SweepStaleNodes()
+			}
+		}
+	}()
+}
+
+// SweepStaleNodes removes all nodes whose LastSeen + NodeTTL is in the past.
+// Returns the names of removed nodes.
+func (t *Topology) SweepStaleNodes() []string {
+	if t.NodeTTL <= 0 {
+		return nil
+	}
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	t.init()
+
+	now := time.Now()
+	cutoff := now.Add(-t.NodeTTL)
+
+	var removed []string
+	for id, node := range t.graph.Nodes {
+		if node.LastSeen.IsZero() {
+			continue // never registered via heartbeat (e.g. auto-created neighbor stub)
+		}
+		if node.LastSeen.Before(cutoff) {
+			removed = append(removed, id)
+		}
+	}
+
+	if len(removed) == 0 {
+		return nil
+	}
+
+	// Remove stale nodes and dangling edges.
+	for _, id := range removed {
+		delete(t.graph.Nodes, id)
+	}
+	for _, node := range t.graph.Nodes {
+		filtered := node.Edges[:0]
+		for _, e := range node.Edges {
+			stale := false
+			for _, id := range removed {
+				if e.To == id {
+					stale = true
+					break
+				}
+			}
+			if !stale {
+				filtered = append(filtered, e)
+			}
+		}
+		node.Edges = filtered
+	}
+
+	t.save()
+
+	slog.Info("topology sweeper: removed stale nodes", "nodes", removed, "remaining", len(t.graph.Nodes))
+	return removed
 }

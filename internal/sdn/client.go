@@ -34,6 +34,18 @@ type ClientConfig struct {
 	// to keep them alive. Default: 30s.
 	HeartbeatInterval time.Duration
 
+	// Region is the geographic region of this relay (e.g. "ap-northeast-1").
+	// Sent in topology heartbeats.
+	Region string
+
+	// Address is the MoQT endpoint URL of this relay (e.g. "https://host:4433").
+	// Sent in topology heartbeats so the SDN can populate NextHopAddress.
+	Address string
+
+	// Neighbors maps neighbor relay name → edge cost.
+	// Sent in topology heartbeats so the SDN keeps the graph alive.
+	Neighbors map[string]float64
+
 	// TLS configures mutual TLS for relay→SDN communication.
 	// If nil, plain HTTP is used (suitable for internal networks).
 	TLS *TLSConfig
@@ -247,6 +259,9 @@ func (c *Client) Run(ctx context.Context) {
 		"relay", c.config.RelayName,
 		"heartbeat", c.config.HeartbeatInterval)
 
+	// Perform initial topology registration immediately.
+	c.topologyHeartbeat(ctx)
+
 	ticker := time.NewTicker(c.config.HeartbeatInterval)
 	defer ticker.Stop()
 	defer close(c.done)
@@ -258,6 +273,7 @@ func (c *Client) Run(ctx context.Context) {
 			return
 		case <-ticker.C:
 			c.heartbeat(ctx)
+			c.topologyHeartbeat(ctx)
 		}
 	}
 }
@@ -294,6 +310,41 @@ func (c *Client) heartbeat(ctx context.Context) {
 		}
 	}
 	slog.Debug("sdn heartbeat completed", "entries", len(paths))
+}
+
+// topologyHeartbeat sends a PUT /relay/<name> to keep this node alive in the SDN topology.
+// This also serves as the initial registration on startup.
+func (c *Client) topologyHeartbeat(ctx context.Context) {
+	if c.config.Neighbors == nil {
+		return // no topology info to send
+	}
+
+	body, _ := json.Marshal(map[string]any{
+		"region":    c.config.Region,
+		"address":   c.config.Address,
+		"neighbors": c.config.Neighbors,
+	})
+
+	u := fmt.Sprintf("%s/relay/%s", c.config.URL, url.PathEscape(c.config.RelayName))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, u, bytes.NewReader(body))
+	if err != nil {
+		slog.Warn("sdn topology heartbeat: build request failed", "error", err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		slog.Warn("sdn topology heartbeat failed", "error", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		slog.Warn("sdn topology heartbeat: bad status", "status", resp.StatusCode)
+		return
+	}
+	slog.Debug("sdn topology heartbeat completed", "relay", c.config.RelayName)
 }
 
 func (c *Client) deregisterAll() {

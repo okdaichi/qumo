@@ -23,6 +23,20 @@ sdn:
   relay_name: "${RELAY_NAME:-relay-${HOSTNAME}}"
   heartbeat_interval_sec: ${HEARTBEAT_INTERVAL:-30}
 EOF
+
+        # Add topology registration fields (neighbors, region, address)
+        # Relays self-register via PUT /relay/<name> heartbeat
+        if [ -n "$NEIGHBORS" ]; then
+            echo "  address: \"${RELAY_MOQT_ADDR:-https://${RELAY_NAME:-relay}:4433}\"" >> /tmp/config.relay.yaml
+            if [ -n "$REGION" ]; then
+                echo "  region: \"$REGION\"" >> /tmp/config.relay.yaml
+            fi
+            echo "  neighbors:" >> /tmp/config.relay.yaml
+            # Parse comma-separated neighbors: "relay-london:250,relay-newyork:80"
+            echo "$NEIGHBORS" | tr ',' '\n' | while IFS=: read -r name cost; do
+                echo "    $name: $cost" >> /tmp/config.relay.yaml
+            done
+        fi
     fi
 }
 
@@ -32,6 +46,7 @@ graph:
   listen_addr: "${SDN_ADDR:-:8090}"
   data_dir: "${DATA_DIR:-./data}"
   sync_interval_sec: ${SYNC_INTERVAL:-10}
+  node_ttl_sec: ${NODE_TTL_SEC:-90}
 EOF
 
     # Add peer URL if specified

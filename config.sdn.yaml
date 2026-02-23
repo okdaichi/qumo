@@ -12,3 +12,9 @@ graph:
   
   # Sync interval in seconds (default: 10)
   sync_interval_sec: 10
+
+  # Node TTL in seconds. Nodes that don't send a heartbeat within this
+  # period are automatically removed from the topology.
+  # 0 = nodes never expire (manual deregistration only).
+  # Recommended: 3x the relay heartbeat interval (default: 90).
+  node_ttl_sec: 90

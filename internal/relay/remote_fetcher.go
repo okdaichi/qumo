@@ -43,8 +43,8 @@ type RemoteFetcher struct {
 	FramePool *FramePool
 
 	mu       sync.Mutex
-	sessions map[string]*remoteSession     // address → session
-	tracked  map[string]context.CancelFunc // broadcastPath → cancel func
+	sessions map[string]*remoteSession // address → session
+	tracked  map[string]*trackedPath   // broadcastPath → tracked state
 	client   *moqt.Client
 }
 
@@ -54,11 +54,19 @@ type remoteSession struct {
 	refCount int
 }
 
+// trackedPath holds the state for a single remote broadcast path,
+// enabling route re-computation on failure.
+type trackedPath struct {
+	cancel      context.CancelFunc
+	sourceRelay string
+	nextHopAddr string
+}
+
 // Run starts the periodic poll loop. It blocks until ctx is cancelled.
 func (f *RemoteFetcher) Run(ctx context.Context) {
 	f.mu.Lock()
 	f.sessions = make(map[string]*remoteSession)
-	f.tracked = make(map[string]context.CancelFunc)
+	f.tracked = make(map[string]*trackedPath)
 	f.client = &moqt.Client{
 		TLSConfig:  f.TLSConfig,
 		QUICConfig: f.QUICConfig,
@@ -135,10 +143,30 @@ func (f *RemoteFetcher) poll(ctx context.Context, gcSize int, pool *FramePool) {
 	}
 
 	// Remove tracked paths that are no longer in the remote set
-	for bp, cancel := range f.tracked {
+	for bp, tp := range f.tracked {
 		if _, exists := remoteSet[bp]; !exists {
-			cancel()
+			tp.cancel()
 			delete(f.tracked, bp)
+		}
+	}
+
+	// Check tracked paths for dead sessions and re-route
+	for bp, tp := range f.tracked {
+		rs, ok := f.sessions[tp.nextHopAddr]
+		if !ok || rs.session.Context().Err() != nil {
+			// Session is dead — cancel old handler and re-route
+			slog.Info("remote fetcher: session lost, re-routing",
+				"broadcast_path", bp,
+				"old_next_hop", tp.nextHopAddr)
+			tp.cancel()
+			delete(f.tracked, bp)
+
+			// Re-start with fresh route computation
+			relay := remoteSet[bp]
+			if relay == "" {
+				relay = tp.sourceRelay
+			}
+			f.startRemoteHandler(ctx, bp, relay, gcSize, pool)
 		}
 	}
 }
@@ -175,7 +203,11 @@ func (f *RemoteFetcher) startRemoteHandler(ctx context.Context, broadcastPath, s
 
 	// Create a child context that we can cancel when this path is removed
 	pathCtx, cancel := context.WithCancel(ctx)
-	f.tracked[broadcastPath] = cancel
+	f.tracked[broadcastPath] = &trackedPath{
+		cancel:      cancel,
+		sourceRelay: sourceRelay,
+		nextHopAddr: nextHopAddr,
+	}
 	rs.refCount++
 
 	// Register a handler on the local mux via Publish.
@@ -253,8 +285,8 @@ func (f *RemoteFetcher) cleanup() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	for bp, cancel := range f.tracked {
-		cancel()
+	for bp, tp := range f.tracked {
+		tp.cancel()
 		delete(f.tracked, bp)
 	}
 

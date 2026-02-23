@@ -167,9 +167,11 @@ func loadConfig(filename string) (*config, error) {
 			FrameCapacity  int    `yaml:"frame_capacity"`
 		} `yaml:"relay"`
 		SDN *struct {
-			URL               string `yaml:"url"`
-			RelayName         string `yaml:"relay_name"`
-			HeartbeatInterval int    `yaml:"heartbeat_interval_sec"`
+			URL               string             `yaml:"url"`
+			RelayName         string             `yaml:"relay_name"`
+			HeartbeatInterval int                `yaml:"heartbeat_interval_sec"`
+			Address           string             `yaml:"address"`
+			Neighbors         map[string]float64 `yaml:"neighbors"`
 			TLS               *struct {
 				CertFile string `yaml:"cert_file"`
 				KeyFile  string `yaml:"key_file"`
@@ -215,6 +217,9 @@ func loadConfig(filename string) (*config, error) {
 		sdnCfg := &sdn.ClientConfig{
 			URL:       ymlConfig.SDN.URL,
 			RelayName: ymlConfig.SDN.RelayName,
+			Region:    ymlConfig.Relay.Region,
+			Address:   ymlConfig.SDN.Address,
+			Neighbors: ymlConfig.SDN.Neighbors,
 		}
 		if sdnCfg.RelayName == "" {
 			sdnCfg.RelayName = ymlConfig.Relay.NodeID

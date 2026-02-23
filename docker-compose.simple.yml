@@ -1,12 +1,12 @@
 # Simple Docker Compose - Complete Demo Environment
 #
-# Usage: docker compose -f docker compose.simple.yml up
+# Usage: docker compose -f docker-compose.simple.yml up
 #
 # This demo creates a complete MoQT network:
 #   - 1 SDN Controller (manages topology)
 #   - 3 Relay Servers (relay-tokyo, relay-london, relay-newyork)
-#   - Auto-setup (configures network topology automatically)
 #
+# Relays self-register their topology via heartbeat (no setup service needed).
 # Everything runs in Docker - no shell scripts needed!
 # Works the same on Windows, macOS, and Linux.
 #
@@ -27,6 +27,7 @@ services:
     environment:
       - SDN_ADDR=:8090
       - DATA_DIR=/data
+      - NODE_TTL_SEC=90
     volumes:
       - sdn-data:/data
     healthcheck:
@@ -55,6 +56,7 @@ services:
       - SDN_URL=http://sdn:8090
       - RELAY_NAME=relay-tokyo
       - REGION=asia
+      - NEIGHBORS=relay-london:250
     depends_on:
       sdn:
         condition: service_healthy
@@ -82,6 +84,7 @@ services:
       - SDN_URL=http://sdn:8090
       - RELAY_NAME=relay-london
       - REGION=europe
+      - NEIGHBORS=relay-tokyo:250,relay-newyork:80
     depends_on:
       sdn:
         condition: service_healthy
@@ -109,6 +112,7 @@ services:
       - SDN_URL=http://sdn:8090
       - RELAY_NAME=relay-newyork
       - REGION=americas
+      - NEIGHBORS=relay-london:80
     depends_on:
       sdn:
         condition: service_healthy
@@ -122,40 +126,6 @@ services:
     networks:
       - qumo-net
 
-  # Setup Service - Automatically configures network topology
-  # This runs once and exits after configuring the demo network
-  setup:
-    image: curlimages/curl:latest
-    container_name: qumo-setup
-    depends_on:
-      relay-tokyo:
-        condition: service_healthy
-      relay-london:
-        condition: service_healthy
-      relay-newyork:
-        condition: service_healthy
-    networks:
-      - qumo-net
-    command:
-      - sh
-      - -c
-      - |
-        echo '🚀 Setting up qumo demo network...'
-        echo '📡 Registering relay topology...'
-        curl -s -X PUT http://sdn:8090/relay/relay-tokyo -H 'Content-Type: application/json' -d '{"region":"asia","neighbors":{"relay-london":250}}' -o /dev/null -w 'Tokyo registered (HTTP %{http_code})\n'
-        curl -s -X PUT http://sdn:8090/relay/relay-london -H 'Content-Type: application/json' -d '{"region":"europe","neighbors":{"relay-tokyo":250,"relay-newyork":80}}' -o /dev/null -w 'London registered (HTTP %{http_code})\n'
-        curl -s -X PUT http://sdn:8090/relay/relay-newyork -H 'Content-Type: application/json' -d '{"region":"americas","neighbors":{"relay-london":80}}' -o /dev/null -w 'New York registered (HTTP %{http_code})\n'
-        echo ''
-        echo '✅ Demo network configured!'
-        echo ''
-        echo '📊 Network Topology:'
-        echo '   relay-tokyo (Asia) <--250ms--> relay-london (Europe) <--80ms--> relay-newyork (Americas)'
-        echo ''
-        echo '🎯 Try these commands:'
-        echo '   curl http://localhost:8090/graph | jq'
-        echo '   curl "http://localhost:8090/route?from=relay-tokyo&to=relay-newyork"'
-    restart: "no"
-
 networks:
   qumo-net:
     driver: bridge
@@ -165,11 +135,11 @@ volumes:
 
 # How it works:
 #
-# 1. Start everything (network topology auto-configured):
-#    docker compose -f docker compose.simple.yml up
+# 1. Start everything:
+#    docker compose -f docker-compose.simple.yml up
 #
-#    The 'setup' service automatically configures the network topology.
-#    Watch the logs to see the setup progress!
+#    Each relay self-registers its neighbors via topology heartbeat.
+#    No setup service needed — the SDN graph builds itself!
 #
 # 2. Explore the network:
 #    # View topology graph
@@ -184,9 +154,9 @@ volumes:
 #    curl http://localhost:8082/health  # New York
 #
 # 3. View logs:
-#    docker compose -f docker compose.simple.yml logs -f
+#    docker compose -f docker-compose.simple.yml logs -f
 #
 # 4. Stop demo:
-#    docker compose -f docker compose.simple.yml down
+#    docker compose -f docker-compose.simple.yml down
 #
 # No shell scripts required! Works the same on all platforms.

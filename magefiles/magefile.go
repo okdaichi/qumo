@@ -19,8 +19,35 @@ import (
 	"github.com/magefile/mage/sh"
 )
 
+const versionPkg = "github.com/okdaichi/qumo/internal/version"
+
 // Default target to run when none is specified
 var Default = Help
+
+// versionLDFlags returns ldflags that embed version info into the binary.
+func versionLDFlags() string {
+	v := gitTag()
+	c := gitCommit()
+	d := time.Now().UTC().Format(time.RFC3339)
+	return fmt.Sprintf("-s -w -X %s.version=%s -X %s.commit=%s -X %s.date=%s",
+		versionPkg, v, versionPkg, c, versionPkg, d)
+}
+
+func gitTag() string {
+	out, err := exec.Command("git", "describe", "--tags", "--always", "--dirty").Output()
+	if err != nil {
+		return "dev"
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func gitCommit() string {
+	out, err := exec.Command("git", "rev-parse", "--short", "HEAD").Output()
+	if err != nil {
+		return "none"
+	}
+	return strings.TrimSpace(string(out))
+}
 
 // Help displays available mage targets
 func Help() error {
@@ -99,7 +126,10 @@ func Build() error {
 		return err
 	}
 
-	cmd := exec.Command("go", "build", "-o", "./bin/"+binaryName, ".")
+	ldflags := versionLDFlags()
+	fmt.Printf("   version: %s\n", gitTag())
+
+	cmd := exec.Command("go", "build", "-ldflags", ldflags, "-o", "./bin/"+binaryName, ".")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -114,7 +144,7 @@ func Build() error {
 func Install() error {
 	fmt.Println("📦 Installing qumo to $GOPATH/bin...")
 
-	cmd := exec.Command("go", "install", ".")
+	cmd := exec.Command("go", "install", "-ldflags", versionLDFlags(), ".")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -481,7 +511,7 @@ func (Nomad) Build() error {
 		return err
 	}
 
-	cmd := exec.Command("go", "build", "-o", "./bin/"+binaryName, ".")
+	cmd := exec.Command("go", "build", "-ldflags", versionLDFlags(), "-o", "./bin/"+binaryName, ".")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -559,18 +589,29 @@ func (Docker) Pull() error {
 	return nil
 }
 
-// Build builds the Docker image
+// Build builds the Docker image with version metadata
 func (Docker) Build() error {
-	fmt.Println("🐳 Building Docker image...")
+	v := gitTag()
+	c := gitCommit()
+	d := time.Now().UTC().Format(time.RFC3339)
+	tag := "qumo:" + strings.TrimPrefix(v, "v")
 
-	cmd := exec.Command("docker", "build", "-t", "qumo:latest", ".")
+	fmt.Printf("🐳 Building Docker image %s ...\n", tag)
+
+	cmd := exec.Command("docker", "build",
+		"--build-arg", "VERSION="+v,
+		"--build-arg", "COMMIT="+c,
+		"--build-arg", "BUILD_DATE="+d,
+		"-t", tag,
+		"-t", "qumo:latest",
+		".")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		return err
 	}
 
-	fmt.Println("✅ Docker image built: qumo:latest")
+	fmt.Printf("✅ Docker image built: %s, qumo:latest\n", tag)
 	return nil
 }
 

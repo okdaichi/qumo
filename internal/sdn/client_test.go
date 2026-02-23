@@ -2,6 +2,7 @@ package sdn
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -204,5 +205,96 @@ func TestClient_AnnounceURL(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("announceURL(%q) = %q, want %q", tt.bp, got, tt.want)
 		}
+	}
+}
+
+func TestClient_TopologyHeartbeat(t *testing.T) {
+	var mu sync.Mutex
+	var received []map[string]any
+	relayPuts := 0
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut && r.URL.Path == "/relay/relay-tokyo" {
+			mu.Lock()
+			relayPuts++
+			var body map[string]any
+			json.NewDecoder(r.Body).Decode(&body)
+			received = append(received, body)
+			mu.Unlock()
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c, err := NewClient(ClientConfig{
+		URL:               srv.URL,
+		RelayName:         "relay-tokyo",
+		HeartbeatInterval: 50 * time.Millisecond,
+		Region:            "ap-northeast-1",
+		Address:           "https://relay-tokyo:4433",
+		Neighbors:         map[string]float64{"relay-london": 250},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go c.Run(ctx)
+
+	// Wait for initial + at least 2 heartbeats
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+	<-c.done
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if relayPuts < 2 {
+		t.Errorf("expected at least 2 topology heartbeats, got %d", relayPuts)
+	}
+
+	// Verify payload
+	if len(received) > 0 {
+		body := received[0]
+		if body["region"] != "ap-northeast-1" {
+			t.Errorf("expected region ap-northeast-1, got %v", body["region"])
+		}
+		if body["address"] != "https://relay-tokyo:4433" {
+			t.Errorf("expected address https://relay-tokyo:4433, got %v", body["address"])
+		}
+		neighbors, ok := body["neighbors"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected neighbors to be a map, got %T", body["neighbors"])
+		}
+		if neighbors["relay-london"] != 250.0 {
+			t.Errorf("expected neighbor relay-london cost 250, got %v", neighbors["relay-london"])
+		}
+	}
+}
+
+func TestClient_TopologyHeartbeat_NoNeighbors_Skips(t *testing.T) {
+	putCount := 0
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut && r.URL.Path == "/relay/relay-a" {
+			putCount++
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c, err := NewClient(ClientConfig{
+		URL:               srv.URL,
+		RelayName:         "relay-a",
+		HeartbeatInterval: time.Hour,
+		// No Neighbors set — topology heartbeat should be skipped
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	c.topologyHeartbeat(context.Background())
+	if putCount != 0 {
+		t.Errorf("expected 0 topology heartbeats without neighbors, got %d", putCount)
 	}
 }

@@ -23,6 +23,7 @@ type sdnConfig struct {
 	DataDir      string
 	PeerURL      string
 	SyncInterval time.Duration
+	NodeTTL      time.Duration
 }
 
 const defaultAddr = ":8090"
@@ -39,7 +40,9 @@ func RunSDN(args []string) error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	topo := &topology.Topology{}
+	topo := &topology.Topology{
+		NodeTTL: cfg.NodeTTL,
+	}
 
 	// Configure persistence (optional)
 	if cfg.DataDir != "" {
@@ -54,6 +57,9 @@ func RunSDN(args []string) error {
 
 	// Start background sweeper to remove expired announces
 	announceTable.StartSweeper(ctx, 30*time.Second)
+
+	// Start topology sweeper to remove stale relay nodes
+	topo.StartSweeper(ctx, 30*time.Second)
 
 	mux := http.NewServeMux()
 
@@ -130,6 +136,7 @@ func loadSDNConfig(filename string) (*sdnConfig, error) {
 			DataDir      string `yaml:"data_dir"`
 			PeerURL      string `yaml:"peer_url"`
 			SyncInterval int    `yaml:"sync_interval_sec"`
+			NodeTTLSec   int    `yaml:"node_ttl_sec"`
 		} `yaml:"graph"`
 	}
 
@@ -154,5 +161,6 @@ func loadSDNConfig(filename string) (*sdnConfig, error) {
 		DataDir:      ymlCfg.Graph.DataDir,
 		PeerURL:      ymlCfg.Graph.PeerURL,
 		SyncInterval: time.Duration(ymlCfg.Graph.SyncInterval) * time.Second,
+		NodeTTL:      time.Duration(ymlCfg.Graph.NodeTTLSec) * time.Second,
 	}, nil
 }

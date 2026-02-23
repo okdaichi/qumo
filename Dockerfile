@@ -1,6 +1,10 @@
 # Build stage
 FROM golang:1.26-alpine AS builder
 
+ARG VERSION=dev
+ARG COMMIT=none
+ARG BUILD_DATE=unknown
+
 # Install build dependencies
 RUN apk add --no-cache git ca-certificates
 
@@ -13,11 +17,30 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build the binary
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o qumo .
+# Build the binary with version info
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo \
+    -ldflags "-s -w \
+      -X github.com/okdaichi/qumo/internal/version.version=${VERSION} \
+      -X github.com/okdaichi/qumo/internal/version.commit=${COMMIT} \
+      -X github.com/okdaichi/qumo/internal/version.date=${BUILD_DATE}" \
+    -o qumo .
 
 # Runtime stage
 FROM alpine:latest
+
+ARG VERSION=dev
+ARG COMMIT=none
+ARG BUILD_DATE=unknown
+
+# OCI image labels
+LABEL org.opencontainers.image.title="qumo" \
+      org.opencontainers.image.description="MoQT Relay & SDN Controller" \
+      org.opencontainers.image.url="https://github.com/okdaichi/qumo" \
+      org.opencontainers.image.source="https://github.com/okdaichi/qumo" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.created="${BUILD_DATE}" \
+      org.opencontainers.image.revision="${COMMIT}" \
+      org.opencontainers.image.licenses="MIT"
 
 # Install runtime dependencies
 RUN apk --no-cache add ca-certificates tzdata wget openssl

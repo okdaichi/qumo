@@ -28,10 +28,19 @@ relay:
 # When configured, this relay will automatically register received
 # moqt.Announcements with the SDN controller's announce table.
 # Other relays can then discover which relay holds which track.
+#
+# The relay also sends periodic topology heartbeats (PUT /relay/<name>)
+# to keep itself alive in the SDN graph. Without heartbeats, the SDN
+# sweeper will remove this node after node_ttl_sec.
 # sdn:
 #   url: "https://sdn.example.com:8090"
 #   relay_name: "relay-tokyo-1"  # defaults to relay.node_id if omitted
 #   heartbeat_interval_sec: 30   # re-PUT interval (default: 30)
+#   address: "https://relay-tokyo-1:4433"  # MoQT endpoint for next-hop routing
+#   region: "asia"                         # region tag (used in SDN graph metadata)
+#   neighbors:                   # neighbor relays and edge costs
+#     relay-london-1: 250
+#     relay-newyork-1: 180
 #   tls:                         # optional mTLS for relay→SDN
 #     cert_file: "certs/relay.crt"
 #     key_file: "certs/relay.key"

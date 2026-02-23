@@ -1,5 +1,7 @@
 package topology
 
+import "time"
+
 // Graph represents a topology graph using adjacency lists.
 // Nodes are indexed by their ID for O(1) lookup.
 type Graph struct {
@@ -36,10 +38,11 @@ func (g *Graph) addEdge(src, dst string, cost Cost) {
 
 // Node represents a relay node in the topology.
 type Node struct {
-	ID      string `json:"id"`
-	Region  string `json:"region"`
-	Address string `json:"address,omitempty"` // MoQT endpoint URL
-	Edges   []Edge `json:"edges"`
+	ID       string    `json:"id"`
+	Region   string    `json:"region"`
+	Address  string    `json:"address,omitempty"` // MoQT endpoint URL
+	Edges    []Edge    `json:"edges"`
+	LastSeen time.Time `json:"last_seen"` // Updated on each Register; used by sweeper
 }
 
 // Edge represents a directed connection to another node.
