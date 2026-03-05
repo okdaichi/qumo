@@ -82,6 +82,7 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 			session.subscribe(broadcastPath, "video.meta").then(
 				async ([videoMetaTrack, videoMetaErr]) => {
 					if (videoMetaErr) {
+						if (!isSubscribed()) return; // expected during shutdown
 						console.warn("[Subscribe] video.meta subscribe failed:", videoMetaErr);
 						return;
 					}
@@ -91,6 +92,7 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 					while (isSubscribed()) {
 						const [group, groupErr] = await videoMetaTrack.acceptGroup(ctx.done());
 						if (groupErr) {
+							if (!isSubscribed()) break; // expected during shutdown
 							console.warn("[Subscribe] video.meta acceptGroup:", groupErr);
 							break;
 						}
@@ -101,15 +103,16 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 							console.log("[Subscribe] video.meta group received, codec:", meta.codec);
 						}
 					}
-					},
+				},
 			);
 
 			session.subscribe(broadcastPath, "video").then(
 				async ([videoTrack, videoErr]) => {
 					if (videoErr) {
-						throw videoErr;
+						if (!isSubscribed()) return; // expected during shutdown
+						console.warn("[Subscribe] video subscribe failed:", videoErr);
+						return;
 					}
-					setIsSubscribed(true);
 
 					const videoStream = new ReadableStream<EncodedVideoChunk>({
 						async start(controller) {
@@ -119,6 +122,7 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 										ctx.done(),
 									);
 									if (groupErr) {
+										if (!isSubscribed()) break; // expected during shutdown
 										console.error(
 											"moq: Error accepting video group:",
 											groupErr,
@@ -144,11 +148,11 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 								if (isSubscribed()) {
 									console.error("Video track error:", err);
 									controller.error(err);
+								} else {
+									controller.close();
 								}
 							} finally {
 								videoTrack.closeWithError(SubscribeErrorCode.InternalError);
-
-								setIsSubscribed(false);
 							}
 						},
 					});
@@ -157,6 +161,8 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 					videoDecodeNode?.decodeFrom(videoStream);
 				},
 			);
+
+			setIsSubscribed(true);
 		} catch (err) {
 			const errorMessage = err instanceof Error ? err.message : String(err);
 			setError(errorMessage);

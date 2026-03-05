@@ -213,12 +213,7 @@ func (f *RemoteFetcher) startRemoteHandler(ctx context.Context, broadcastPath, s
 	// Register a handler on the local mux via Publish.
 	// The handler subscribes to the remote relay on demand (when a subscriber
 	// requests a track name under this broadcast path).
-	handler := &RelayHandler{
-		Session:        rs.session,
-		GroupCacheSize: gcSize,
-		FramePool:      pool,
-		relaying:       make(map[moqt.TrackName]*trackDistributor),
-	}
+	handler := newRelayHandler(nil, rs.session, gcSize, pool) // announcement is nil for remote fetcher
 
 	// Publish registers a virtual announcement + handler.
 	// It stays active until pathCtx is cancelled.

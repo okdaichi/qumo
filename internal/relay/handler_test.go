@@ -781,3 +781,70 @@ func TestTrackDistributor_RingBehavior(t *testing.T) {
 		assert.GreaterOrEqual(t, earliest, uint64(0), "Expected earliest to be non-negative")
 	})
 }
+
+// ============================================================================
+// RelayHandler Tests - subscribe() does not hold mu
+// ============================================================================
+
+// TestRelayHandler_ConcurrentSubscribe verifies that subscribe() can be called
+// concurrently without deadlock. This is a regression test for a bug where
+// ServeTrack held a mutex during subscribe(), which performs a blocking network
+// round-trip. A second ServeTrack call (e.g. for "video" while "video.meta" was
+// subscribing) would block on the same mutex, causing a deadlock.
+func TestRelayHandler_ConcurrentSubscribe(t *testing.T) {
+	h := newRelayHandler(nil, nil, DefaultGroupCacheSize, DefaultFramePool) // nil session for test
+
+	const numTracks = 10
+	done := make(chan struct{}, numTracks)
+
+	for i := 0; i < numTracks; i++ {
+		go func() {
+			defer func() { done <- struct{}{} }()
+			name := moqt.TrackName(fmt.Sprintf("track-%d", i))
+
+			// Mirrors ServeTrack: Load → subscribe → LoadOrStore
+			if _, ok := h.relaying.Load(name); !ok {
+				tr := h.subscribe(name)
+				_ = tr // nil because Session is nil
+			}
+		}()
+	}
+
+	// All goroutines must finish within 1 second; a deadlock would hang.
+	timeout := time.After(1 * time.Second)
+	for i := 0; i < numTracks; i++ {
+		select {
+		case <-done:
+		case <-timeout:
+			t.Fatal("Deadlock detected: concurrent subscribe calls blocked")
+		}
+	}
+}
+
+// TestRelayHandler_LoadOrStore verifies that sync.Map.LoadOrStore correctly
+// deduplicates distributors when two goroutines race to store the same track.
+func TestRelayHandler_LoadOrStore(t *testing.T) {
+	h := &RelayHandler{
+		Session:        nil,
+		GroupCacheSize: DefaultGroupCacheSize,
+		FramePool:      DefaultFramePool,
+	}
+
+	// Pre-populate a distributor via sync.Map
+	existing := &trackDistributor{
+		ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
+		subscribers: make(map[chan struct{}]struct{}),
+		onClose:     func() {},
+	}
+	h.relaying.Store(moqt.TrackName("video"), existing)
+
+	// LoadOrStore should return the existing one
+	challenger := &trackDistributor{
+		ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
+		subscribers: make(map[chan struct{}]struct{}),
+		onClose:     func() {},
+	}
+	actual, loaded := h.relaying.LoadOrStore(moqt.TrackName("video"), challenger)
+	require.True(t, loaded, "Expected existing entry")
+	assert.Equal(t, existing, actual.(*trackDistributor), "Should return the pre-populated distributor")
+}

@@ -79,7 +79,7 @@ func (s *Server) ListenAndServe() error {
 			err = s.relay(ctx, downstream)
 
 			if err != nil {
-				slog.Error("relay session ended", "err", err)
+				slog.Warn("relay session ended", "err", err)
 				return
 			}
 		}),
@@ -121,6 +121,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 }
 
 func (s *Server) relay(ctx context.Context, sess *moqt.Session) error {
+	slog.Info("session established", "remote", sess.RemoteAddr())
+	defer slog.Info("session closed", "remote", sess.RemoteAddr())
+
 	if s.statusHandler != nil {
 		s.statusHandler.incrementConnections()
 		defer s.statusHandler.decrementConnections()
@@ -144,13 +147,8 @@ func (s *Server) relay(ctx context.Context, sess *moqt.Session) error {
 			s.AnnounceRegistrar.Register(string(ann.BroadcastPath()))
 		}
 
-		handler := &RelayHandler{
-			Announcement:   ann,
-			Session:        sess,
-			GroupCacheSize: DefaultGroupCacheSize,
-			FramePool:      DefaultFramePool,
-			relaying:       make(map[moqt.TrackName]*trackDistributor),
-		}
+		handler := newRelayHandler(ann, sess, DefaultGroupCacheSize, DefaultFramePool)
+		// Announcement is already provided above; other fields defaulted appropriately.
 
 		s.TrackMux.Announce(ann, handler)
 	}

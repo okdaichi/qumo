@@ -22,8 +22,20 @@ type RelayHandler struct {
 
 	FramePool *FramePool
 
-	mu       sync.RWMutex
-	relaying map[moqt.TrackName]*trackDistributor
+	relaying sync.Map // moqt.TrackName → *trackDistributor
+}
+
+// newRelayHandler creates a RelayHandler with the given parameters. The
+// Announcement may be nil; callers (e.g. server.relay) will set it later if
+// necessary. A zero-valued GroupCacheSize or nil FramePool is acceptable (the
+// handler will fall back to defaults).
+func newRelayHandler(ann *moqt.Announcement, sess *moqt.Session, gcSize int, pool *FramePool) *RelayHandler {
+	return &RelayHandler{
+		Announcement:   ann,
+		Session:        sess,
+		GroupCacheSize: gcSize,
+		FramePool:      pool,
+	}
 }
 
 func (h *RelayHandler) ServeTrack(tw *moqt.TrackWriter) {
@@ -32,25 +44,25 @@ func (h *RelayHandler) ServeTrack(tw *moqt.TrackWriter) {
 		"track_name", tw.TrackName,
 	)
 
-	logger.Info("Relay track started")
-
-	h.mu.Lock()
-	if h.relaying == nil {
-		h.relaying = make(map[moqt.TrackName]*trackDistributor)
+	// Fast path: reuse existing distributor
+	if v, ok := h.relaying.Load(tw.TrackName); ok {
+		v.(*trackDistributor).egress(tw)
+		return
 	}
 
-	tr, ok := h.relaying[tw.TrackName]
-	if !ok {
-		// Start new track distributor
-		tr = h.subscribe(tw.TrackName)
-		if tr == nil {
-			h.mu.Unlock()
-			tw.CloseWithError(moqt.TrackNotFoundErrorCode)
-			logger.Info("Track not found, closing track writer")
-			return
-		}
+	// Slow path: subscribe upstream (no lock held)
+	tr := h.subscribe(tw.TrackName)
+	if tr == nil {
+		tw.CloseWithError(moqt.TrackNotFoundErrorCode)
+		logger.Warn("Track not found, closing track writer")
+		return
 	}
-	h.mu.Unlock()
+
+	// Atomic store: if another goroutine stored first, use theirs
+	if actual, loaded := h.relaying.LoadOrStore(tw.TrackName, tr); loaded {
+		tr.close()
+		tr = actual.(*trackDistributor)
+	}
 
 	logger.Info("Relaying track")
 
@@ -84,9 +96,7 @@ func (h *RelayHandler) subscribe(name moqt.TrackName) *trackDistributor {
 			cancel()
 
 			// Remove from relaying map
-			h.mu.Lock()
-			delete(h.relaying, name)
-			h.mu.Unlock()
+			h.relaying.Delete(name)
 		},
 	}
 
