@@ -21,13 +21,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Video codec mismatch:** Subscriber no longer hardcodes VP9 decoder config. The publisher
   sends actual codec parameters via a `video.meta` MoQ track; the subscriber reconfigures
   `VideoDecoder` reactively via a SolidJS `createEffect`.
+- **Subscriber deadlock:** `ServeTrack()` held `sync.RWMutex` while calling `subscribe()`,
+  which performs a network round-trip. A second track's `ServeTrack` blocked on the same
+  mutex, preventing video from ever appearing on the subscriber side.
+- **Unhandled promise rejection on stop:** `SubscribeBoard` now catches errors from
+  `session.subscribe()` gracefully. Previously, stopping a subscription while `SUBSCRIBE_OK`
+  was in-flight caused `RESET_STREAM` errors to surface as unhandled promise rejections in the
+  browser console.
 - Relay `Server.Relay` method unexported to `relay` (internal API cleanup).
 - Fix `mage dev` command to correctly start Vite dev server via Deno.
 
 ### Changed
 
+- **`sync.Map` replaces `sync.RWMutex`:** `RelayHandler` track distributor map now uses
+  `sync.Map` with `LoadOrStore` for lock-free concurrent access, eliminating the manual
+  double-check locking pattern.
+- **`newRelayHandler` constructor:** All `RelayHandler` creation sites (`server.go`,
+  `remote_fetcher.go`, tests) unified through a single constructor function.
+- **Log level audit:** Demoted high-frequency logs (`"group cached"`, `"Relaying track"`) to
+  `Debug`; promoted error-like conditions to `Warn`; removed redundant `Info` logs. Added
+  `"session established"` / `"session closed"` Info logs for connection lifecycle visibility.
 - Relay error handling improved; session errors are logged rather than panicked.
 - `.env.example` corrected: `VITE_RELAY_URL` must use `https://` (WebTransport requires TLS).
+
+### Added
+
+- **Regression tests:** `TestRelayHandler_ConcurrentSubscribe` (deadlock regression) and
+  `TestRelayHandler_LoadOrStore` (sync.Map deduplication).
 
 ## [v0.3.0] - 2026-02-14
 
