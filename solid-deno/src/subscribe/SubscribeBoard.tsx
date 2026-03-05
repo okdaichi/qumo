@@ -107,7 +107,7 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 			);
 
 			session.subscribe(broadcastPath, "video").then(
-				async ([videoTrack, videoErr]) => {
+				([videoTrack, videoErr]) => {
 					if (videoErr) {
 						if (!isSubscribed()) return; // expected during shutdown
 						console.warn("[Subscribe] video subscribe failed:", videoErr);
