@@ -39,6 +39,9 @@ export function PublishBoard(props: { mux: TrackMux }) {
 	let broadcastRef: Broadcast | undefined;
 	// Audio track catalog entry — set in startStreaming if audio is available.
 	let audioTrackDef: Track | undefined;
+	// Guards Effects 1 and 2 from firing while streaming is active.
+	// Using a plain ref (not signal) so that toggling it never itself triggers effects.
+	let streamingActive = false;
 
 	onMount(() => {
 		if (canvasEle) {
@@ -63,21 +66,21 @@ export function PublishBoard(props: { mux: TrackMux }) {
 		}
 	});
 
-	// Effect 1: reads signals synchronously, then fire-and-forgets the async fetch.
-	// All signal reads happen before the first await → tracking is complete and reliable.
+	// Effect 1: pre-compute encoder config from canvas dimensions.
+	// Skipped while streaming — startStreaming owns the encoder config at that point.
 	createEffect(() => {
 		const width = canvasWidth();
 		const height = canvasHeight();
-		if (!videoEncodeNode || width <= 0 || height <= 0) return;
+		if (streamingActive || !videoEncodeNode || width <= 0 || height <= 0) return;
 		void videoEncoderConfig({ width, height, bitrate: 2_500_000, frameRate: 30, tryHardware: true })
 			.then(setEncoderConfig);
 	});
 
-	// Effect 2: purely synchronous — applies the resolved config to the encoder and catalog.
+	// Effect 2: applies the resolved config to the encoder (pre-stream only).
+	// Skipped while streaming — the encoder is already correctly configured by startStreaming.
 	createEffect(() => {
 		const config = encoderConfig();
-		if (!config || !videoEncodeNode) return;
-		// Use avc3 (inline SPS/PPS) — no separate description field required.
+		if (streamingActive || !config || !videoEncodeNode) return;
 		const inlineCodec = config.codec.replace(/^avc1\./, "avc3.");
 		videoEncodeNode.configure(config);
 		if (broadcastRef) {
@@ -145,6 +148,10 @@ export function PublishBoard(props: { mux: TrackMux }) {
 			actualHeight = s?.height ?? canvasHeight();
 		}
 
+		// Lock effects out before touching any signals — prevents Effect 1/2 from
+		// re-firing and calling videoEncodeNode.configure() a second time.
+		streamingActive = true;
+
 		// Use pre-computed config if dimensions match; otherwise recompute at actual size.
 		let config = encoderConfig();
 		if (!config || config.width !== actualWidth || config.height !== actualHeight) {
@@ -156,11 +163,12 @@ export function PublishBoard(props: { mux: TrackMux }) {
 				tryHardware: true,
 			});
 			videoEncodeNode.configure(config);
-			// Update signals so Effect 2 and the canvas preview stay consistent.
-			setEncoderConfig(config);
-			setCanvasWidth(actualWidth);
-			setCanvasHeight(actualHeight);
 		}
+		// Update canvas display signals — Effects 1/2 are guarded so these won't
+		// trigger encoder reconfiguration.
+		setEncoderConfig(config);
+		setCanvasWidth(actualWidth);
+		setCanvasHeight(actualHeight);
 		const inlineCodec = config.codec.replace(/^avc1\./, "avc3.");
 
 		// Set up audio encoder (AudioContext.resume() works here as we're in a user-gesture handler).
@@ -277,6 +285,7 @@ export function PublishBoard(props: { mux: TrackMux }) {
 	};
 
 	const stopStreaming = () => {
+		streamingActive = false;
 		cancelPublish();
 		broadcastRef = undefined;
 		audioTrackDef = undefined;
