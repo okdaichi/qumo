@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.3.1] - 2026-03-12
+
 ### Fixed
 
 - **WebTransport connectivity (critical):** Upgrade `gomoqt` to v0.10.5, which calls
@@ -94,7 +96,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Basic Mage build automation.
 - CI workflow with test coverage.
 
-[Unreleased]: https://github.com/okdaichi/qumo/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/okdaichi/qumo/compare/v0.3.1...HEAD
+[v0.3.1]: https://github.com/okdaichi/qumo/compare/v0.3.0...v0.3.1
 [v0.3.0]: https://github.com/okdaichi/qumo/compare/v0.2.0...v0.3.0
 [v0.2.0]: https://github.com/okdaichi/qumo/compare/v0.1.0...v0.2.0
 [v0.1.0]: https://github.com/okdaichi/qumo/releases/tag/v0.1.0
