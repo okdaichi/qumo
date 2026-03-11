@@ -252,10 +252,10 @@ export function PublishBoard(props: { mux: TrackMux }) {
 		}
 
 		// Announce to relay — Broadcast routes "catalog" and "video" internally.
-		mux.publishFunc(
+		mux.publish(
 			publishCtx.done(),
 			broadcastPath,
-			broadcast.serveTrack.bind(broadcast),
+			broadcast,
 		);
 
 		// Connect source nodes and start encoding.
