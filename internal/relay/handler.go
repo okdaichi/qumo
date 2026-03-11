@@ -64,7 +64,7 @@ func (h *RelayHandler) ServeTrack(tw *moqt.TrackWriter) {
 		tr = actual.(*trackDistributor)
 	}
 
-	logger.Info("Relaying track")
+	logger.Debug("Relaying track")
 
 	tr.egress(tw)
 }
@@ -143,6 +143,11 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 			// Check if we've fallen too far behind
 			earliest := d.ring.earliestAvailable()
 			if last < earliest {
+				slog.Warn("subscriber fell behind; skipping groups",
+					"requested_group", last,
+					"earliest_available", earliest,
+					"latest_available", latest,
+				)
 				// Subscriber fell behind - catchup
 
 				// Skip to latest available
@@ -161,11 +166,26 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 				return
 			}
 
+			slog.Debug("egress starting group",
+				"track_name", tw.TrackName,
+				"broadcast_path", tw.BroadcastPath,
+				"group_sequence", cache.seq,
+				"latest_available", latest,
+				"earliest_available", earliest,
+			)
+
 			// Incrementally send frames as they become available
 			frameIdx := 0
 			for {
 				frame := cache.next(frameIdx)
 				if frame != nil {
+					if frameIdx == 0 {
+						slog.Debug("egress writing first frame of group",
+							"track_name", tw.TrackName,
+							"broadcast_path", tw.BroadcastPath,
+							"group_sequence", cache.seq,
+						)
+					}
 					if err := gw.WriteFrame(frame); err != nil {
 						gw.Close()
 						return
