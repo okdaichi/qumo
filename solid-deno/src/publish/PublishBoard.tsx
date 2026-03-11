@@ -23,8 +23,8 @@ export function PublishBoard(props: { mux: TrackMux }) {
 	const [error, setError] = createSignal<string | null>(null);
 	const [canvasWidth, setCanvasWidth] = createSignal(1280);
 	const [canvasHeight, setCanvasHeight] = createSignal(720);
-	// Signal holding the latest VideoMetadata from the encoder — drives video.meta MoQ track reactively.
-	const [currentVideoMeta, setCurrentVideoMeta] = createSignal<VideoMetadata | undefined>();
+	// Latest VideoDecoderConfig kept in sync with the encoder — written directly to video.meta on each keyframe.
+	let latestVideoDecoderConfig: VideoDecoderConfig | undefined;
 
 	let canvasEle: HTMLCanvasElement | undefined;
 	let lastKeyframeTime = 0;
@@ -68,17 +68,14 @@ export function PublishBoard(props: { mux: TrackMux }) {
 				tryHardware: true,
 			});
 			videoEncodeNode.configure(videoConfig);
+			// Derive a baseline decoder config so keyframes are always accompanied
+			// by metadata even before the encoder emits an explicit decoderConfig.
+			latestVideoDecoderConfig = {
+				codec: videoConfig.codec,
+				codedWidth: videoConfig.width,
+				codedHeight: videoConfig.height,
+			};
 			console.log(`Video encoder reconfigured to ${width}x${height}`);
-		}
-	});
-
-	// MoQ reactive: whenever the encoder emits updated codec params (e.g. after a resolution
-	// change), write them into the video.meta TransformStream.  The track handler picks them
-	// up and publishes a new MoQ group — subscribers looping on acceptGroup() receive it.
-	createEffect(() => {
-		const meta = currentVideoMeta();
-		if (meta && videoMetaWriterRef) {
-			videoMetaWriterRef.write(meta).catch(console.error);
 		}
 	});
 
@@ -122,9 +119,12 @@ export function PublishBoard(props: { mux: TrackMux }) {
 									const [group, err] = await track.openGroup();
 									if (err) return err;
 									currentGroup = group;
-									if (decoderConfig) {
-										// Signal update triggers createEffect → videoMetaWriterRef.write() → MoQ group publish.
-										setCurrentVideoMeta({ ...decoderConfig, startGroup: currentGroup.sequence });
+								// Prefer the encoder-provided decoder config (carries codec-specific 'description');
+								// fall back to the config derived from the encoder parameters.
+								if (decoderConfig) latestVideoDecoderConfig = decoderConfig;
+								if (latestVideoDecoderConfig && videoMetaWriterRef) {
+									const meta: VideoMetadata = { ...latestVideoDecoderConfig, startGroup: currentGroup.sequence };
+									videoMetaWriterRef.write(meta).catch(console.error);
 									}
 								} else if (!currentGroup) {
 									// Drop delta frames until we get a keyframe.
@@ -156,7 +156,10 @@ export function PublishBoard(props: { mux: TrackMux }) {
 								timestamp: Date.now() * 1000,
 								byteLength: buf.byteLength,
 								copyTo(target: ArrayBuffer | ArrayBufferView) {
-									new Uint8Array(target as ArrayBuffer).set(buf);
+									const view = target instanceof ArrayBuffer
+										? new Uint8Array(target)
+										: new Uint8Array(target.buffer, target.byteOffset, target.byteLength);
+									view.set(buf);
 								},
 							}));
 							if (writeErr) console.error("video.meta: writeFrame error", writeErr);

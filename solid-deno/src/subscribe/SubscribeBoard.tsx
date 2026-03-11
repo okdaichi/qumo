@@ -11,7 +11,7 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 	const [error, setError] = createSignal<string | null>(null);
 	const [canvasWidth, setCanvasWidth] = createSignal(1280);
 	const [canvasHeight, setCanvasHeight] = createSignal(720);
-	// Signal for the latest VideoMetadata received over the video.meta MoQ track.
+	// Reactive decoder config: undefined until the first video.meta arrives — no pre-config.
 	const [decoderConfig, setDecoderConfig] = createSignal<VideoMetadata | undefined>();
 
 	const broadcastPath = useBroadcastPath();
@@ -19,40 +19,50 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 	let canvasEle: HTMLCanvasElement | undefined;
 	let videoContext: VideoContext | undefined;
 	let videoDecodeNode: VideoDecodeNode | undefined;
-
-	// Track current cancel function for cleanup
 	let currentCancel: (() => void) | null = null;
+	// Tracks the last applied config key so configure() is skipped when nothing changed.
+	// Re-configuring on every video.meta (every GOP) resets decoder state and requires a key frame.
+	let lastConfigKey = "";
+
+	const configKey = (cfg: VideoMetadata): string => {
+		let descKey = "";
+		if (cfg.description != null) {
+			const buf = cfg.description instanceof ArrayBuffer
+				? new Uint8Array(cfg.description)
+				: new Uint8Array((cfg.description as ArrayBufferView).buffer);
+			descKey = btoa(String.fromCharCode(...buf));
+		}
+		return `${cfg.codec}|${cfg.codedWidth ?? ""}|${cfg.codedHeight ?? ""}|${descKey}`;
+	};
 
 	onMount(() => {
 		if (canvasEle) {
 			videoContext = new VideoContext({ canvas: canvasEle });
 			videoDecodeNode = new VideoDecodeNode(videoContext);
-
-			// Connect VideoDecodeNode to destination
 			videoDecodeNode.connect(videoContext.destination);
-
-			// Set canvas size from VideoContext
 			setCanvasWidth(videoContext.destination.canvas.width);
 			setCanvasHeight(videoContext.destination.canvas.height);
 		}
+	});
+
+	// Reactively configure the decoder only when codec params actually change.
+	// Calling configure() on every video.meta (every GOP with unchanged params) resets
+	// decoder state and demands a key frame, causing "key frame required" errors on delta frames.
+	createEffect(() => {
+		const cfg = decoderConfig();
+		if (!cfg) return;
+		const key = configKey(cfg);
+		if (key === lastConfigKey) return; // params unchanged — skip
+		lastConfigKey = key;
+		videoDecodeNode?.configure(cfg);
+		console.log("[Subscribe] VideoDecoder configured:", cfg.codec);
 	});
 
 	onCleanup(() => {
 		stopSubscribing();
 	});
 
-	// MoQ reactive: whenever video.meta delivers new codec params, reconfigure the decoder
-	// through the SolidJS reactive graph instead of calling configure() imperatively.
-	createEffect(() => {
-		const config = decoderConfig();
-		if (config) {
-			videoDecodeNode?.configure(config);
-			console.log("[Subscribe] VideoDecoder reactively configured:", config.codec);
-		}
-	});
-
 	const startSubscribing = async () => {
-		// Create fresh context for each subscription
 		const [ctx, cancel] = withCancel(background());
 		currentCancel = cancel;
 
@@ -65,42 +75,39 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 
 			const session = await props.session;
 
-			// Configure decoder immediately with a known-good default so frames
-			// are never fed into an unconfigured VideoDecoder.  video.meta will
-			// reconfigure with exact publisher settings when it arrives.
-			const defaultDecoderConfig: VideoMetadata = {
-				codec: "vp09.00.10.08",
-				codedWidth: canvasWidth(),
-				codedHeight: canvasHeight(),
-				startGroup: 0,
-			};
-			// Signal update triggers createEffect → videoDecodeNode.configure() reactively.
-			setDecoderConfig(defaultDecoderConfig);
+			// Gate: the video loop awaits this before feeding any frames to the decoder.
+			// Resolved the moment the first video.meta group is fully received.
+			let resolveFirstConfig!: () => void;
+			const firstConfigReady = new Promise<void>((r) => { resolveFirstConfig = r; });
+			let firstConfigReceived = false;
 
-			// Subscribe to video.meta: loop on acceptGroup so every new group
-			// (e.g. encoder reconfigure, resolution change) reconfigures the decoder.
+			// Subscribe to video.meta: each new group updates the reactive signal,
+			// which triggers createEffect → videoDecodeNode.configure() automatically.
 			session.subscribe(broadcastPath, "video.meta").then(
 				async ([videoMetaTrack, videoMetaErr]) => {
 					if (videoMetaErr) {
-						if (!isSubscribed()) return; // expected during shutdown
+						if (!isSubscribed()) return;
 						console.warn("[Subscribe] video.meta subscribe failed:", videoMetaErr);
 						return;
 					}
 
-					// Loop: receive every video.meta group published by the encoder.
-					// Each new group calls setDecoderConfig → createEffect → decoder.configure().
 					while (isSubscribed()) {
 						const [group, groupErr] = await videoMetaTrack.acceptGroup(ctx.done());
 						if (groupErr) {
-							if (!isSubscribed()) break; // expected during shutdown
+							if (!isSubscribed()) break;
 							console.warn("[Subscribe] video.meta acceptGroup:", groupErr);
 							break;
 						}
 
 						for await (const frame of group.frames()) {
-							const meta = JSON.parse(new TextDecoder().decode(frame.bytes)) as VideoMetadata;
-							setDecoderConfig(meta); // → createEffect → videoDecodeNode.configure(meta)
-							console.log("[Subscribe] video.meta group received, codec:", meta.codec);
+							const { data } = deserializeMediaFrame(frame.bytes);
+							const meta = JSON.parse(new TextDecoder().decode(data)) as VideoMetadata;
+							setDecoderConfig(meta); // → createEffect → videoDecodeNode.configure()
+							console.log("[Subscribe] video.meta received, codec:", meta.codec);
+							if (!firstConfigReceived) {
+								firstConfigReceived = true;
+								resolveFirstConfig();
+							}
 						}
 					}
 				},
@@ -109,7 +116,7 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 			session.subscribe(broadcastPath, "video").then(
 				([videoTrack, videoErr]) => {
 					if (videoErr) {
-						if (!isSubscribed()) return; // expected during shutdown
+						if (!isSubscribed()) return;
 						console.warn("[Subscribe] video subscribe failed:", videoErr);
 						return;
 					}
@@ -117,21 +124,18 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 					const videoStream = new ReadableStream<EncodedVideoChunk>({
 						async start(controller) {
 							try {
+								// Wait for the first video.meta before feeding any frames.
+								await firstConfigReady;
+
 								while (isSubscribed()) {
-									const [group, groupErr] = await videoTrack.acceptGroup(
-										ctx.done(),
-									);
+									const [group, groupErr] = await videoTrack.acceptGroup(ctx.done());
 									if (groupErr) {
-										if (!isSubscribed()) break; // expected during shutdown
-										console.error(
-											"moq: Error accepting video group:",
-											groupErr,
-										);
+										if (!isSubscribed()) break;
+										console.error("moq: Error accepting video group:", groupErr);
 										break;
 									}
 
 									let isKey = true;
-
 									for await (const frame of group.frames()) {
 										const { timestamp, data } = deserializeMediaFrame(frame.bytes);
 										const chunk = new EncodedVideoChunk({
@@ -157,7 +161,6 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 						},
 					});
 
-					// Decode from stream (decoder already pre-configured with default VP9)
 					videoDecodeNode?.decodeFrom(videoStream);
 				},
 			);
@@ -176,6 +179,8 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 			currentCancel();
 			currentCancel = null;
 		}
+		setDecoderConfig(undefined); // reset for next subscription
+		lastConfigKey = "";
 		setIsSubscribed(false);
 		console.log("Stopped subscribing");
 	};
