@@ -60,7 +60,6 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 		if (!configKey()) return;
 		const cfg = untrack(decoderConfig)!;
 		videoDecodeNode?.configure(cfg);
-		console.log("[Subscribe] VideoDecoder configured:", cfg.codec);
 	});
 
 	onCleanup(() => {
@@ -259,7 +258,6 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 		setDecoderConfig(undefined); // reset for next subscription
 		audioContext?.suspend().catch(() => {});
 		setIsSubscribed(false);
-		console.log("Stopped subscribing");
 	};
 
 	return (

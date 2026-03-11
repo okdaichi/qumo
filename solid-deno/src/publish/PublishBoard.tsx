@@ -93,7 +93,6 @@ export function PublishBoard(props: { mux: TrackMux }) {
 			const tracks: Track[] = audioTrackDef ? [updatedTrack, audioTrackDef] : [updatedTrack];
 			broadcastRef.setCatalog({ version: 1, tracks }).catch(console.error);
 		}
-		console.log(`Video encoder reconfigured to ${config.width}x${config.height}`);
 	});
 
 	let publishCtx: Context;
@@ -134,7 +133,6 @@ export function PublishBoard(props: { mux: TrackMux }) {
 				actualWidth = bitmap.width;
 				actualHeight = bitmap.height;
 				bitmap.close();
-				console.log(`[Publish] grabbed frame: ${actualWidth}x${actualHeight}`);
 			} catch (err) {
 				console.warn("[Publish] grabFrame failed, falling back to getSettings():", err);
 				const s = videoTrack.getSettings();
@@ -289,7 +287,6 @@ export function PublishBoard(props: { mux: TrackMux }) {
 			sourceNode = null;
 		}
 		setIsStreaming(false);
-		console.log("Stopped streaming");
 	};
 
 	return (
