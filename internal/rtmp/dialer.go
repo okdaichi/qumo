@@ -7,5 +7,11 @@ func Dial(network, address string) (*Conn, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	if err := ClientHandshake(transport); err != nil {
+		transport.Close()
+		return nil, err
+	}
+
 	return NewConn(transport), nil
 }

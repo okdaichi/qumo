@@ -56,6 +56,54 @@ func ServerHandshake(rw io.ReadWriter) error {
 	return nil
 }
 
+func ClientHandshake(rw io.ReadWriter) error {
+	clientTime := uint32(time.Now().UnixMilli())
+
+	c0 := handshakeChunk0{
+		version: uint8(DefaultClientVersion),
+	}
+
+	c1 := handshakeChunk1{
+		time: clientTime,
+	}
+	if _, err := rand.Read(c1.rand[:]); err != nil {
+		return fmt.Errorf("failed to generate C1 random bytes: %w", err)
+	}
+
+	if err := c0.Encode(rw); err != nil {
+		return fmt.Errorf("failed to write C0: %w", err)
+	}
+	if err := c1.Encode(rw); err != nil {
+		return fmt.Errorf("failed to write C1: %w", err)
+	}
+
+	var s0 handshakeChunk0
+	if err := s0.Decode(rw); err != nil {
+		return fmt.Errorf("failed to read S0: %w", err)
+	}
+
+	var s1 handshakeChunk1
+	if err := s1.Decode(rw); err != nil {
+		return fmt.Errorf("failed to read S1: %w", err)
+	}
+
+	var s2 handshakeChunk2
+	if err := s2.Decode(rw); err != nil {
+		return fmt.Errorf("failed to read S2: %w", err)
+	}
+
+	c2 := handshakeChunk2{
+		receivedTimestamp: s1.time,
+		readTime:          uint32(time.Now().UnixMilli()),
+		echo:              s1.rand,
+	}
+	if err := c2.Encode(rw); err != nil {
+		return fmt.Errorf("failed to write C2: %w", err)
+	}
+
+	return nil
+}
+
 type handshakeChunk0 struct {
 	version uint8
 }
