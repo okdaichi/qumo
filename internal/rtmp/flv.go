@@ -1,6 +1,6 @@
 package rtmp
 
-func OpenFLVStream(conn *Conn) (*Stream, error) {
+func OpenFLVStream(conn *Conn) (*SendStream, error) {
 	// TODO: Implement FLV media stream handling
 	stream, err := conn.OpenStream()
 	if err != nil {

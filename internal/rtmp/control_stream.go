@@ -4,7 +4,31 @@ import "encoding/binary"
 
 type StreamID uint32
 
+func (conn *Conn) openControlStream() (*ControlStream, error) {
+	// TODO: Use sync.Once to ensure only one control stream is created
+	sender, err := conn.OpenStream()
+	if err != nil {
+		return nil, err
+	}
+	receiver, err := conn.AcceptStream()
+	if err != nil {
+		return nil, err
+	}
+	stream := &ControlStream{
+		sender:          sender,
+		receiver:        receiver,
+		localChunkSize:  DefaultChunkSize,
+		remoteChunkSize: DefaultChunkSize,
+	}
+	return stream, nil
+}
+
 type ControlStream struct {
+	sender   *SendStream
+	receiver *ReceiveStream
+
+	localChunkSize  ChunkSize
+	remoteChunkSize ChunkSize
 }
 
 func (s *ControlStream) StreamID() StreamID {
@@ -13,6 +37,11 @@ func (s *ControlStream) StreamID() StreamID {
 
 func (s *ControlStream) chunkStreamID() uint32 {
 	return chunkStreamIDControl
+}
+
+func (s *ControlStream) SetChunkSize(size uint32) error {
+	s.localChunkSize = ChunkSize(size)
+	return nil
 }
 
 type EventType uint16
