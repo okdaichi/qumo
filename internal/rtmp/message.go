@@ -166,12 +166,8 @@ func (m *MessageSetPeerBandwidth) decode(r io.Reader) error {
 
 type backpointer = uint32
 
-type message interface {
-	MessageTypeID() MessageTypeID
-}
-
 type MessageAggregate struct {
-	Messages map[message]backpointer
+	Messages map[*message]backpointer
 }
 
 type BandwidthLimitType uint8
