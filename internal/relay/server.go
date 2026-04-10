@@ -148,7 +148,6 @@ func (s *Server) relay(ctx context.Context, sess *moqt.Session) error {
 		}
 
 		handler := newRelayHandler(ann, sess, DefaultGroupCacheSize, DefaultFramePool)
-		// Announcement is already provided above; other fields defaulted appropriately.
 
 		s.TrackMux.Announce(ann, handler)
 	}

@@ -29,11 +29,11 @@ type RelayHandler struct {
 // Announcement may be nil; callers (e.g. server.relay) will set it later if
 // necessary. A zero-valued GroupCacheSize or nil FramePool is acceptable (the
 // handler will fall back to defaults).
-func newRelayHandler(ann *moqt.Announcement, sess *moqt.Session, gcSize int, pool *FramePool) *RelayHandler {
+func newRelayHandler(ann *moqt.Announcement, sess *moqt.Session, cacheSize int, pool *FramePool) *RelayHandler {
 	return &RelayHandler{
 		Announcement:   ann,
 		Session:        sess,
-		GroupCacheSize: gcSize,
+		GroupCacheSize: cacheSize,
 		FramePool:      pool,
 	}
 }
@@ -105,13 +105,7 @@ func (h *RelayHandler) subscribe(name moqt.TrackName) *trackDistributor {
 	return d
 }
 
-// func newTrackDistributor(src *moqt.TrackReader, cacheSize int, onClose func()) *trackDistributor {
-
-// }
-
 type trackDistributor struct {
-	// src *moqt.TrackReader
-
 	ring *groupRing
 
 	// Broadcast channel pattern: each subscriber gets its own notification channel
