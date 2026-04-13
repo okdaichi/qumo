@@ -109,7 +109,7 @@ func TestMediaFrameSize(t *testing.T) {
 func TestEncodeMediaFrame_ZeroTimestamp(t *testing.T) {
 	data := []byte{0x01}
 	frame := buildMediaFrame(0, data)
-	require.Len(t, frame, 3) // 1 (ts=0) + 1 (len=1) + 1 (data)
+	require.Len(t, frame, 3)              // 1 (ts=0) + 1 (len=1) + 1 (data)
 	assert.Equal(t, byte(0x00), frame[0]) // timestamp = 0
 	assert.Equal(t, byte(0x01), frame[1]) // data length = 1
 	assert.Equal(t, byte(0x01), frame[2]) // data

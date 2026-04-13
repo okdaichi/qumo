@@ -149,8 +149,8 @@ func TestAVCCToAnnexB_MultipleNALUs(t *testing.T) {
 
 	// Build tag with two NALUs
 	tag := []byte{
-		0x27, // FrameType=2 (inter), CodecID=7
-		0x01, // AVCPacketType = NALU
+		0x27,             // FrameType=2 (inter), CodecID=7
+		0x01,             // AVCPacketType = NALU
 		0x00, 0x00, 0x00, // CTS = 0
 	}
 	len1 := make([]byte, 4)

@@ -8,11 +8,11 @@ import (
 
 // FLV/RTMP video tag constants.
 const (
-	flvCodecIDAVC   = 7  // H.264 / AVC
-	flvAVCSeqHeader = 0  // AVCPacketType: sequence header
-	flvAVCNALU      = 1  // AVCPacketType: NALU(s)
-	flvKeyframe     = 1  // FrameType: keyframe
-	flvInterframe   = 2  // FrameType: inter-frame
+	flvCodecIDAVC   = 7 // H.264 / AVC
+	flvAVCSeqHeader = 0 // AVCPacketType: sequence header
+	flvAVCNALU      = 1 // AVCPacketType: NALU(s)
+	flvKeyframe     = 1 // FrameType: keyframe
+	flvInterframe   = 2 // FrameType: inter-frame
 
 	flvSoundFormatAAC = 10 // SoundFormat: AAC
 	flvAACSeqHeader   = 0  // AACPacketType: sequence header (AudioSpecificConfig)
@@ -383,9 +383,9 @@ func parseSPSDimensions(sps []byte) (width, height int) {
 	case 0:
 		r.readExpGolomb() // log2_max_pic_order_cnt_lsb_minus4
 	case 1:
-		r.skip(1)         // delta_pic_order_always_zero_flag
-		r.readSignedEG()  // offset_for_non_ref_pic
-		r.readSignedEG()  // offset_for_top_to_bottom_field
+		r.skip(1)        // delta_pic_order_always_zero_flag
+		r.readSignedEG() // offset_for_non_ref_pic
+		r.readSignedEG() // offset_for_top_to_bottom_field
 		n := r.readExpGolomb()
 		for i := 0; i < int(n); i++ {
 			r.readSignedEG()
