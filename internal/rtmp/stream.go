@@ -5,18 +5,16 @@ import (
 	"io"
 )
 
-const chunkStreamIDControl chunkStreamID = 2
-
+// chunkStreamID is a type alias for chunk stream identifiers.
 type chunkStreamID = uint32
 
-const messageStreamIDControl StreamID = 0
-
-type chunkHeader struct {
+// chunkBasicHeader carries the fmt (chunk type) and chunk stream ID.
+type chunkBasicHeader struct {
 	fmt           uint8
 	chunkStreamID chunkStreamID
 }
 
-func (h chunkHeader) encode(w io.Writer) error {
+func (h chunkBasicHeader) encode(w io.Writer) error {
 	var buf [3]byte
 	var length int
 	if h.chunkStreamID <= 63 {
@@ -36,7 +34,7 @@ func (h chunkHeader) encode(w io.Writer) error {
 	return err
 }
 
-func (h *chunkHeader) decode(r io.Reader) error {
+func (h *chunkBasicHeader) decode(r io.Reader) error {
 	var buf [3]byte
 	_, err := io.ReadFull(r, buf[:1])
 	if err != nil {
@@ -63,37 +61,18 @@ func (h *chunkHeader) decode(r io.Reader) error {
 	return nil
 }
 
-type messageHeader struct {
-	timestamp       uint32
-	messageLength   int
-	messageTypeID   uint8
-	messageStreamID StreamID
-}
+// chunkTimestampMax is 0xFFFFFF, the sentinel value that indicates an
+// extended timestamp field follows.
+const chunkTimestampMax uint32 = 0xFFFFFF
 
-type chunkType uint8
-
-const (
-	chunkTimestampMax  uint32    = 0xFFFFFF
-	initChunkType      chunkType = 0
-	varLenChunkType    chunkType = 1
-	timeDeltaChunkType chunkType = 2
-	contChunkType      chunkType = 3
-)
-
-func encodeChunkTimestamp(w io.Writer, timestamp uint32) error {
-	if timestamp < chunkTimestampMax {
-		return nil
-	}
+func encodeExtendedTimestamp(w io.Writer, ts uint32) error {
 	var buf [4]byte
-	binary.BigEndian.PutUint32(buf[:], timestamp)
+	binary.BigEndian.PutUint32(buf[:], ts)
 	_, err := w.Write(buf[:])
 	return err
 }
 
-func decodeChunkTimestamp(timestampField uint32, r io.Reader) (uint32, error) {
-	if timestampField < chunkTimestampMax {
-		return timestampField, nil
-	}
+func decodeExtendedTimestamp(r io.Reader) (uint32, error) {
 	var buf [4]byte
 	if _, err := io.ReadFull(r, buf[:]); err != nil {
 		return 0, err

@@ -10,13 +10,13 @@ func TestChunk0EncodeDecode(t *testing.T) {
 	original := handshakeChunk0{version: uint8(DefaultClientVersion)}
 
 	var buf bytes.Buffer
-	if err := original.Encode(&buf); err != nil {
-		t.Fatalf("Encode failed: %v", err)
+	if err := original.encode(&buf); err != nil {
+		t.Fatalf("encode failed: %v", err)
 	}
 
 	var decoded handshakeChunk0
-	if err := decoded.Decode(&buf); err != nil {
-		t.Fatalf("Decode failed: %v", err)
+	if err := decoded.decode(&buf); err != nil {
+		t.Fatalf("decode failed: %v", err)
 	}
 
 	if decoded.version != original.version {
@@ -36,8 +36,8 @@ func TestChunkC1EncodeDecode(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := original.Encode(&buf); err != nil {
-		t.Fatalf("Encode failed: %v", err)
+	if err := original.encode(&buf); err != nil {
+		t.Fatalf("encode failed: %v", err)
 	}
 
 	if got, want := buf.Len(), 1536; got != want {
@@ -45,8 +45,8 @@ func TestChunkC1EncodeDecode(t *testing.T) {
 	}
 
 	var decoded handshakeChunk1
-	if err := decoded.Decode(&buf); err != nil {
-		t.Fatalf("Decode failed: %v", err)
+	if err := decoded.decode(&buf); err != nil {
+		t.Fatalf("decode failed: %v", err)
 	}
 
 	if decoded.time != original.time {
@@ -70,8 +70,8 @@ func TestChunk2EncodeDecode(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := original.Encode(&buf); err != nil {
-		t.Fatalf("Encode failed: %v", err)
+	if err := original.encode(&buf); err != nil {
+		t.Fatalf("encode failed: %v", err)
 	}
 
 	if got, want := buf.Len(), 1536; got != want {
@@ -79,8 +79,8 @@ func TestChunk2EncodeDecode(t *testing.T) {
 	}
 
 	var decoded handshakeChunk2
-	if err := decoded.Decode(&buf); err != nil {
-		t.Fatalf("Decode failed: %v", err)
+	if err := decoded.decode(&buf); err != nil {
+		t.Fatalf("decode failed: %v", err)
 	}
 
 	if decoded.receivedTimestamp != original.receivedTimestamp {
@@ -97,7 +97,7 @@ func TestChunk2EncodeDecode(t *testing.T) {
 func TestChunkDecodeShortRead(t *testing.T) {
 	t.Run("chunk0", func(t *testing.T) {
 		var c handshakeChunk0
-		err := c.Decode(bytes.NewReader(nil))
+		err := c.decode(bytes.NewReader(nil))
 		if err == nil {
 			t.Fatal("expected error for short read")
 		}
@@ -108,7 +108,7 @@ func TestChunkDecodeShortRead(t *testing.T) {
 
 	t.Run("chunkC1", func(t *testing.T) {
 		var c handshakeChunk1
-		err := c.Decode(bytes.NewReader(make([]byte, 100)))
+		err := c.decode(bytes.NewReader(make([]byte, 100)))
 		if err == nil {
 			t.Fatal("expected error for short read")
 		}
@@ -119,7 +119,7 @@ func TestChunkDecodeShortRead(t *testing.T) {
 
 	t.Run("chunk2", func(t *testing.T) {
 		var c handshakeChunk2
-		err := c.Decode(bytes.NewReader(make([]byte, 100)))
+		err := c.decode(bytes.NewReader(make([]byte, 100)))
 		if err == nil {
 			t.Fatal("expected error for short read")
 		}
