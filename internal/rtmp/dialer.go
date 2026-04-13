@@ -28,7 +28,7 @@ func Dial(ctx context.Context, address string) (*Conn, error) {
 // connection and returns a [*Conn] ready for stream negotiation via
 // [Conn.OpenStream].
 func ClientConn(transport net.Conn) (*Conn, error) {
-	if err := ClientHandshake(transport); err != nil {
+	if err := clientHandshake(transport); err != nil {
 		return nil, err
 	}
 	return newConn(transport), nil

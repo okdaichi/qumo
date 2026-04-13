@@ -7,7 +7,7 @@ import (
 )
 
 func TestChunk0EncodeDecode(t *testing.T) {
-	original := handshakeChunk0{version: uint8(DefaultClientVersion)}
+	original := handshakeChunk0{version: uint8(defaultClientVersion)}
 
 	var buf bytes.Buffer
 	if err := original.encode(&buf); err != nil {

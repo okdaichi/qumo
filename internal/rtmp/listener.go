@@ -61,7 +61,7 @@ func (l *Listener) Addr() net.Addr {
 // connection and returns a [*Conn] ready for stream negotiation via
 // [Conn.AcceptStream].
 func ServerConn(transport net.Conn) (*Conn, error) {
-	if err := ServerHandshake(transport); err != nil {
+	if err := serverHandshake(transport); err != nil {
 		return nil, err
 	}
 	return newConn(transport), nil

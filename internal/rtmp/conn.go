@@ -36,10 +36,10 @@ const (
 	userControlPingResponse uint16 = 7
 )
 
-// MessageStreamID identifies a logical message stream within an RTMP connection.
+// messageStreamID identifies a logical message stream within an RTMP connection.
 // Stream ID 0 is reserved for the control stream; media streams use IDs
 // allocated by createStream commands.
-type MessageStreamID uint32
+type messageStreamID uint32
 
 // countingReader wraps an io.Reader and counts bytes read.
 type countingReader struct {
@@ -80,8 +80,8 @@ type chunkReadState struct {
 
 // rawMessage is a fully reassembled RTMP message.
 type rawMessage struct {
-	typeID    MessageTypeID
-	streamID  MessageStreamID
+	typeID    messageTypeID
+	streamID  messageStreamID
 	timestamp uint32
 	payload   []byte
 }
@@ -169,7 +169,7 @@ func (c *Conn) readMessage() (*rawMessage, error) {
 			state.timestampDelta = 0
 
 			if state.messageLength > maxMessageSize {
-				return nil, fmt.Errorf("rtmp: message too large (%d bytes)", state.messageLength)
+				return nil, fmt.Errorf("%w: %d bytes", ErrMessageTooLarge, state.messageLength)
 			}
 			state.payload = make([]byte, 0, state.messageLength)
 			state.remaining = state.messageLength
@@ -197,7 +197,7 @@ func (c *Conn) readMessage() (*rawMessage, error) {
 			state.timestamp += td
 
 			if state.messageLength > maxMessageSize {
-				return nil, fmt.Errorf("rtmp: message too large (%d bytes)", state.messageLength)
+				return nil, fmt.Errorf("%w: %d bytes", ErrMessageTooLarge, state.messageLength)
 			}
 			state.payload = make([]byte, 0, state.messageLength)
 			state.remaining = state.messageLength
@@ -262,8 +262,8 @@ func (c *Conn) readMessage() (*rawMessage, error) {
 		// Message complete?
 		if state.remaining == 0 {
 			msg := &rawMessage{
-				typeID:    MessageTypeID(state.messageTypeID),
-				streamID:  MessageStreamID(state.messageStreamID),
+				typeID:    messageTypeID(state.messageTypeID),
+				streamID:  messageStreamID(state.messageStreamID),
 				timestamp: state.timestamp,
 				payload:   state.payload,
 			}
@@ -359,18 +359,18 @@ func (c *Conn) handleControlMessage(msg *rawMessage) error {
 	r := bytes.NewReader(msg.payload)
 
 	switch msg.typeID {
-	case MessageTypeSetChunkSize:
-		var m MessageSetChunkSize
+	case messageTypeSetChunkSize:
+		var m messageSetChunkSize
 		if err := m.decode(r); err != nil {
 			return err
 		}
 		if m.ChunkSize < 1 {
-			return fmt.Errorf("rtmp: invalid chunk size %d", m.ChunkSize)
+			return fmt.Errorf("%w: %d", ErrInvalidChunkSize, m.ChunkSize)
 		}
 		c.readChunkSize = m.ChunkSize
 
-	case MessageTypeAbort:
-		var m MessageAbort
+	case messageTypeAbort:
+		var m messageAbort
 		if err := m.decode(r); err != nil {
 			return err
 		}
@@ -379,15 +379,15 @@ func (c *Conn) handleControlMessage(msg *rawMessage) error {
 			state.remaining = 0
 		}
 
-	case MessageTypeAck:
-		var m MessageAck
+	case messageTypeAck:
+		var m messageAck
 		if err := m.decode(r); err != nil {
 			return err
 		}
 		c.peerAckedBytes = uint64(m.SequenceNumber)
 
-	case MessageTypeUserControl:
-		var m MessageUserControl
+	case messageTypeUserControl:
+		var m messageUserControl
 		if err := m.decode(r); err != nil {
 			return err
 		}
@@ -395,15 +395,15 @@ func (c *Conn) handleControlMessage(msg *rawMessage) error {
 			return c.sendUserControl(userControlPingResponse, m.EventData[:4])
 		}
 
-	case MessageTypeWindowAckSize:
-		var m MessageWindowAckSize
+	case messageTypeWindowAckSize:
+		var m messageWindowAckSize
 		if err := m.decode(r); err != nil {
 			return err
 		}
 		c.windowAckSize = m.Size
 
-	case MessageTypeSetPeerBandwidth:
-		var m MessageSetPeerBandwidth
+	case messageTypeSetPeerBandwidth:
+		var m messageSetPeerBandwidth
 		if err := m.decode(r); err != nil {
 			return err
 		}
@@ -415,8 +415,8 @@ func (c *Conn) handleControlMessage(msg *rawMessage) error {
 	return nil
 }
 
-func isControlMessage(typeID MessageTypeID) bool {
-	return typeID >= MessageTypeSetChunkSize && typeID <= MessageTypeSetPeerBandwidth
+func isControlMessage(typeID messageTypeID) bool {
+	return typeID >= messageTypeSetChunkSize && typeID <= messageTypeSetPeerBandwidth
 }
 
 func (c *Conn) checkAck() error {
@@ -437,38 +437,32 @@ func (c *Conn) checkAck() error {
 
 func (c *Conn) sendAck(seq uint32) error {
 	var buf bytes.Buffer
-	(&MessageAck{SequenceNumber: seq}).encode(&buf)
-	return c.writeRawMessage(csidControl, &rawMessage{typeID: MessageTypeAck, payload: buf.Bytes()})
-}
-
-func (c *Conn) sendAbort(csid chunkStreamID) error {
-	var buf bytes.Buffer
-	(&MessageAbort{ChunkStreamID: csid}).encode(&buf)
-	return c.writeRawMessage(csidControl, &rawMessage{typeID: MessageTypeAbort, payload: buf.Bytes()})
+	(&messageAck{SequenceNumber: seq}).encode(&buf)
+	return c.writeRawMessage(csidControl, &rawMessage{typeID: messageTypeAck, payload: buf.Bytes()})
 }
 
 func (c *Conn) sendSetChunkSize(size uint32) error {
 	var buf bytes.Buffer
-	(&MessageSetChunkSize{ChunkSize: size}).encode(&buf)
-	return c.writeRawMessage(csidControl, &rawMessage{typeID: MessageTypeSetChunkSize, payload: buf.Bytes()})
+	(&messageSetChunkSize{ChunkSize: size}).encode(&buf)
+	return c.writeRawMessage(csidControl, &rawMessage{typeID: messageTypeSetChunkSize, payload: buf.Bytes()})
 }
 
 func (c *Conn) sendWindowAckSize(size uint32) error {
 	var buf bytes.Buffer
-	(&MessageWindowAckSize{Size: size}).encode(&buf)
-	return c.writeRawMessage(csidControl, &rawMessage{typeID: MessageTypeWindowAckSize, payload: buf.Bytes()})
+	(&messageWindowAckSize{Size: size}).encode(&buf)
+	return c.writeRawMessage(csidControl, &rawMessage{typeID: messageTypeWindowAckSize, payload: buf.Bytes()})
 }
 
-func (c *Conn) sendSetPeerBandwidth(bandwidth uint32, limitType BandwidthLimitType) error {
+func (c *Conn) sendSetPeerBandwidth(bandwidth uint32, limitType bandwidthLimitType) error {
 	var buf bytes.Buffer
-	(&MessageSetPeerBandwidth{Bandwidth: bandwidth, LimitType: limitType}).encode(&buf)
-	return c.writeRawMessage(csidControl, &rawMessage{typeID: MessageTypeSetPeerBandwidth, payload: buf.Bytes()})
+	(&messageSetPeerBandwidth{Bandwidth: bandwidth, LimitType: limitType}).encode(&buf)
+	return c.writeRawMessage(csidControl, &rawMessage{typeID: messageTypeSetPeerBandwidth, payload: buf.Bytes()})
 }
 
 func (c *Conn) sendUserControl(eventType uint16, data []byte) error {
 	var buf bytes.Buffer
-	(&MessageUserControl{EventType: eventType, EventData: data}).encode(&buf)
-	return c.writeRawMessage(csidControl, &rawMessage{typeID: MessageTypeUserControl, payload: buf.Bytes()})
+	(&messageUserControl{EventType: eventType, EventData: data}).encode(&buf)
+	return c.writeRawMessage(csidControl, &rawMessage{typeID: messageTypeUserControl, payload: buf.Bytes()})
 }
 
 func (c *Conn) sendStreamBegin(streamID uint32) error {
@@ -483,7 +477,7 @@ func (c *Conn) sendStreamEOF(streamID uint32) error {
 	return c.sendUserControl(userControlStreamEOF, data)
 }
 
-func (c *Conn) sendCommand(streamID MessageStreamID, name string, txID float64, args ...any) error {
+func (c *Conn) sendCommand(streamID messageStreamID, name string, txID float64, args ...any) error {
 	var buf bytes.Buffer
 	enc := amf0.NewEncoder(&buf)
 	if err := enc.Encode(name); err != nil {
@@ -498,7 +492,7 @@ func (c *Conn) sendCommand(streamID MessageStreamID, name string, txID float64, 
 		}
 	}
 	return c.writeRawMessage(csidCommand, &rawMessage{
-		typeID:   MessageTypeAMF0Command,
+		typeID:   messageTypeAMF0Command,
 		streamID: streamID,
 		payload:  buf.Bytes(),
 	})
@@ -506,7 +500,7 @@ func (c *Conn) sendCommand(streamID MessageStreamID, name string, txID float64, 
 
 func (c *Conn) readCommand(msg *rawMessage) (name string, txID float64, args []any, err error) {
 	r := bytes.NewReader(msg.payload)
-	if msg.typeID == MessageTypeAMF3Command && len(msg.payload) > 0 {
+	if msg.typeID == messageTypeAMF3Command && len(msg.payload) > 0 {
 		r.ReadByte() // skip leading byte
 	}
 	dec := amf0.NewDecoder(r)
@@ -550,7 +544,7 @@ func (c *Conn) readNextCommand() (name string, txID float64, args []any, err err
 			}
 			continue
 		}
-		if msg.typeID == MessageTypeAMF0Command || msg.typeID == MessageTypeAMF3Command {
+		if msg.typeID == messageTypeAMF0Command || msg.typeID == messageTypeAMF3Command {
 			return c.readCommand(msg)
 		}
 	}
@@ -570,7 +564,7 @@ func (c *Conn) readNextCommand() (name string, txID float64, args []any, err err
 // provided by the client.
 func (c *Conn) AcceptStream() (*MessageReader, error) {
 	var (
-		activeStreamID MessageStreamID
+		activeStreamID messageStreamID
 		app            string
 	)
 
@@ -587,7 +581,7 @@ func (c *Conn) AcceptStream() (*MessageReader, error) {
 			continue
 		}
 
-		if msg.typeID != MessageTypeAMF0Command && msg.typeID != MessageTypeAMF3Command {
+		if msg.typeID != messageTypeAMF0Command && msg.typeID != messageTypeAMF3Command {
 			continue
 		}
 
@@ -611,7 +605,7 @@ func (c *Conn) AcceptStream() (*MessageReader, error) {
 			}
 
 		case commandMessageNameCreateStream:
-			activeStreamID = MessageStreamID(c.nextStreamID)
+			activeStreamID = messageStreamID(c.nextStreamID)
 			c.nextStreamID++
 			if err := c.sendCommand(0, commandMessageNameResult, txID, nil, float64(activeStreamID)); err != nil {
 				return nil, err
@@ -649,7 +643,7 @@ func (c *Conn) handleConnect(txID float64) error {
 	if err := c.sendWindowAckSize(defaultWindowAckSize); err != nil {
 		return err
 	}
-	if err := c.sendSetPeerBandwidth(defaultWindowAckSize, BandwidthLimitDynamic); err != nil {
+	if err := c.sendSetPeerBandwidth(defaultWindowAckSize, bandwidthLimitDynamic); err != nil {
 		return err
 	}
 	if err := c.sendSetChunkSize(serverChunkSize); err != nil {
@@ -733,12 +727,12 @@ func (c *Conn) waitForResult(txID float64) error {
 			return nil
 		}
 		if name == commandMessageNameError && tid == txID {
-			return fmt.Errorf("rtmp: server returned _error for transaction %v", txID)
+			return fmt.Errorf("%w: transaction %v", ErrServerRejected, txID)
 		}
 	}
 }
 
-func (c *Conn) waitForStreamID(txID float64) (MessageStreamID, error) {
+func (c *Conn) waitForStreamID(txID float64) (messageStreamID, error) {
 	for {
 		name, tid, args, err := c.readNextCommand()
 		if err != nil {
@@ -746,11 +740,11 @@ func (c *Conn) waitForStreamID(txID float64) (MessageStreamID, error) {
 		}
 		if name == commandMessageNameResult && tid == txID && len(args) >= 2 {
 			if sid, ok := args[1].(float64); ok {
-				return MessageStreamID(sid), nil
+				return messageStreamID(sid), nil
 			}
 		}
 		if name == commandMessageNameError && tid == txID {
-			return 0, fmt.Errorf("rtmp: createStream rejected")
+			return 0, ErrCreateStreamRejected
 		}
 	}
 }
@@ -788,7 +782,7 @@ func (c *Conn) Close() error { return c.transport.Close() }
 // stream accepted via [Conn.AcceptStream].
 type MessageReader struct {
 	conn      *Conn
-	streamID  MessageStreamID
+	streamID  messageStreamID
 	app       string
 	streamKey string
 }
@@ -832,11 +826,11 @@ func (r *MessageReader) ReadFrame() (*Frame, error) {
 		}
 
 		switch msg.typeID {
-		case MessageTypeAudio:
+		case messageTypeAudio:
 			return &Frame{Type: FrameTypeAudio, Timestamp: msg.timestamp, Data: msg.payload}, nil
-		case MessageTypeVideo:
+		case messageTypeVideo:
 			return &Frame{Type: FrameTypeVideo, Timestamp: msg.timestamp, Data: msg.payload}, nil
-		case MessageTypeAMF0Data, MessageTypeAMF3Data:
+		case messageTypeAMF0Data, messageTypeAMF3Data:
 			return &Frame{Type: FrameTypeMetadata, Timestamp: msg.timestamp, Data: msg.payload}, nil
 		}
 	}
@@ -846,7 +840,7 @@ func (r *MessageReader) ReadFrame() (*Frame, error) {
 // opened via [Conn.OpenStream].
 type MessageWriter struct {
 	conn      *Conn
-	streamID  MessageStreamID
+	streamID  messageStreamID
 	app       string
 	streamKey string
 }
@@ -868,21 +862,21 @@ func (w *MessageWriter) Close() error {
 // WriteFrame writes a single audio, video, or metadata frame to the stream.
 // The frame's [Frame.Type] determines which RTMP chunk stream is used.
 func (w *MessageWriter) WriteFrame(frame *Frame) error {
-	var typeID MessageTypeID
+	var typeID messageTypeID
 	var csid chunkStreamID
 
 	switch frame.Type {
 	case FrameTypeAudio:
-		typeID = MessageTypeAudio
+		typeID = messageTypeAudio
 		csid = csidAudio
 	case FrameTypeVideo:
-		typeID = MessageTypeVideo
+		typeID = messageTypeVideo
 		csid = csidVideo
 	case FrameTypeMetadata:
-		typeID = MessageTypeAMF0Data
+		typeID = messageTypeAMF0Data
 		csid = csidCommand
 	default:
-		return fmt.Errorf("rtmp: unsupported frame type %d", frame.Type)
+		return fmt.Errorf("%w: %d", ErrUnsupportedFrameType, frame.Type)
 	}
 
 	return w.conn.writeRawMessage(csid, &rawMessage{

@@ -8,11 +8,11 @@ type FrameType uint8
 
 const (
 	// FrameTypeAudio identifies an audio frame.
-	FrameTypeAudio FrameType = FrameType(MessageTypeAudio) // 8
+	FrameTypeAudio FrameType = FrameType(messageTypeAudio) // 8
 	// FrameTypeVideo identifies a video frame.
-	FrameTypeVideo FrameType = FrameType(MessageTypeVideo) // 9
+	FrameTypeVideo FrameType = FrameType(messageTypeVideo) // 9
 	// FrameTypeMetadata identifies a metadata frame (AMF0 encoded).
-	FrameTypeMetadata FrameType = FrameType(MessageTypeAMF0Data) // 18
+	FrameTypeMetadata FrameType = FrameType(messageTypeAMF0Data) // 18
 )
 
 // Frame carries a single audio, video, or metadata payload exchanged via

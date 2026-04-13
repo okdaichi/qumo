@@ -8,10 +8,10 @@ import (
 	"time"
 )
 
-// ServerHandshake performs the server-side RTMP handshake (version negotiation
+// serverHandshake performs the server-side RTMP handshake (version negotiation
 // and key exchange) over rw. It reads C0+C1 from the client, writes S0+S1+S2,
 // and reads C2.
-func ServerHandshake(rw io.ReadWriter) error {
+func serverHandshake(rw io.ReadWriter) error {
 	var c0 handshakeChunk0
 	if err := c0.decode(rw); err != nil {
 		return fmt.Errorf("failed to read C0: %w", err)
@@ -25,7 +25,7 @@ func ServerHandshake(rw io.ReadWriter) error {
 	serverTime := uint32(time.Now().UnixMilli())
 
 	s0 := handshakeChunk0{
-		version: uint8(DefaultServerVersion),
+		version: uint8(defaultServerVersion),
 	}
 
 	s1 := handshakeChunk1{
@@ -59,13 +59,13 @@ func ServerHandshake(rw io.ReadWriter) error {
 	return nil
 }
 
-// ClientHandshake performs the client-side RTMP handshake over rw. It writes
+// clientHandshake performs the client-side RTMP handshake over rw. It writes
 // C0+C1, reads S0+S1+S2 from the server, and writes C2.
-func ClientHandshake(rw io.ReadWriter) error {
+func clientHandshake(rw io.ReadWriter) error {
 	clientTime := uint32(time.Now().UnixMilli())
 
 	c0 := handshakeChunk0{
-		version: uint8(DefaultClientVersion),
+		version: uint8(defaultClientVersion),
 	}
 
 	c1 := handshakeChunk1{
@@ -180,15 +180,15 @@ func (c *handshakeChunk2) decode(r io.Reader) error {
 	return nil
 }
 
-// Version represents an RTMP protocol version number exchanged during the
+// version represents an RTMP protocol version number exchanged during the
 // handshake (C0/S0).
-type Version uint8
+type version uint8
 
 const (
-	// Version3 is the only version defined by the RTMP specification.
-	Version3 Version = 3
-	// DefaultClientVersion is the version sent by the client during handshake.
-	DefaultClientVersion = Version3
-	// DefaultServerVersion is the version sent by the server during handshake.
-	DefaultServerVersion = Version3
+	// version3 is the only version defined by the RTMP specification.
+	version3 version = 3
+	// defaultClientVersion is the version sent by the client during handshake.
+	defaultClientVersion = version3
+	// defaultServerVersion is the version sent by the server during handshake.
+	defaultServerVersion = version3
 )

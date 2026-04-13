@@ -54,7 +54,7 @@ func TestMessageRoundTrip(t *testing.T) {
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- writerConn.writeRawMessage(csidVideo, &rawMessage{
-			typeID:    MessageTypeVideo,
+			typeID:    messageTypeVideo,
 			streamID:  1,
 			timestamp: 1000,
 			payload:   payload,
@@ -70,8 +70,8 @@ func TestMessageRoundTrip(t *testing.T) {
 		t.Fatalf("writeRawMessage: %v", err)
 	}
 
-	if msg.typeID != MessageTypeVideo {
-		t.Fatalf("typeID = %d; want %d", msg.typeID, MessageTypeVideo)
+	if msg.typeID != messageTypeVideo {
+		t.Fatalf("typeID = %d; want %d", msg.typeID, messageTypeVideo)
 	}
 	if msg.streamID != 1 {
 		t.Fatalf("streamID = %d; want 1", msg.streamID)
@@ -101,7 +101,7 @@ func TestExtendedTimestampRoundTrip(t *testing.T) {
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- writerConn.writeRawMessage(csidAudio, &rawMessage{
-			typeID:    MessageTypeAudio,
+			typeID:    messageTypeAudio,
 			streamID:  1,
 			timestamp: ts,
 			payload:   payload,
@@ -136,9 +136,9 @@ func TestSetChunkSizeHandling(t *testing.T) {
 	go func() {
 		// Send SetChunkSize(512).
 		var buf bytes.Buffer
-		(&MessageSetChunkSize{ChunkSize: 512}).encode(&buf)
+		(&messageSetChunkSize{ChunkSize: 512}).encode(&buf)
 		if err := writerConn.writeRawMessage(csidControl, &rawMessage{
-			typeID:  MessageTypeSetChunkSize,
+			typeID:  messageTypeSetChunkSize,
 			payload: buf.Bytes(),
 		}); err != nil {
 			errCh <- err
@@ -149,7 +149,7 @@ func TestSetChunkSizeHandling(t *testing.T) {
 		// Send payload larger than old chunk size (128) but fits in new (512).
 		payload := bytes.Repeat([]byte{0xCD}, 400)
 		errCh <- writerConn.writeRawMessage(csidVideo, &rawMessage{
-			typeID:    MessageTypeVideo,
+			typeID:    messageTypeVideo,
 			streamID:  1,
 			timestamp: 100,
 			payload:   payload,
@@ -300,7 +300,7 @@ func TestZeroLengthMessage(t *testing.T) {
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- writerConn.writeRawMessage(csidControl, &rawMessage{
-			typeID:  MessageTypeUserControl,
+			typeID:  messageTypeUserControl,
 			payload: nil,
 		})
 	}()
@@ -312,8 +312,8 @@ func TestZeroLengthMessage(t *testing.T) {
 	if err := <-errCh; err != nil {
 		t.Fatalf("writeRawMessage: %v", err)
 	}
-	if msg.typeID != MessageTypeUserControl {
-		t.Fatalf("typeID = %d; want %d", msg.typeID, MessageTypeUserControl)
+	if msg.typeID != messageTypeUserControl {
+		t.Fatalf("typeID = %d; want %d", msg.typeID, messageTypeUserControl)
 	}
 	if len(msg.payload) != 0 {
 		t.Fatalf("payload length = %d; want 0", len(msg.payload))
@@ -340,7 +340,7 @@ func TestMultipleMessagesOnSameChunkStream(t *testing.T) {
 	go func() {
 		for i, p := range payloads {
 			if err := writerConn.writeRawMessage(csidAudio, &rawMessage{
-				typeID:    MessageTypeAudio,
+				typeID:    messageTypeAudio,
 				streamID:  1,
 				timestamp: uint32(i * 100),
 				payload:   p,
@@ -388,7 +388,7 @@ func BenchmarkMessageRoundTrip(b *testing.B) {
 	go func() {
 		for range b.N {
 			if err := writerConn.writeRawMessage(csidVideo, &rawMessage{
-				typeID:    MessageTypeVideo,
+				typeID:    messageTypeVideo,
 				streamID:  1,
 				timestamp: 33,
 				payload:   payload,
