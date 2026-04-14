@@ -12,13 +12,17 @@ type Config struct {
 
 	// FrameCapacity is the frame buffer size in bytes.
 	FrameCapacity int
+
+	// Peers is the list of upstream relay peers to connect to.
+	// The relay will dial each peer, discover announcements via
+	// ANNOUNCE_PLEASE, and register them on the local TrackMux.
+	Peers []Peer
 }
 
-// AnnounceRegistrar is implemented by sdn.Client and allows the relay
-// server to push announcement state to the SDN controller.
-type AnnounceRegistrar interface {
-	Register(broadcastPath string)
-	Deregister(broadcastPath string)
+// Peer represents a remote relay to connect to for announce discovery.
+type Peer struct {
+	// Address is the dial address (e.g. "moqt://relay-tokyo:4433" or "https://relay-tokyo:4433").
+	Address string
 }
 
 func (c *Config) groupCacheSize() int {

@@ -2,31 +2,6 @@
 # Usage: docker compose -f docker/docker-compose.simple.yml up
 
 services:
-  # SDN Controller - Network Brain
-  sdn:
-    image: ghcr.io/okdaichi/qumo:latest
-    container_name: qumo-sdn
-    command: ["sdn", "-config", "/tmp/config.sdn.yaml"]
-    ports:
-      - "8090:8090"
-    environment:
-      - SDN_ADDR=:8090
-      - DATA_DIR=/data
-      - NODE_TTL_SEC=90
-    volumes:
-      - sdn-data:/data
-    healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8090/graph"]
-      interval: 10s
-      timeout: 3s
-      start_period: 15s
-      retries: 3
-    restart: unless-stopped
-    networks:
-      qumo-net:
-        aliases:
-          - sdn
-
   # Relay Server - Tokyo
   relay-tokyo:
     image: ghcr.io/okdaichi/qumo:latest
@@ -38,13 +13,9 @@ services:
     environment:
       - RELAY_ADDR=0.0.0.0:4433
       - INSECURE=true
-      - SDN_URL=http://sdn:8090
       - RELAY_NAME=relay-tokyo
       - REGION=asia
-      - NEIGHBORS=relay-london:250
-    depends_on:
-      sdn:
-        condition: service_healthy
+      - PEERS=moqt://relay-london:4433
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:4433/health"]
       interval: 10s
@@ -66,13 +37,9 @@ services:
     environment:
       - RELAY_ADDR=0.0.0.0:4433
       - INSECURE=true
-      - SDN_URL=http://sdn:8090
       - RELAY_NAME=relay-london
       - REGION=europe
-      - NEIGHBORS=relay-tokyo:250,relay-newyork:80
-    depends_on:
-      sdn:
-        condition: service_healthy
+      - PEERS=moqt://relay-tokyo:4433,moqt://relay-newyork:4433
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:4433/health"]
       interval: 10s
@@ -94,13 +61,9 @@ services:
     environment:
       - RELAY_ADDR=0.0.0.0:4433
       - INSECURE=true
-      - SDN_URL=http://sdn:8090
       - RELAY_NAME=relay-newyork
       - REGION=americas
-      - NEIGHBORS=relay-london:80
-    depends_on:
-      sdn:
-        condition: service_healthy
+      - PEERS=moqt://relay-london:4433
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:4433/health"]
       interval: 10s
@@ -115,15 +78,11 @@ networks:
   qumo-net:
     driver: bridge
 
-volumes:
-  sdn-data:
-
 # How it works:
 # 1. Start everything:
 #    docker compose -f docker/docker-compose.simple.yml up
-# 2. Explore the network:
-#    curl http://localhost:8090/graph | jq
-#    curl "http://localhost:8090/route?from=relay-tokyo&to=relay-newyork"
+# 2. Check relay health:
+#    curl http://localhost:8080/health
 # 3. View logs:
 #    docker compose -f docker/docker-compose.simple.yml logs -f
 # 4. Stop demo:

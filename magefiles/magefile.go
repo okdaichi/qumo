@@ -55,7 +55,7 @@ func gitCommit() string {
 
 // Help displays available mage targets
 func Help() error {
-	fmt.Println("📖 qumo - MoQT Relay & SDN Controller")
+	fmt.Println("📖 qumo - MoQT Relay")
 	fmt.Printf("   Platform: %s/%s\n", runtime.GOOS, runtime.GOARCH)
 	fmt.Println()
 	fmt.Println("Available targets:")
@@ -76,8 +76,7 @@ func Help() error {
 	fmt.Println()
 	fmt.Println("  🚀 Runtime:")
 	fmt.Println("    mage relay        - Start relay server")
-	fmt.Println("    mage sdn          - Start SDN controller")
-	fmt.Println("    mage dev          - Start relay + SDN in dev mode")
+	fmt.Println("    mage dev          - Start relay in dev mode")
 	fmt.Println()
 	fmt.Println("  🌐 Web Demo:")
 	fmt.Println("    mage web          - Start web demo (Vite dev server)")
@@ -101,8 +100,7 @@ func Help() error {
 	fmt.Println("    mage docker:ps    - List running containers")
 	fmt.Println()
 	fmt.Println("  🎮 Demo:")
-	fmt.Println("    mage demo:up      - Start demo environment (3 relays + SDN)")
-	fmt.Println("    mage demo:setup   - Configure demo network topology")
+	fmt.Println("    mage demo:up      - Start demo environment (3 relays)")
 	fmt.Println("    mage demo:down    - Stop demo environment")
 	fmt.Println("    mage demo:status  - Check demo status")
 	fmt.Println()
@@ -158,7 +156,6 @@ func Install() error {
 
 	fmt.Println("✅ Installed: qumo")
 	fmt.Println("   Run with: qumo relay -config config.relay.yaml")
-	fmt.Println("            qumo sdn -config config.sdn.yaml")
 	return nil
 }
 
@@ -288,48 +285,20 @@ func Relay() error {
 	return err
 }
 
-// SDN starts the SDN controller
-func SDN() error {
-	fmt.Println("🎛️  Starting SDN controller...")
-	fmt.Println("   Config: ./config.sdn.yaml")
-	fmt.Println("   HTTP: http://localhost:8090")
-	fmt.Println()
-	fmt.Println("   Available endpoints:")
-	fmt.Println("     PUT/DELETE /relay/<name>       - Register/deregister relay")
-	fmt.Println("     GET /route?from=A&to=B         - Query shortest path")
-	fmt.Println("     GET /graph                     - Get topology graph")
-	fmt.Println("     PUT/DELETE /announce/<relay>/<path> - Announce content")
-	fmt.Println("     GET /announce/lookup?broadcast_path=X - Find content providers")
-	fmt.Println("     GET /announce                  - List all announcements")
-	fmt.Println()
 
-	cmd := exec.Command("go", "run", ".", "sdn", "-config", "config.sdn.yaml")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
-}
 
-// Dev starts relay and SDN in development mode (parallel)
+// Dev starts the relay in development mode.
 func Dev() error {
 	fmt.Println("🚀 Starting development environment...")
-	fmt.Println("   This will start both relay and SDN controller")
-	fmt.Println("   Press Ctrl+C to stop all services")
+	fmt.Println("   Press Ctrl+C to stop")
 	fmt.Println()
-
-	// Note: This is a simple implementation that runs them sequentially.
-	// For true parallel execution, users should run in separate terminals:
-	//   Terminal 1: mage sdn
-	//   Terminal 2: mage relay
-	//   Terminal 3: mage web
 
 	fmt.Println("💡 For better development experience, run in separate terminals:")
-	fmt.Println("   Terminal 1: mage sdn")
-	fmt.Println("   Terminal 2: mage relay")
-	fmt.Println("   Terminal 3: mage web")
+	fmt.Println("   Terminal 1: mage relay")
+	fmt.Println("   Terminal 2: mage web")
 	fmt.Println()
-	fmt.Println("Starting SDN controller...")
 
-	return SDN()
+	return Relay()
 }
 
 // Web starts the web demo application (Vite dev server only)
@@ -679,7 +648,6 @@ func (Docker) Up() error {
 
 	fmt.Println()
 	fmt.Println("✅ Services started!")
-	fmt.Println("   SDN Controller: http://localhost:8090")
 	fmt.Println("   Relay Health:   http://localhost:4433/health")
 	fmt.Println()
 	fmt.Println("💡 View logs: mage docker:logs")
@@ -729,13 +697,11 @@ func (Docker) Restart() error {
 // Demo provides demo environment commands
 type Demo mg.Namespace
 
-// Up starts the demo environment with 3 relays and SDN
+// Up starts the demo environment with 3 relays
 func (Demo) Up() error {
 	fmt.Println("🎮 Starting demo environment...")
-	fmt.Println("   1 SDN Controller + 3 Relay Servers")
-	fmt.Println("   (Tokyo, London, New York)")
-	fmt.Println()
-	fmt.Println("   Network topology will be auto-configured!")
+	fmt.Println("   3 Relay Servers (Tokyo, London, New York)")
+	fmt.Println("   Peers auto-connect via ANNOUNCE_PLEASE")
 	fmt.Println()
 
 	cmd := exec.Command("docker", "compose", "-f", "docker/docker-compose.simple.yml", "up")
@@ -768,7 +734,6 @@ func (Demo) Status() error {
 
 	fmt.Println()
 	fmt.Println("💡 Try these commands:")
-	fmt.Println("   curl http://localhost:8090/graph | jq")
-	fmt.Println("   curl \"http://localhost:8090/route?from=relay-tokyo&to=relay-newyork\"")
+	fmt.Println("   curl http://localhost:8080/health")
 	return nil
 }

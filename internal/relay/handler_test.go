@@ -15,7 +15,12 @@ import (
 
 func newTestRelayHandler(ctx context.Context) *relayHandler {
 	ann, _ := moqt.NewAnnouncement(ctx, "/test")
-	return newRelayHandler(ann, nil)
+	return &relayHandler{
+		announcement: ann,
+		session:      nil,
+		tracks:       newTrackManager(),
+		ctx:          ctx,
+	}
 }
 
 // ============================================================================

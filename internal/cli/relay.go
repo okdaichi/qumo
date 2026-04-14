@@ -96,6 +96,14 @@ func RunRelay(args []string) error {
 	log.Println("	/       : WebTransport endpoint")
 	log.Println("	/health : liveness/readiness probe")
 	log.Println("	/metrics: Prometheus metrics")
+	if len(config.RelayConfig.Peers) > 0 {
+		for _, p := range config.RelayConfig.Peers {
+			log.Println("	Peer    :", p.Address)
+		}
+	}
+
+	// Start peer connections in background
+	go relayServer.ConnectPeers(ctx)
 
 	// Delegate to testable helper that runs servers until ctx is cancelled
 	if err := serveComponents(ctx, relayServer, httpServer, 10*time.Second); err != nil {
@@ -211,18 +219,9 @@ func loadConfig(filename string) (*config, error) {
 			GroupCacheSize int    `yaml:"group_cache_size"`
 			FrameCapacity  int    `yaml:"frame_capacity"`
 		} `yaml:"relay"`
-		SDN *struct {
-			URL               string             `yaml:"url"`
-			RelayName         string             `yaml:"relay_name"`
-			HeartbeatInterval int                `yaml:"heartbeat_interval_sec"`
-			Address           string             `yaml:"address"`
-			Neighbors         map[string]float64 `yaml:"neighbors"`
-			TLS               *struct {
-				CertFile string `yaml:"cert_file"`
-				KeyFile  string `yaml:"key_file"`
-				CAFile   string `yaml:"ca_file"`
-			} `yaml:"tls"`
-		} `yaml:"sdn"`
+		Peers []struct {
+			Address string `yaml:"address"`
+		} `yaml:"peers"`
 	}
 
 	file, err := os.Open(filename)
@@ -245,6 +244,11 @@ func loadConfig(filename string) (*config, error) {
 		ymlConfig.Relay.GroupCacheSize = 100
 	}
 
+	var peers []relay.Peer
+	for _, p := range ymlConfig.Peers {
+		peers = append(peers, relay.Peer{Address: p.Address})
+	}
+
 	config := &config{
 		Address:  ymlConfig.Server.Address,
 		CertFile: ymlConfig.Server.CertFile,
@@ -254,6 +258,7 @@ func loadConfig(filename string) (*config, error) {
 			Region:         ymlConfig.Relay.Region,
 			FrameCapacity:  ymlConfig.Relay.FrameCapacity,
 			GroupCacheSize: ymlConfig.Relay.GroupCacheSize,
+			Peers:          peers,
 		},
 	}
 
@@ -268,7 +273,7 @@ func setupTLS(certFile, keyFile string) (*tls.Config, error) {
 
 	return &tls.Config{
 		Certificates: []tls.Certificate{cert},
-		NextProtos:   []string{"h3", "moq-00"}, // HTTP/3 for WebTransport, MOQ native QUIC
+		NextProtos:   []string{"h3", moqt.NextProtoMOQ}, // HTTP/3 for WebTransport, MOQ native QUIC
 	}, nil
 }
 

@@ -30,7 +30,7 @@ const (
 
 // RunRTMP starts a standalone RTMP ingest server that bridges published
 // streams to MoQT. Unlike the relay command this does not participate in
-// the mesh (no SDN, no remote fetcher, no peer registry).
+// the mesh (no peer connections, no announce relay).
 func RunRTMP(args []string) error {
 	fs := flag.NewFlagSet("rtmp", flag.ExitOnError)
 	configFile := fs.String("config", "config.rtmp.yaml", "path to config file")

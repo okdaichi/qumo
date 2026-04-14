@@ -19,30 +19,16 @@ relay:
   # Default: 1500
   frame_capacity: 1500
 
-# SDN auto-announce (optional)
-# When configured, this relay will automatically register received
-# moqt.Announcements with the SDN controller's announce table.
-# Other relays can then discover which relay holds which track.
-#
-# The relay also sends periodic topology heartbeats (PUT /relay/<name>)
-# to keep itself alive in the SDN graph. Without heartbeats, the SDN
-# sweeper will remove this node after node_ttl_sec.
-# sdn:
+# Peer relays (optional)
+# The relay will connect to each peer, discover announcements via
+# ANNOUNCE_PLEASE (draft-03), and register them on the local TrackMux.
+# Reconnects automatically on connection loss.
+# peers:
+#   - address: "moqt://relay-tokyo:4433"
+#   - address: "moqt://relay-london:4433"
 
 # RTMP ingest (optional)
 # When configured, the relay also listens for RTMP publish connections
 # and announces the ingested media as MoQT tracks.
 # ingest:
 #   rtmp_address: ":1935"
-#   url: "https://sdn.example.com:8090"
-#   relay_name: "relay-tokyo-1"  # defaults to relay.node_id if omitted
-#   heartbeat_interval_sec: 30   # re-PUT interval (default: 30)
-#   address: "https://relay-tokyo-1:4433"  # MoQT endpoint for next-hop routing
-#   region: "asia"                         # region tag (used in SDN graph metadata)
-#   neighbors:                   # neighbor relays and edge costs
-#     relay-london-1: 250
-#     relay-newyork-1: 180
-#   tls:                         # optional mTLS for relay→SDN
-#     cert_file: "certs/relay.crt"
-#     key_file: "certs/relay.key"
-#     ca_file: "certs/ca.crt"
