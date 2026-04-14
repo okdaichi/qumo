@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -11,6 +12,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func newTestRelayHandler(ctx context.Context) *relayHandler {
+	ann, _ := moqt.NewAnnouncement(ctx, "/test")
+	return newRelayHandler(ann, nil)
+}
 
 // ============================================================================
 // trackDistributor Tests - Core Functionality
@@ -723,7 +729,7 @@ func TestTrackDistributor_GroupRingIntegration(t *testing.T) {
 
 // TestTrackDistributor_DoneChannel tests that the done channel is closed when ingest stops
 func TestTrackDistributor_DoneChannel(t *testing.T) {
-	dist := newTrackDistributor("test", newGroupRing(DefaultGroupCacheSize, DefaultFramePool), &trackManager{})
+	dist := newTrackDistributor("test", newTrackManager())
 
 	// done should not be closed initially
 	select {
@@ -794,7 +800,7 @@ func TestTrackDistributor_RingBehavior(t *testing.T) {
 // round-trip. A second ServeTrack call (e.g. for "video" while "video.meta" was
 // subscribing) would block on the same mutex, causing a deadlock.
 func TestRelayHandler_ConcurrentSubscribe(t *testing.T) {
-	h := newRelayHandler(nil, nil, DefaultGroupCacheSize, DefaultFramePool) // nil session for test
+	h := newTestRelayHandler(t.Context()) // nil session for test
 
 	const numTracks = 10
 	done := make(chan struct{}, numTracks)
@@ -824,10 +830,10 @@ func TestRelayHandler_ConcurrentSubscribe(t *testing.T) {
 // TestRelayHandler_SingleflightDedup verifies that concurrent ServeTrack calls
 // for the same track name result in only one upstream subscribe via singleflight.
 func TestRelayHandler_SingleflightDedup(t *testing.T) {
-	h := newRelayHandler(nil, nil, DefaultGroupCacheSize, DefaultFramePool)
+	h := newTestRelayHandler(t.Context()) // nil session for test
 
 	// Pre-populate a distributor in the cache
-	existing := newTrackDistributor("video", newGroupRing(DefaultGroupCacheSize, DefaultFramePool), h.tracks)
+	existing := newTrackDistributor("video", newTrackManager())
 	h.tracks.store(moqt.TrackName("video"), existing)
 
 	// Load should return the existing one

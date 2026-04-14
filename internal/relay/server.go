@@ -16,13 +16,7 @@ type Server struct {
 	QUICConfig *quic.Config
 	Config     *Config
 
-	// CheckHTTPOrigin func(r *http.Request) bool
-
 	TrackMux *moqt.TrackMux
-
-	// AnnounceRegistrar pushes announcements to the SDN controller.
-	// If nil, auto-announce is disabled.
-	AnnounceRegistrar AnnounceRegistrar
 
 	server *moqt.Server
 
@@ -129,13 +123,7 @@ func (s *Server) relay(sess *moqt.Session) error {
 	}
 
 	for ann := range announced.Announcements(context.Background()) {
-		// Push to SDN announce table if configured
-		if s.AnnounceRegistrar != nil {
-			s.AnnounceRegistrar.Register(string(ann.BroadcastPath()))
-		}
-
 		handler := newRelayHandler(ann, sess)
-		// Announcement is already provided above; other fields defaulted appropriately.
 
 		s.TrackMux.Announce(ann, handler)
 	}

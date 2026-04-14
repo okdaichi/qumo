@@ -36,7 +36,7 @@ func newRelayHandler(ann *moqt.Announcement, sess *moqt.Session) *relayHandler {
 	h := &relayHandler{
 		announcement: ann,
 		session:      sess,
-		tracks:       &trackManager{},
+		tracks:       newTrackManager(),
 		ctx:          sess.Context(),
 	}
 	return h
@@ -113,6 +113,10 @@ func (h *relayHandler) subscribe(name moqt.TrackName) *trackDistributor {
 // trackManager manages the set of active track distributors.
 type trackManager struct {
 	m sync.Map // moqt.TrackName → *trackDistributor
+}
+
+func newTrackManager() *trackManager {
+	return &trackManager{}
 }
 
 func (tm *trackManager) load(name moqt.TrackName) (*trackDistributor, bool) {

@@ -3,12 +3,11 @@ package relay
 import (
 	"context"
 	"crypto/tls"
-	"net/http"
 	"testing"
 	"time"
 
 	"github.com/okdaichi/gomoqt/moqt"
-	"github.com/okdaichi/gomoqt/quic"
+	"github.com/quic-go/quic-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -353,29 +352,6 @@ func TestServer_Init_MultipleCallsWithDifferentConfigs(t *testing.T) {
 
 	// Config field is not protected by init(), so it changes
 	assert.Equal(t, "node-2", server.Config.NodeID, "Config assignment should work even after init")
-}
-
-// TestServer_CheckHTTPOrigin tests CheckHTTPOrigin configuration
-func TestServer_CheckHTTPOrigin(t *testing.T) {
-	called := false
-	originFunc := func(r *http.Request) bool {
-		called = true
-		return true
-	}
-
-	server := &Server{
-		Addr:      "localhost:4433",
-		TLSConfig: &tls.Config{},
-	}
-	server.CheckHTTPOrigin = originFunc
-	server.init()
-
-	require.NotNil(t, server.CheckHTTPOrigin, "CheckHTTPOrigin should be preserved")
-
-	// Test that the function works
-	result := server.CheckHTTPOrigin(nil)
-	assert.True(t, called, "CheckHTTPOrigin function should be callable")
-	assert.True(t, result, "CheckHTTPOrigin should return true")
 }
 
 // TestServer_Address_Formats tests various address formats

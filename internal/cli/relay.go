@@ -19,7 +19,6 @@ import (
 
 	"github.com/okdaichi/gomoqt/moqt"
 	"github.com/okdaichi/qumo/internal/relay"
-	"github.com/okdaichi/qumo/internal/sdn"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/quic-go/quic-go"
 	"gopkg.in/yaml.v3"
@@ -30,7 +29,6 @@ type config struct {
 	CertFile    string
 	KeyFile     string
 	RelayConfig relay.Config
-	SDNConfig   *sdn.ClientConfig // nil if auto-announce is disabled
 }
 
 func RunRelay(args []string) error {
@@ -69,26 +67,6 @@ func RunRelay(args []string) error {
 		// CheckHTTPOrigin: func(r *http.Request) bool {
 		// 	return true //TODO:
 		// },
-	}
-
-	// Set up SDN auto-announce client if configured
-	if config.SDNConfig != nil {
-		var err error
-		sdnClient, err := sdn.NewClient(*config.SDNConfig)
-		if err != nil {
-			return fmt.Errorf("failed to create SDN client: %w", err)
-		}
-		relayServer.AnnounceRegistrar = sdnClient
-		go sdnClient.Run(ctx)
-
-		// Start remote fetcher to discover and subscribe to remote broadcasts
-		fetcher := &relay.RemoteFetcher{
-			SDNClient:      sdnClient,
-			TrackMux:       trackMux,
-			TLSConfig:      tlsConfig,
-			GroupCacheSize: config.RelayConfig.GroupCacheSize,
-		}
-		go fetcher.Run(ctx)
 	}
 
 	// All handlers are registered on DefaultServeMux.
@@ -277,31 +255,6 @@ func loadConfig(filename string) (*config, error) {
 			FrameCapacity:  ymlConfig.Relay.FrameCapacity,
 			GroupCacheSize: ymlConfig.Relay.GroupCacheSize,
 		},
-	}
-
-	// Parse optional SDN auto-announce config
-	if ymlConfig.SDN != nil && ymlConfig.SDN.URL != "" {
-		sdnCfg := &sdn.ClientConfig{
-			URL:       ymlConfig.SDN.URL,
-			RelayName: ymlConfig.SDN.RelayName,
-			Region:    ymlConfig.Relay.Region,
-			Address:   ymlConfig.SDN.Address,
-			Neighbors: ymlConfig.SDN.Neighbors,
-		}
-		if sdnCfg.RelayName == "" {
-			sdnCfg.RelayName = ymlConfig.Relay.NodeID
-		}
-		if ymlConfig.SDN.HeartbeatInterval > 0 {
-			sdnCfg.HeartbeatInterval = time.Duration(ymlConfig.SDN.HeartbeatInterval) * time.Second
-		}
-		if ymlConfig.SDN.TLS != nil {
-			sdnCfg.TLS = &sdn.TLSConfig{
-				CertFile: ymlConfig.SDN.TLS.CertFile,
-				KeyFile:  ymlConfig.SDN.TLS.KeyFile,
-				CAFile:   ymlConfig.SDN.TLS.CAFile,
-			}
-		}
-		config.SDNConfig = sdnCfg
 	}
 
 	return config, nil
