@@ -101,8 +101,8 @@ func loadRTMPConfig(filename string) (*rtmpConfig, error) {
 		Server struct {
 			ServeAddr string `yaml:"serve_address"`
 			MoQTAddr  string `yaml:"moqt_address"`
-			CertFile string `yaml:"cert_file"`
-			KeyFile  string `yaml:"key_file"`
+			CertFile  string `yaml:"cert_file"`
+			KeyFile   string `yaml:"key_file"`
 		} `yaml:"server"`
 		Ingest struct {
 			IngestAddr string `yaml:"ingest_address"`
