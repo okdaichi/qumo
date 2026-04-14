@@ -12,6 +12,7 @@ var (
 	// overridable command handlers for easier unit-testing
 	runRelay = cli.RunRelay
 	runSDN   = cli.RunSDN
+	runRTMP  = cli.RunRTMP
 )
 
 func main() {
@@ -41,6 +42,8 @@ func run(args []string) int {
 		err = runRelay(cmdArgs)
 	case "sdn":
 		err = runSDN(cmdArgs)
+	case "rtmp":
+		err = runRTMP(cmdArgs)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n", cmd)
 		printUsage()
@@ -59,6 +62,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Commands:")
 	fmt.Fprintln(os.Stderr, "  relay    Start the MoQ relay server")
+	fmt.Fprintln(os.Stderr, "  rtmp     Start the RTMP ingest server")
 	fmt.Fprintln(os.Stderr, "  sdn      Start the SDN controller")
 	fmt.Fprintln(os.Stderr, "  version  Print version information")
 	fmt.Fprintln(os.Stderr, "")

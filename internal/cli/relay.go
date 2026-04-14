@@ -19,7 +19,6 @@ import (
 
 	"github.com/okdaichi/gomoqt/moqt"
 	"github.com/okdaichi/gomoqt/quic"
-	"github.com/okdaichi/qumo/internal/ingest"
 	"github.com/okdaichi/qumo/internal/relay"
 	"github.com/okdaichi/qumo/internal/sdn"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -30,7 +29,6 @@ type config struct {
 	Address     string
 	CertFile    string
 	KeyFile     string
-	RTMPAddr    string // RTMP ingest listen address; empty disables ingest
 	RelayConfig relay.Config
 	SDNConfig   *sdn.ClientConfig // nil if auto-announce is disabled
 }
@@ -109,20 +107,6 @@ func RunRelay(args []string) error {
 	httpServer := &http.Server{
 		Addr:              config.Address,
 		ReadHeaderTimeout: 5 * time.Second,
-	}
-
-	// Start RTMP ingest server if configured
-	if config.RTMPAddr != "" {
-		ingestSrv := ingest.NewRTMPServer(ingest.RTMPConfig{
-			Addr:     config.RTMPAddr,
-			TrackMux: trackMux,
-		})
-		go func() {
-			if err := ingestSrv.ListenAndServe(ctx); err != nil && ctx.Err() == nil {
-				slog.Error("RTMP ingest server error", "err", err)
-			}
-		}()
-		log.Println("	RTMP    :", config.RTMPAddr)
 	}
 
 	log.Println("	Host    :", config.Address)
@@ -246,9 +230,6 @@ func loadConfig(filename string) (*config, error) {
 			GroupCacheSize int    `yaml:"group_cache_size"`
 			FrameCapacity  int    `yaml:"frame_capacity"`
 		} `yaml:"relay"`
-		Ingest *struct {
-			RTMPAddr string `yaml:"rtmp_address"`
-		} `yaml:"ingest"`
 		SDN *struct {
 			URL               string             `yaml:"url"`
 			RelayName         string             `yaml:"relay_name"`
@@ -293,11 +274,6 @@ func loadConfig(filename string) (*config, error) {
 			FrameCapacity:  ymlConfig.Relay.FrameCapacity,
 			GroupCacheSize: ymlConfig.Relay.GroupCacheSize,
 		},
-	}
-
-	// Parse optional RTMP ingest config
-	if ymlConfig.Ingest != nil && ymlConfig.Ingest.RTMPAddr != "" {
-		config.RTMPAddr = ymlConfig.Ingest.RTMPAddr
 	}
 
 	// Parse optional SDN auto-announce config

@@ -30,6 +30,7 @@ func TestPrintUsage_WritesHelpToStderr(t *testing.T) {
 	assert.Contains(t, out, "Usage: qumo <command> [flags]")
 	assert.Contains(t, out, "Commands:")
 	assert.Contains(t, out, "relay")
+	assert.Contains(t, out, "rtmp")
 	assert.Contains(t, out, "Flags:")
 }
 
@@ -40,15 +41,18 @@ func TestPrintUsage_WritesHelpToStderr(t *testing.T) {
 func TestRun_Unit(t *testing.T) {
 	origRelay := runRelay
 	origSDN := runSDN
+	origRTMP := runRTMP
 	defer func() {
 		runRelay = origRelay
 		runSDN = origSDN
+		runRTMP = origRTMP
 	}()
 
 	tests := map[string]struct {
 		args               []string
 		stubRelay          func([]string) error
 		stubSDN            func([]string) error
+		stubRTMP           func([]string) error
 		wantCode           int
 		wantStderrContains []string
 	}{
@@ -92,6 +96,17 @@ func TestRun_Unit(t *testing.T) {
 			wantCode:           1,
 			wantStderrContains: []string{"error: sdn-fail"},
 		},
+		"rtmp success": {
+			args:     []string{"rtmp"},
+			stubRTMP: func(_ []string) error { return nil },
+			wantCode: 0,
+		},
+		"rtmp error": {
+			args:               []string{"rtmp"},
+			stubRTMP:           func(_ []string) error { return fmt.Errorf("rtmp-fail") },
+			wantCode:           1,
+			wantStderrContains: []string{"error: rtmp-fail"},
+		},
 	}
 
 	for name, tt := range tests {
@@ -105,6 +120,11 @@ func TestRun_Unit(t *testing.T) {
 				runSDN = tt.stubSDN
 			} else {
 				runSDN = func([]string) error { return nil }
+			}
+			if tt.stubRTMP != nil {
+				runRTMP = tt.stubRTMP
+			} else {
+				runRTMP = func([]string) error { return nil }
 			}
 
 			// capture stderr
@@ -153,6 +173,11 @@ func TestMain_Subprocess(t *testing.T) {
 		"relay missing config file": {
 			// cli.RunRelay will attempt to load the provided config file and fail
 			args:               []string{"relay", "-config", "does-not-exist.yaml"},
+			wantExitNonZero:    true,
+			wantOutputContains: []string{"failed to load config", "error:"},
+		},
+		"rtmp missing config file": {
+			args:               []string{"rtmp", "-config", "does-not-exist.yaml"},
 			wantExitNonZero:    true,
 			wantOutputContains: []string{"failed to load config", "error:"},
 		},
