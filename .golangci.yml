@@ -1,0 +1,13 @@
+version: "2"
+
+linters:
+  enable:
+    - gosec
+  settings:
+    gosec:
+      excludes:
+        - G115 # integer overflow conversion: false positive for protocol byte encoding
+  exclusions:
+    rules:
+      - linters: [gosec]
+        text: "G115"
