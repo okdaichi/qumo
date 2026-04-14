@@ -34,7 +34,7 @@ ARG BUILD_DATE=unknown
 
 # OCI image labels
 LABEL org.opencontainers.image.title="qumo" \
-      org.opencontainers.image.description="MoQT Relay & SDN Controller" \
+      org.opencontainers.image.description="MoQT Relay" \
       org.opencontainers.image.url="https://github.com/okdaichi/qumo" \
       org.opencontainers.image.source="https://github.com/okdaichi/qumo" \
       org.opencontainers.image.version="${VERSION}" \
@@ -48,22 +48,21 @@ RUN apk --no-cache add ca-certificates tzdata wget openssl
 WORKDIR /app
 
 # Copy entrypoint script
-COPY docker-entrypoint.sh /usr/local/bin/
+COPY docker/docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # Copy binary from builder
 COPY --from=builder /build/qumo .
 
 # Copy config files (optional - can be generated from env vars)
-COPY config.relay.yaml config.sdn.yaml ./
+COPY config.relay.yaml ./
 
-# Create certs and data directories
-RUN mkdir -p certs data
+# Create certs directory
+RUN mkdir -p certs
 
 # Expose ports
 # 4433: MoQT (QUIC) and HTTP health/metrics (TCP)
-# 8090: SDN HTTP API
-EXPOSE 4433/udp 4433 8090
+EXPOSE 4433/udp 4433
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
@@ -73,5 +72,4 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 ENTRYPOINT ["docker-entrypoint.sh"]
 
 # Default command (relay)
-# Override with: docker run qumo sdn -config config.sdn.yaml
 CMD ["relay", "-config", "config.relay.yaml"]

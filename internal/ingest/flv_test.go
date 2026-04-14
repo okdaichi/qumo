@@ -236,7 +236,7 @@ func TestStripFLVAudioHeader_SeqHeader(t *testing.T) {
 func TestIsVideoSequenceHeader(t *testing.T) {
 	assert.True(t, IsVideoSequenceHeader([]byte{0x17, 0x00}))
 	assert.False(t, IsVideoSequenceHeader([]byte{0x17, 0x01}))
-	assert.False(t, IsVideoSequenceHeader([]byte{0x27, 0x00})) // not keyframe but that's OK
+	assert.True(t, IsVideoSequenceHeader([]byte{0x27, 0x00}))  // not keyframe but codec is AVC + seq header
 	assert.False(t, IsVideoSequenceHeader([]byte{0x14, 0x00})) // not AVC
 	assert.False(t, IsVideoSequenceHeader([]byte{}))
 }

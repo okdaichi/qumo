@@ -12,10 +12,7 @@ mage build
 # Run tests
 mage test
 
-# Start SDN controller
-mage sdn
-
-# Start relay server (in another terminal)
+# Start relay server
 mage relay
 
 # Start web demo (in another terminal)
@@ -54,7 +51,6 @@ go build -ldflags "-s -w \
 
 ### 🚀 Runtime
 - `mage relay` - Start relay server
-- `mage sdn` - Start SDN controller
 - `mage dev` - Development mode info
 
 ### 🌐 Web Demo
@@ -74,8 +70,7 @@ go build -ldflags "-s -w \
 > **Note:** Docker files (Dockerfile, compose manifests, etc.) are located in the `docker/` directory. See `docker/README.md` for manual Docker usage and examples.
 
 ### 🎮 Demo
-- `mage demo:up` - Start demo environment (3 relays + SDN) — uses `docker/docker-compose.simple.yml`
-- `mage demo:setup` - Configure demo network topology
+- `mage demo:up` - Start demo environment (3 peer-connected relays) — uses `docker/docker-compose.simple.yml`
 - `mage demo:down` - Stop demo environment
 - `mage demo:status` - Check demo status
 
