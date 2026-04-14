@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/okdaichi/gomoqt/moqt"
-	"github.com/okdaichi/gomoqt/quic"
 	"github.com/okdaichi/qumo/internal/sdn"
+	"github.com/quic-go/quic-go"
 )
 
 // RemoteFetcher discovers remote broadcast paths via the SDN controller

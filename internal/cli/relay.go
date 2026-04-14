@@ -18,10 +18,10 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/okdaichi/gomoqt/moqt"
-	"github.com/okdaichi/gomoqt/quic"
 	"github.com/okdaichi/qumo/internal/relay"
 	"github.com/okdaichi/qumo/internal/sdn"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/quic-go/quic-go"
 	"gopkg.in/yaml.v3"
 )
 
@@ -66,9 +66,9 @@ func RunRelay(args []string) error {
 		},
 		Config:   &config.RelayConfig,
 		TrackMux: trackMux,
-		CheckHTTPOrigin: func(r *http.Request) bool {
-			return true //TODO:
-		},
+		// CheckHTTPOrigin: func(r *http.Request) bool {
+		// 	return true //TODO:
+		// },
 	}
 
 	// Set up SDN auto-announce client if configured
@@ -94,10 +94,13 @@ func RunRelay(args []string) error {
 	// All handlers are registered on DefaultServeMux.
 	// moqt.Server uses DefaultServeMux internally for HTTP/3 QUIC routing,
 	// and the TCP httpServer below also uses it (Handler: nil).
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if err := relayServer.HandleWebTransport(w, r); err != nil {
-			slog.Error("failed to handle web transport", "err", err)
-		}
+	http.Handle("/", &moqt.WebTransportHandler{
+		Config:               nil,
+		TrackMux:             trackMux,
+		ApplicationProtocols: []string{moqt.NextProtoMOQ},
+		Handler: moqt.HandleFunc(func(sess *moqt.Session) {
+
+		}),
 	})
 	http.Handle("/health", &healthHandler{
 		statusFunc: relayServer.Status,

@@ -721,24 +721,26 @@ func TestTrackDistributor_GroupRingIntegration(t *testing.T) {
 	assert.Equal(t, moqt.GroupSequence(1), earliest, "Expected earliest to be 1")
 }
 
-// TestTrackDistributor_OnClose tests the onClose callback
-func TestTrackDistributor_OnClose(t *testing.T) {
-	onCloseCalled := false
+// TestTrackDistributor_DoneChannel tests that the done channel is closed when ingest stops
+func TestTrackDistributor_DoneChannel(t *testing.T) {
+	dist := newTrackDistributor("test", newGroupRing(DefaultGroupCacheSize, DefaultFramePool), &trackManager{})
 
-	dist := &trackDistributor{
-		ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-		subscribers: make(map[chan struct{}]struct{}),
-		onClose: func() {
-			onCloseCalled = true
-		},
+	// done should not be closed initially
+	select {
+	case <-dist.done:
+		require.Fail(t, "done channel should not be closed yet")
+	default:
 	}
 
-	// Test calling onClose directly
-	if dist.onClose != nil {
-		dist.onClose()
-	}
+	// Simulate ingest finishing by closing done directly
+	close(dist.done)
 
-	assert.True(t, onCloseCalled, "Expected onClose callback to be called")
+	select {
+	case <-dist.done:
+		// Expected
+	case <-time.After(50 * time.Millisecond):
+		require.Fail(t, "done channel should be closed")
+	}
 }
 
 // TestTrackDistributor_RingBehavior tests ring head and earliest available
@@ -802,11 +804,9 @@ func TestRelayHandler_ConcurrentSubscribe(t *testing.T) {
 			defer func() { done <- struct{}{} }()
 			name := moqt.TrackName(fmt.Sprintf("track-%d", i))
 
-			// Mirrors ServeTrack: Load → subscribe → LoadOrStore
-			if _, ok := h.relaying.Load(name); !ok {
-				tr := h.subscribe(name)
-				_ = tr // nil because Session is nil
-			}
+			// Mirrors ServeTrack: subscribe returns nil because Session is nil
+			tr := h.subscribe(name)
+			_ = tr
 		}()
 	}
 
@@ -821,30 +821,24 @@ func TestRelayHandler_ConcurrentSubscribe(t *testing.T) {
 	}
 }
 
-// TestRelayHandler_LoadOrStore verifies that sync.Map.LoadOrStore correctly
-// deduplicates distributors when two goroutines race to store the same track.
-func TestRelayHandler_LoadOrStore(t *testing.T) {
-	h := &RelayHandler{
-		Session:        nil,
-		GroupCacheSize: DefaultGroupCacheSize,
-		FramePool:      DefaultFramePool,
-	}
+// TestRelayHandler_SingleflightDedup verifies that concurrent ServeTrack calls
+// for the same track name result in only one upstream subscribe via singleflight.
+func TestRelayHandler_SingleflightDedup(t *testing.T) {
+	h := newRelayHandler(nil, nil, DefaultGroupCacheSize, DefaultFramePool)
 
-	// Pre-populate a distributor via sync.Map
-	existing := &trackDistributor{
-		ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-		subscribers: make(map[chan struct{}]struct{}),
-		onClose:     func() {},
-	}
-	h.relaying.Store(moqt.TrackName("video"), existing)
+	// Pre-populate a distributor in the cache
+	existing := newTrackDistributor("video", newGroupRing(DefaultGroupCacheSize, DefaultFramePool), h.tracks)
+	h.tracks.store(moqt.TrackName("video"), existing)
 
-	// LoadOrStore should return the existing one
-	challenger := &trackDistributor{
-		ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-		subscribers: make(map[chan struct{}]struct{}),
-		onClose:     func() {},
-	}
-	actual, loaded := h.relaying.LoadOrStore(moqt.TrackName("video"), challenger)
-	require.True(t, loaded, "Expected existing entry")
-	assert.Equal(t, existing, actual.(*trackDistributor), "Should return the pre-populated distributor")
+	// Load should return the existing one
+	v, ok := h.tracks.load(moqt.TrackName("video"))
+	require.True(t, ok, "Expected cached entry")
+	assert.Same(t, existing, v, "Should return the cached distributor")
+
+	// remove with the correct value should succeed
+	h.tracks.remove(moqt.TrackName("video"), existing)
+
+	// Subsequent load should miss
+	_, ok = h.tracks.load(moqt.TrackName("video"))
+	assert.False(t, ok, "Should not find deleted entry")
 }

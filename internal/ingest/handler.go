@@ -52,7 +52,7 @@ func (h *ingestHandler) ServeTrack(tw *moqt.TrackWriter) {
 	case trackCatalog:
 		src = h.catalog
 	default:
-		tw.CloseWithError(moqt.TrackNotFoundErrorCode)
+		tw.CloseWithError(moqt.SubscribeErrorCodeNotFound)
 		return
 	}
 	src.serve(tw, h.done)

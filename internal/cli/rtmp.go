@@ -55,13 +55,8 @@ func RunRTMP(args []string) error {
 	// Minimal MoQT origin that serves subscribers from the shared TrackMux.
 	moqtSrv := &moqt.Server{
 		Addr: cfg.ServeAddr,
-		SetupHandler: moqt.SetupHandlerFunc(func(w moqt.SetupResponseWriter, r *moqt.SetupRequest) {
-			sess, err := moqt.Accept(w, r, trackMux)
-			if err != nil {
-				slog.Error("failed to accept MoQT session", "err", err)
-				return
-			}
-			defer sess.CloseWithError(moqt.NoError, moqt.SessionErrorText(moqt.NoError))
+		Handler: moqt.HandleFunc(func(sess *moqt.Session) {
+			defer sess.CloseWithError(moqt.NoError, moqt.NoError.String())
 			<-sess.Context().Done()
 		}),
 	}

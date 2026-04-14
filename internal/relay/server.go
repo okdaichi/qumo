@@ -3,13 +3,11 @@ package relay
 import (
 	"context"
 	"crypto/tls"
-	"fmt"
 	"log/slog"
-	"net/http"
 	"sync"
 
 	"github.com/okdaichi/gomoqt/moqt"
-	"github.com/okdaichi/gomoqt/quic"
+	"github.com/quic-go/quic-go"
 )
 
 type Server struct {
@@ -18,7 +16,7 @@ type Server struct {
 	QUICConfig *quic.Config
 	Config     *Config
 
-	CheckHTTPOrigin func(r *http.Request) bool
+	// CheckHTTPOrigin func(r *http.Request) bool
 
 	TrackMux *moqt.TrackMux
 
@@ -59,25 +57,14 @@ func (s *Server) ListenAndServe() error {
 
 	s.init()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
 	s.server = &moqt.Server{
-		Addr:            s.Addr,
-		TLSConfig:       s.TLSConfig,
-		QUICConfig:      s.QUICConfig,
-		CheckHTTPOrigin: s.CheckHTTPOrigin,
-		SetupHandler: moqt.SetupHandlerFunc(func(w moqt.SetupResponseWriter, r *moqt.SetupRequest) {
-			downstream, err := moqt.Accept(w, r, s.TrackMux)
-			if err != nil {
-				slog.Error("failed to accept connection", "err", err)
-				return
-			}
+		Addr:       s.Addr,
+		TLSConfig:  s.TLSConfig,
+		QUICConfig: s.QUICConfig,
+		Handler: moqt.HandleFunc(func(sess *moqt.Session) {
+			defer sess.CloseWithError(moqt.NoError, moqt.NoError.String())
 
-			defer downstream.CloseWithError(moqt.NoError, moqt.SessionErrorText(moqt.NoError))
-
-			err = s.relay(ctx, downstream)
-
+			err := s.relay(sess)
 			if err != nil {
 				slog.Warn("relay session ended", "err", err)
 				return
@@ -89,15 +76,15 @@ func (s *Server) ListenAndServe() error {
 	return s.server.ListenAndServe()
 }
 
-func (s *Server) HandleWebTransport(w http.ResponseWriter, r *http.Request) error {
-	s.init()
+// func (s *Server) HandleWebTransport(w http.ResponseWriter, r *http.Request) error {
+// 	s.init()
 
-	if s.server == nil {
-		return fmt.Errorf("relay.Server: ListenAndServe has not been called")
-	}
+// 	if s.server == nil {
+// 		return fmt.Errorf("relay.Server: ListenAndServe has not been called")
+// 	}
 
-	return s.server.HandleWebTransport(w, r)
-}
+// 	return s.server.HandleWebTransport(w, r)
+// }
 
 func (s *Server) Close() error {
 	s.init()
@@ -120,7 +107,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return nil
 }
 
-func (s *Server) relay(ctx context.Context, sess *moqt.Session) error {
+func (s *Server) relay(sess *moqt.Session) error {
 	slog.Info("session established", "remote", sess.RemoteAddr())
 	defer slog.Info("session closed", "remote", sess.RemoteAddr())
 
@@ -136,18 +123,18 @@ func (s *Server) relay(ctx context.Context, sess *moqt.Session) error {
 	}
 
 	// TODO: measure accept time
-	peer, err := sess.AcceptAnnounce("/")
+	announced, err := sess.AcceptAnnounce("/")
 	if err != nil {
 		return err
 	}
 
-	for ann := range peer.Announcements(ctx) {
+	for ann := range announced.Announcements(context.Background()) {
 		// Push to SDN announce table if configured
 		if s.AnnounceRegistrar != nil {
 			s.AnnounceRegistrar.Register(string(ann.BroadcastPath()))
 		}
 
-		handler := newRelayHandler(ann, sess, DefaultGroupCacheSize, DefaultFramePool)
+		handler := newRelayHandler(ann, sess)
 		// Announcement is already provided above; other fields defaulted appropriately.
 
 		s.TrackMux.Announce(ann, handler)
