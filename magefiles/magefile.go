@@ -285,8 +285,6 @@ func Relay() error {
 	return err
 }
 
-
-
 // Dev starts the relay in development mode.
 func Dev() error {
 	fmt.Println("🚀 Starting development environment...")
