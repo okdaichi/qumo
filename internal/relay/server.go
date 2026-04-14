@@ -25,7 +25,6 @@ type Server struct {
 	initOnce sync.Once
 
 	statusHandler *statusHandler
-	peerRegistry  *peerRegistry
 }
 
 func (s *Server) init() {
@@ -35,7 +34,6 @@ func (s *Server) init() {
 		}
 
 		s.statusHandler = newStatusHandler()
-		s.peerRegistry = newPeerRegistry()
 	})
 }
 
@@ -190,11 +188,6 @@ func (s *Server) relay(sess *moqt.Session) error {
 	if s.statusHandler != nil {
 		s.statusHandler.incrementConnections()
 		defer s.statusHandler.decrementConnections()
-	}
-
-	if s.peerRegistry != nil {
-		peerID := s.peerRegistry.register(sess)
-		defer s.peerRegistry.deregister(peerID)
 	}
 
 	announced, err := sess.AcceptAnnounce("/")

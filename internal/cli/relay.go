@@ -67,7 +67,8 @@ func RunRelay(args []string) error {
 	}
 
 	httpMux := http.NewServeMux()
-	relayServer.RouteWebTransport("/", httpMux)
+	wtPath := "/"
+	relayServer.RouteWebTransport(wtPath, httpMux)
 	httpMux.Handle("/health", &healthHandler{
 		statusFunc: relayServer.Status,
 	})
@@ -79,16 +80,14 @@ func RunRelay(args []string) error {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	log.Println("	Host    :", config.Address)
-	log.Println("	Node ID :", config.RelayConfig.NodeID)
-	log.Println("	Region  :", config.RelayConfig.Region)
-	log.Println("	/       : WebTransport endpoint")
-	log.Println("	/health : liveness/readiness probe")
-	log.Println("	/metrics: Prometheus metrics")
-	if len(config.RelayConfig.Peers) > 0 {
-		for _, p := range config.RelayConfig.Peers {
-			log.Println("	Peer    :", p.Address)
-		}
+	log.Printf("\t%-8s: %s\n", "Host", config.Address)
+	log.Printf("\t%-8s: %s\n", "Node ID", config.RelayConfig.NodeID)
+	log.Printf("\t%-8s: %s\n", "Region", config.RelayConfig.Region)
+	log.Printf("\t%-8s: WebTransport endpoint\n", wtPath)
+	log.Printf("\t%-8s: liveness/readiness probe\n", "/health")
+	log.Printf("\t%-8s: Prometheus metrics\n", "/metrics")
+	for _, p := range config.RelayConfig.Peers {
+		log.Printf("\t%-8s: %s\n", "Peer", p.Address)
 	}
 
 	// Start peer connections in background
