@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"log/slog"
+	"net/http"
 	"sync"
 	"time"
 
@@ -89,6 +90,23 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// RouteWebTransport registers the WebTransport MoQ endpoint at path on mux.
+// Browser and HTTP/3 clients connect via this handler; sessions are handled
+// identically to native QUIC connections.
+func (s *Server) RouteWebTransport(path string, mux *http.ServeMux) {
+	s.init()
+	mux.Handle(path, &moqt.WebTransportHandler{
+		TrackMux:             s.TrackMux,
+		ApplicationProtocols: []string{moqt.NextProtoMOQ},
+		Handler: moqt.HandleFunc(func(sess *moqt.Session) {
+			defer sess.CloseWithError(moqt.NoError, moqt.NoError.String())
+			if err := s.relay(sess); err != nil {
+				slog.Warn("relay session ended", "err", err)
+			}
+		}),
+	})
 }
 
 // ConnectPeers dials configured peer relays and discovers their announcements

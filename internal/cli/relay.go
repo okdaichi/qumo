@@ -64,29 +64,18 @@ func RunRelay(args []string) error {
 		},
 		Config:   &config.RelayConfig,
 		TrackMux: trackMux,
-		// CheckHTTPOrigin: func(r *http.Request) bool {
-		// 	return true //TODO:
-		// },
 	}
 
-	// All handlers are registered on DefaultServeMux.
-	// moqt.Server uses DefaultServeMux internally for HTTP/3 QUIC routing,
-	// and the TCP httpServer below also uses it (Handler: nil).
-	http.Handle("/", &moqt.WebTransportHandler{
-		Config:               nil,
-		TrackMux:             trackMux,
-		ApplicationProtocols: []string{moqt.NextProtoMOQ},
-		Handler: moqt.HandleFunc(func(sess *moqt.Session) {
-
-		}),
-	})
-	http.Handle("/health", &healthHandler{
+	httpMux := http.NewServeMux()
+	relayServer.RouteWebTransport("/", httpMux)
+	httpMux.Handle("/health", &healthHandler{
 		statusFunc: relayServer.Status,
 	})
-	http.Handle("/metrics", promhttp.Handler())
+	httpMux.Handle("/metrics", promhttp.Handler())
 
 	httpServer := &http.Server{
 		Addr:              config.Address,
+		Handler:           httpMux,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
