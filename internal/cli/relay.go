@@ -316,7 +316,7 @@ func (h *healthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if !ready {
 			response["reason"] = reason
 		}
-			_ = json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 		return
 
 	default:
