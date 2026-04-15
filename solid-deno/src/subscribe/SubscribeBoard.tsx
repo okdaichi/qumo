@@ -1,30 +1,34 @@
-import { createEffect, createSignal, onCleanup, onMount, Show } from "solid-js";
-import { VideoContext, VideoDecodeNode } from "@okdaichi/av-nodes";
+import { createEffect, createMemo, createSignal, onCleanup, onMount, Show, untrack } from "solid-js";
+import { AudioDecodeNode, VideoContext, VideoDecodeNode } from "@okdaichi/av-nodes";
 import { type Session, SubscribeErrorCode } from "@okdaichi/moq";
+import { parseCatalog } from "@okdaichi/moq/msf";
 import { deserializeMediaFrame } from "../publish/media_frame.ts";
 import { useBroadcastPath } from "../useBroadcastPath.ts";
 import { background, withCancel } from "@okdaichi/golikejs/context";
-import type { VideoMetadata } from "../metadata/mod.ts";
 
 export function SubscribeBoard(props: { session: Promise<Session> }) {
 	const [isSubscribed, setIsSubscribed] = createSignal(false);
 	const [error, setError] = createSignal<string | null>(null);
 	const [canvasWidth, setCanvasWidth] = createSignal(1280);
 	const [canvasHeight, setCanvasHeight] = createSignal(720);
-	// Reactive decoder config: undefined until the first video.meta arrives — no pre-config.
-	const [decoderConfig, setDecoderConfig] = createSignal<VideoMetadata | undefined>();
+	// Reactive decoder config: undefined until the first catalog arrives — no pre-config.
+	const [decoderConfig, setDecoderConfig] = createSignal<VideoDecoderConfig | undefined>();
 
 	const broadcastPath = useBroadcastPath();
 
 	let canvasEle: HTMLCanvasElement | undefined;
 	let videoContext: VideoContext | undefined;
 	let videoDecodeNode: VideoDecodeNode | undefined;
+	let audioContext: AudioContext | undefined;
+	let audioDecodeNode: AudioDecodeNode | undefined;
 	let currentCancel: (() => void) | null = null;
-	// Tracks the last applied config key so configure() is skipped when nothing changed.
-	// Re-configuring on every video.meta (every GOP) resets decoder state and requires a key frame.
-	let lastConfigKey = "";
 
-	const configKey = (cfg: VideoMetadata): string => {
+	// Memo: stable fingerprint of active codec parameters.
+	// createMemo uses === equality — downstream effects only re-run when the key string actually changes,
+	// preventing spurious configure() calls that would reset decoder state and require a key frame.
+	const configKey = createMemo((): string => {
+		const cfg = decoderConfig();
+		if (!cfg) return "";
 		let descKey = "";
 		if (cfg.description != null) {
 			const buf = cfg.description instanceof ArrayBuffer
@@ -33,7 +37,7 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 			descKey = btoa(String.fromCharCode(...buf));
 		}
 		return `${cfg.codec}|${cfg.codedWidth ?? ""}|${cfg.codedHeight ?? ""}|${descKey}`;
-	};
+	});
 
 	onMount(() => {
 		if (canvasEle) {
@@ -42,20 +46,20 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 			videoDecodeNode.connect(videoContext.destination);
 			setCanvasWidth(videoContext.destination.canvas.width);
 			setCanvasHeight(videoContext.destination.canvas.height);
+
+			// AudioContext for playback of the subscribed audio track.
+			audioContext = new AudioContext();
+			audioDecodeNode = new AudioDecodeNode(audioContext);
+			audioDecodeNode.connect(audioContext.destination);
 		}
 	});
 
-	// Reactively configure the decoder only when codec params actually change.
-	// Calling configure() on every video.meta (every GOP with unchanged params) resets
-	// decoder state and demands a key frame, causing "key frame required" errors on delta frames.
+	// Effect depends only on the memo — skipped entirely when configKey() returns the same string.
+	// decoderConfig() is read via untrack so it doesn't add a separate dependency.
 	createEffect(() => {
-		const cfg = decoderConfig();
-		if (!cfg) return;
-		const key = configKey(cfg);
-		if (key === lastConfigKey) return; // params unchanged — skip
-		lastConfigKey = key;
+		if (!configKey()) return;
+		const cfg = untrack(decoderConfig)!;
 		videoDecodeNode?.configure(cfg);
-		console.log("[Subscribe] VideoDecoder configured:", cfg.codec);
 	});
 
 	onCleanup(() => {
@@ -76,37 +80,57 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 			const session = await props.session;
 
 			// Gate: the video loop awaits this before feeding any frames to the decoder.
-			// Resolved the moment the first video.meta group is fully received.
+			// Resolved the moment the first catalog group is received.
 			let resolveFirstConfig!: () => void;
 			const firstConfigReady = new Promise<void>((r) => { resolveFirstConfig = r; });
 			let firstConfigReceived = false;
 
-			// Subscribe to video.meta: each new group updates the reactive signal,
+			// Subscribe to catalog: each new group updates the reactive signal,
 			// which triggers createEffect → videoDecodeNode.configure() automatically.
-			session.subscribe(broadcastPath, "video.meta").then(
-				async ([videoMetaTrack, videoMetaErr]) => {
-					if (videoMetaErr) {
+			session.subscribe(broadcastPath, "catalog").then(
+				async ([catalogTrack, catalogErr]) => {
+					if (catalogErr) {
 						if (!isSubscribed()) return;
-						console.warn("[Subscribe] video.meta subscribe failed:", videoMetaErr);
+						console.warn("[Subscribe] catalog subscribe failed:", catalogErr);
 						return;
 					}
 
 					while (isSubscribed()) {
-						const [group, groupErr] = await videoMetaTrack.acceptGroup(ctx.done());
+						const [group, groupErr] = await catalogTrack.acceptGroup(ctx.done());
 						if (groupErr) {
 							if (!isSubscribed()) break;
-							console.warn("[Subscribe] video.meta acceptGroup:", groupErr);
+							console.warn("[Subscribe] catalog acceptGroup:", groupErr);
 							break;
 						}
 
 						for await (const frame of group.frames()) {
-							const { data } = deserializeMediaFrame(frame.bytes);
-							const meta = JSON.parse(new TextDecoder().decode(data)) as VideoMetadata;
-							setDecoderConfig(meta); // → createEffect → videoDecodeNode.configure()
-							console.log("[Subscribe] video.meta received, codec:", meta.codec);
-							if (!firstConfigReceived) {
-								firstConfigReceived = true;
-								resolveFirstConfig();
+							const catalog = parseCatalog(frame.bytes);
+							const videoTrack = catalog.tracks?.find((t) => t.role === "video");
+							if (videoTrack?.codec) {
+								const cfg: VideoDecoderConfig = {
+									codec: videoTrack.codec,
+									codedWidth: videoTrack.width,
+									codedHeight: videoTrack.height,
+								};
+								setDecoderConfig(cfg); // → createEffect → videoDecodeNode.configure()
+								// Update canvas bitmap dimensions to match the actual video so portrait
+								// (or any non-default-aspect) streams are not stretched.
+								if (videoTrack.width) setCanvasWidth(videoTrack.width);
+								if (videoTrack.height) setCanvasHeight(videoTrack.height);
+								console.log("[Subscribe] catalog received, video codec:", videoTrack.codec);
+								if (!firstConfigReceived) {
+									firstConfigReceived = true;
+									resolveFirstConfig();
+								}
+							}
+							const audioTrack = catalog.tracks?.find((t) => t.role === "audio");
+							if (audioTrack?.codec && audioDecodeNode) {
+								audioDecodeNode.configure({
+									codec: audioTrack.codec,
+									sampleRate: audioTrack.samplerate ?? 48000,
+									numberOfChannels: parseInt(audioTrack.channelConfig ?? "2", 10),
+								});
+								console.log("[Subscribe] audio decoder configured:", audioTrack.codec);
 							}
 						}
 					}
@@ -124,7 +148,7 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 					const videoStream = new ReadableStream<EncodedVideoChunk>({
 						async start(controller) {
 							try {
-								// Wait for the first video.meta before feeding any frames.
+								// Wait for the first catalog before feeding any frames.
 								await firstConfigReady;
 
 								while (isSubscribed()) {
@@ -165,6 +189,58 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 				},
 			);
 
+			// Subscribe to audio — gracefully skipped if the publisher has no audio track.
+			session.subscribe(broadcastPath, "audio").then(
+				async ([audioMoqTrack, audioMoqErr]) => {
+					if (audioMoqErr) {
+						if (!isSubscribed()) return;
+						console.warn("[Subscribe] audio subscribe failed:", audioMoqErr);
+						return;
+					}
+					if (!audioDecodeNode || !audioContext) return;
+
+					// Resume audio context — we are in a user-gesture-triggered async chain.
+					await audioContext.resume();
+
+					const audioStream = new ReadableStream<EncodedAudioChunk>({
+						async start(controller) {
+							try {
+								await firstConfigReady;
+								while (isSubscribed()) {
+									const [group, groupErr] = await audioMoqTrack.acceptGroup(ctx.done());
+									if (groupErr) {
+										if (!isSubscribed()) break;
+										console.error("moq: Error accepting audio group:", groupErr);
+										break;
+									}
+									for await (const frame of group.frames()) {
+										const { timestamp, data } = deserializeMediaFrame(frame.bytes);
+										const chunk = new EncodedAudioChunk({
+											type: "key", // Opus frames are all independently decodable
+											timestamp,
+											data,
+										});
+										controller.enqueue(chunk);
+									}
+								}
+								controller.close();
+							} catch (err) {
+								if (isSubscribed()) {
+									console.error("Audio track error:", err);
+									controller.error(err);
+								} else {
+									controller.close();
+								}
+							} finally {
+								audioMoqTrack.closeWithError(SubscribeErrorCode.InternalError);
+							}
+						},
+					});
+
+					audioDecodeNode.decodeFrom(audioStream);
+				},
+			);
+
 			setIsSubscribed(true);
 		} catch (err) {
 			const errorMessage = err instanceof Error ? err.message : String(err);
@@ -180,9 +256,8 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 			currentCancel = null;
 		}
 		setDecoderConfig(undefined); // reset for next subscription
-		lastConfigKey = "";
+		audioContext?.suspend().catch(() => {});
 		setIsSubscribed(false);
-		console.log("Stopped subscribing");
 	};
 
 	return (
@@ -229,9 +304,10 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 					width={canvasWidth()}
 					height={canvasHeight()}
 					style={{
+						display: "block",
 						width: "100%",
-						"max-width": "800px",
-						height: "auto",
+						"max-width": `${canvasWidth()}px`,
+						"aspect-ratio": `${canvasWidth()} / ${canvasHeight()}`,
 						border: "1px solid #ccc",
 						"border-radius": "8px",
 						background: "#000",

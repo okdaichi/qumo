@@ -28,6 +28,12 @@ relay:
 # to keep itself alive in the SDN graph. Without heartbeats, the SDN
 # sweeper will remove this node after node_ttl_sec.
 # sdn:
+
+# RTMP ingest (optional)
+# When configured, the relay also listens for RTMP publish connections
+# and announces the ingested media as MoQT tracks.
+# ingest:
+#   rtmp_address: ":1935"
 #   url: "https://sdn.example.com:8090"
 #   relay_name: "relay-tokyo-1"  # defaults to relay.node_id if omitted
 #   heartbeat_interval_sec: 30   # re-PUT interval (default: 30)

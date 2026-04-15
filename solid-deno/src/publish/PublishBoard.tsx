@@ -1,6 +1,9 @@
 import { createEffect, createSignal, onMount, Show } from "solid-js";
-import { type BroadcastPath, GroupWriter, TrackMux } from "@okdaichi/moq";
+import { type BroadcastPath, type GroupWriter, TrackMux } from "@okdaichi/moq";
+import { Broadcast, type Track } from "@okdaichi/moq/msf";
 import {
+	AudioEncodeNode,
+	audioEncoderConfig,
 	MediaStreamVideoSourceNode,
 	VideoContext,
 	VideoEncodeNode,
@@ -9,7 +12,6 @@ import {
 import { getMediaStream, type MediaSourceType } from "./media.ts";
 import { background, type CancelFunc, type Context, withCancel } from "@okdaichi/golikejs/context";
 import { MediaFrame } from "./media_frame.ts";
-import type { VideoMetadata } from "../metadata/mod.ts";
 import { useBroadcastPath } from "../useBroadcastPath.ts";
 
 const GOP_DURATION = 1000; // 1 second
@@ -23,16 +25,23 @@ export function PublishBoard(props: { mux: TrackMux }) {
 	const [error, setError] = createSignal<string | null>(null);
 	const [canvasWidth, setCanvasWidth] = createSignal(1280);
 	const [canvasHeight, setCanvasHeight] = createSignal(720);
-	// Latest VideoDecoderConfig kept in sync with the encoder — written directly to video.meta on each keyframe.
-	let latestVideoDecoderConfig: VideoDecoderConfig | undefined;
+	// Resolved asynchronously by the first effect below; read synchronously by the second effect and startStreaming.
+	const [encoderConfig, setEncoderConfig] = createSignal<VideoEncoderConfig | undefined>();
 
 	let canvasEle: HTMLCanvasElement | undefined;
 	let lastKeyframeTime = 0;
 	let videoContext: VideoContext | undefined;
 	let sourceNode: MediaStreamVideoSourceNode | null = null;
 	let videoEncodeNode: VideoEncodeNode | undefined;
-	// Writer into the video.meta TransformStream — set when streaming starts.
-	let videoMetaWriterRef: WritableStreamDefaultWriter<VideoMetadata> | undefined;
+	let audioContext: AudioContext | undefined;
+	let audioEncodeNode: AudioEncodeNode | undefined;
+	// Active Broadcast instance — set when streaming starts; cleared on stop.
+	let broadcastRef: Broadcast | undefined;
+	// Audio track catalog entry — set in startStreaming if audio is available.
+	let audioTrackDef: Track | undefined;
+	// Guards Effects 1 and 2 from firing while streaming is active.
+	// Using a plain ref (not signal) so that toggling it never itself triggers effects.
+	let streamingActive = false;
 
 	onMount(() => {
 		if (canvasEle) {
@@ -48,34 +57,44 @@ export function PublishBoard(props: { mux: TrackMux }) {
 				},
 			});
 
-			// VideoContextのcanvasサイズから初期値を取得
+			// Set canvas dimensions based on the actual canvas size.
 			setCanvasWidth(videoContext.destination.canvas.width);
 			setCanvasHeight(videoContext.destination.canvas.height);
+
+			audioContext = new AudioContext({ sampleRate: 48000 });
+			audioEncodeNode = new AudioEncodeNode(audioContext);
 		}
 	});
 
-	// Canvasサイズが変更されたら自動で再configure
-	createEffect(async () => {
+	// Effect 1: pre-compute encoder config from canvas dimensions.
+	// Skipped while streaming — startStreaming owns the encoder config at that point.
+	createEffect(() => {
 		const width = canvasWidth();
 		const height = canvasHeight();
+		if (streamingActive || !videoEncodeNode || width <= 0 || height <= 0) return;
+		void videoEncoderConfig({ width, height, bitrate: 2_500_000, frameRate: 30, tryHardware: true })
+			.then(setEncoderConfig);
+	});
 
-		if (videoEncodeNode && width > 0 && height > 0) {
-			const videoConfig = await videoEncoderConfig({
-				width,
-				height,
-				bitrate: 2_500_000,
-				frameRate: 30,
-				tryHardware: true,
-			});
-			videoEncodeNode.configure(videoConfig);
-			// Derive a baseline decoder config so keyframes are always accompanied
-			// by metadata even before the encoder emits an explicit decoderConfig.
-			latestVideoDecoderConfig = {
-				codec: videoConfig.codec,
-				codedWidth: videoConfig.width,
-				codedHeight: videoConfig.height,
+	// Effect 2: applies the resolved config to the encoder (pre-stream only).
+	// Skipped while streaming — the encoder is already correctly configured by startStreaming.
+	createEffect(() => {
+		const config = encoderConfig();
+		if (streamingActive || !config || !videoEncodeNode) return;
+		const inlineCodec = config.codec.replace(/^avc1\./, "avc3.");
+		videoEncodeNode.configure(config);
+		if (broadcastRef) {
+			const updatedTrack: Track = {
+				name: "video",
+				role: "video",
+				packaging: "loc",
+				isLive: true,
+				codec: inlineCodec,
+				width: config.width,
+				height: config.height,
 			};
-			console.log(`Video encoder reconfigured to ${width}x${height}`);
+			const tracks: Track[] = audioTrackDef ? [updatedTrack, audioTrackDef] : [updatedTrack];
+			broadcastRef.setCatalog({ version: 1, tracks }).catch(console.error);
 		}
 	});
 
@@ -90,105 +109,11 @@ export function PublishBoard(props: { mux: TrackMux }) {
 			return;
 		}
 
-		// Create metadata streams BEFORE announcing or acquiring media.
-		const videoMetaStream = new TransformStream<VideoMetadata>();
-		videoMetaWriterRef = videoMetaStream.writable.getWriter();
-
-		// Announce tracks to the relay FIRST — before starting media capture.
-		// This ensures the relay has a handler registered before any subscriber
-		// attempts to SUBSCRIBE, preventing RESET_STREAM rejections.
-		mux.publishFunc(
-			publishCtx.done(),
-			broadcastPath,
-			async (track) => {
-				switch (track.trackName) {
-					case "video": {
-						if (!videoEncodeNode) {
-							throw new Error("Encode node not initialized");
-						}
-
-						let currentGroup: GroupWriter | undefined = undefined;
-
-						const { done } = videoEncodeNode.encodeTo({
-							output: async (
-								chunk: EncodedVideoChunk,
-								decoderConfig?: VideoDecoderConfig,
-							) => {
-								if (chunk.type === "key") {
-									if (currentGroup) void currentGroup.close();
-									const [group, err] = await track.openGroup();
-									if (err) return err;
-									currentGroup = group;
-								// Prefer the encoder-provided decoder config (carries codec-specific 'description');
-								// fall back to the config derived from the encoder parameters.
-								if (decoderConfig) latestVideoDecoderConfig = decoderConfig;
-								if (latestVideoDecoderConfig && videoMetaWriterRef) {
-									const meta: VideoMetadata = { ...latestVideoDecoderConfig, startGroup: currentGroup.sequence };
-									videoMetaWriterRef.write(meta).catch(console.error);
-									}
-								} else if (!currentGroup) {
-									// Drop delta frames until we get a keyframe.
-									return;
-								}
-
-								const err = await currentGroup.writeFrame(new MediaFrame(chunk));
-								if (err) throw err;
-							},
-						});
-
-						await done;
-						break;
-					}
-
-					case "video.meta": {
-					const reader = videoMetaStream.readable.getReader();
-					try {
-						while (true) {
-							const { value: meta, done } = await reader.read();
-							if (done) break;
-							const buf = new TextEncoder().encode(JSON.stringify(meta));
-							const [group, openErr] = await track.openGroup();
-							if (openErr) {
-								console.error("video.meta: openGroup error", openErr);
-								break;
-							}
-							const writeErr = await group.writeFrame(new MediaFrame({
-								timestamp: Date.now() * 1000,
-								byteLength: buf.byteLength,
-								copyTo(target: ArrayBuffer | ArrayBufferView) {
-									const view = target instanceof ArrayBuffer
-										? new Uint8Array(target)
-										: new Uint8Array(target.buffer, target.byteOffset, target.byteLength);
-									view.set(buf);
-								},
-							}));
-							if (writeErr) console.error("video.meta: writeFrame error", writeErr);
-							void group.close();
-						}
-					} finally {
-						reader.releaseLock();
-					}
-					break;
-				}
-
-					default:
-						return;
-				}
-			},
-		);
-
-		// Acquire media and start encoding.
+		// Acquire media first — we need the actual track dimensions before configuring the encoder.
+		let stream: MediaStream;
 		try {
 			setError(null);
-			const stream = await getMediaStream(sourceType());
-
-			sourceNode = new MediaStreamVideoSourceNode(videoContext, { mediaStream: stream });
-			sourceNode.connect(videoContext.destination);
-			sourceNode.connect(videoEncodeNode);
-			sourceNode.start();
-
-			setIsStreaming(true);
-			console.log(`Started streaming from ${sourceType()}`);
+			stream = await getMediaStream(sourceType());
 		} catch (err) {
 			const errorMessage = err instanceof Error ? err.message : String(err);
 			setError(errorMessage);
@@ -196,18 +121,181 @@ export function PublishBoard(props: { mux: TrackMux }) {
 			return;
 		}
 
+		// Read actual video dimensions from the first real frame.
+		// getSettings() can lie about dimensions (e.g. webcam rotation metadata).
+		// ImageCapture.grabFrame() returns an ImageBitmap whose .width/.height
+		// always reflect the actual pixel buffer the browser will give us through
+		// MediaStreamTrackProcessor — so this is the ground truth.
+		const videoTrack = stream.getVideoTracks()[0];
+		let actualWidth: number;
+		let actualHeight: number;
+		if (videoTrack && "ImageCapture" in globalThis) {
+			try {
+				const imageCapture = new ImageCapture(videoTrack);
+				const bitmap = await (imageCapture as unknown as { grabFrame(): Promise<ImageBitmap> }).grabFrame();
+				actualWidth = bitmap.width;
+				actualHeight = bitmap.height;
+				bitmap.close();
+			} catch (err) {
+				console.warn("[Publish] grabFrame failed, falling back to getSettings():", err);
+				const s = videoTrack.getSettings();
+				actualWidth = s.width ?? canvasWidth();
+				actualHeight = s.height ?? canvasHeight();
+			}
+		} else {
+			const s = videoTrack?.getSettings();
+			actualWidth = s?.width ?? canvasWidth();
+			actualHeight = s?.height ?? canvasHeight();
+		}
+
+		// Lock effects out before touching any signals — prevents Effect 1/2 from
+		// re-firing and calling videoEncodeNode.configure() a second time.
+		streamingActive = true;
+
+		// Use pre-computed config if dimensions match; otherwise recompute at actual size.
+		let config = encoderConfig();
+		if (!config || config.width !== actualWidth || config.height !== actualHeight) {
+			config = await videoEncoderConfig({
+				width: actualWidth,
+				height: actualHeight,
+				bitrate: 2_500_000,
+				frameRate: 30,
+				tryHardware: true,
+			});
+			videoEncodeNode.configure(config);
+		}
+		// Update canvas display signals — Effects 1/2 are guarded so these won't
+		// trigger encoder reconfiguration.
+		setEncoderConfig(config);
+		setCanvasWidth(actualWidth);
+		setCanvasHeight(actualHeight);
+		const inlineCodec = config.codec.replace(/^avc1\./, "avc3.");
+
+		// Set up audio encoder (AudioContext.resume() works here as we're in a user-gesture handler).
+		if (audioContext && audioEncodeNode) {
+			try {
+				await audioContext.resume();
+				const audioCfg = await audioEncoderConfig({
+					sampleRate: audioContext.sampleRate,
+					channels: audioContext.destination.channelCount,
+				});
+				audioEncodeNode.configure(audioCfg);
+				audioTrackDef = {
+					name: "audio",
+					role: "audio",
+					packaging: "loc",
+					isLive: true,
+					codec: audioCfg.codec,
+					samplerate: audioCfg.sampleRate,
+					channelConfig: String(audioCfg.numberOfChannels),
+				};
+			} catch (err) {
+				console.warn("[Publish] audio setup failed, continuing without audio:", err);
+			}
+		}
+
+		const initialTrack: Track = {
+			name: "video",
+			role: "video",
+			packaging: "loc",
+			isLive: true,
+			codec: inlineCodec,
+			width: config.width,
+			height: config.height,
+		};
+
+		// Broadcast auto-serves the "catalog" track as MSF catalog JSON.
+		const initialTracks: Track[] = audioTrackDef ? [initialTrack, audioTrackDef] : [initialTrack];
+		const broadcast = new Broadcast({ version: 1, tracks: initialTracks });
+		broadcastRef = broadcast;
+
+		// Register video track handler — runs the encoder loop when subscribed.
+		await broadcast.registerTrack(initialTrack, {
+			async serveTrack(trackWriter) {
+				if (!videoEncodeNode) throw new Error("Encode node not initialized");
+
+				let currentGroup: GroupWriter | undefined;
+
+				const { done } = videoEncodeNode.encodeTo({
+					output: async (chunk: EncodedVideoChunk, _?: VideoDecoderConfig) => {
+						if (chunk.type === "key") {
+							if (currentGroup) void currentGroup.close();
+							const [group, err] = await trackWriter.openGroup();
+							if (err) return err;
+							currentGroup = group;
+						} else if (!currentGroup) {
+							return; // drop delta frames until first keyframe
+						}
+
+						const err = await currentGroup.writeFrame(new MediaFrame(chunk));
+						if (err) throw err;
+					},
+				});
+
+				await done;
+			},
+		});
+
+		// Register audio track handler if audio is available.
+		if (audioTrackDef && audioEncodeNode) {
+			const capturedAudioEncodeNode = audioEncodeNode;
+			await broadcast.registerTrack(audioTrackDef, {
+				async serveTrack(trackWriter) {
+					const { done } = capturedAudioEncodeNode.encodeTo({
+						// Each Opus frame is independently decodable — one group per frame
+						// lets subscribers join at any point without waiting for a keyframe.
+						async output(chunk: EncodedAudioChunk, _?: AudioDecoderConfig) {
+							const [group, err] = await trackWriter.openGroup();
+							if (err) return err;
+							const writeErr = await group.writeFrame(new MediaFrame(chunk));
+							void group.close();
+							if (writeErr) throw writeErr;
+						},
+					});
+					await done;
+				},
+			});
+		}
+
+		// Announce to relay — Broadcast routes "catalog" and "video" internally.
+		mux.publish(
+			publishCtx.done(),
+			broadcastPath,
+			broadcast,
+		);
+
+		// Connect source nodes and start encoding.
+		sourceNode = new MediaStreamVideoSourceNode(videoContext, { mediaStream: stream });
+		sourceNode.connect(videoContext.destination);
+		sourceNode.connect(videoEncodeNode);
+		sourceNode.start();
+
+		// Route audio from the media stream into AudioEncodeNode.
+		if (audioContext && audioEncodeNode) {
+			try {
+				const audioSource = audioContext.createMediaStreamSource(stream);
+				audioSource.connect(audioEncodeNode);
+			} catch (err) {
+				console.warn("[Publish] failed to connect audio source:", err);
+			}
+		}
+
+		setIsStreaming(true);
+		console.log(`Started streaming from ${sourceType()}`);
 	};
 
 	const stopStreaming = () => {
+		streamingActive = false;
 		cancelPublish();
-		videoMetaWriterRef = undefined;
+		broadcastRef = undefined;
+		audioTrackDef = undefined;
+		audioContext?.suspend().catch(() => {});
 		if (sourceNode) {
 			sourceNode.stop();
 			sourceNode.dispose();
 			sourceNode = null;
 		}
 		setIsStreaming(false);
-		console.log("Stopped streaming");
 	};
 
 	return (
@@ -262,9 +350,10 @@ export function PublishBoard(props: { mux: TrackMux }) {
 					width={canvasWidth()}
 					height={canvasHeight()}
 					style={{
+						display: "block",
 						width: "100%",
-						"max-width": "800px",
-						height: "auto",
+						"max-width": `${canvasWidth()}px`,
+						"aspect-ratio": `${canvasWidth()} / ${canvasHeight()}`,
 						border: "1px solid #ccc",
 						"border-radius": "8px",
 						background: "#000",

@@ -10,9 +10,6 @@ This prompt defines the rules and patterns to follow when generating test code f
 - **Method Tests with Options**: `Test[StructName]_[MethodName]_[Option]`
 
 Examples:
-`8. **Mock Package Placement**: All mocks must be in the same package (`package [packagename]`), never in `_test` packages
-9. **Mock File Organization**: Use dedicated `mock_[feature]_test.go` files for mock definitions
-10. **Mock Structure Flexibility**: Choose between `mock.Mock` embedding and function fields based on the complexity of the interface and testing needso
 ```go
 func TestNewFrame(t *testing.T) { /* Basic test */ }
 func TestGroupSequence_String(t *testing.T) { /* Method test */ }
@@ -74,52 +71,37 @@ func TestExample_MultipleCases(t *testing.T) {
 - **Use testify package**: All tests must use `github.com/stretchr/testify`
 - **assert for comparisons**: `assert.Equal(t, expected, actual)`, `assert.NoError(t, err)`, etc.
 - **require for preconditions**: `require.NoError(t, err)`, `require.NotNil(t, obj)`, etc.
-- **mock for mocking**: Use `github.com/stretchr/testify/mock`
+- **PROHIBITED**: `testify/mock` (`mock.Mock`) is not used in this project
 
 ```go
 import (
     "testing"
     "github.com/stretchr/testify/assert"
     "github.com/stretchr/testify/require"
-    "github.com/stretchr/testify/mock"
 )
 ```
 
-### 4. Mock Definitions and Management
-**Mandatory**: Mock structures must be defined in the same package (`package [packagename]`) within dedicated `mock_XXX_test.go` files.
+### 4. Fake/Mock Definitions and Management
+**Mandatory**: Test doubles must be defined in the same package (`package [packagename]`) within dedicated `fake_XXX_test.go` or `mock_XXX_test.go` files.
 
-#### Mock File Organization
-- **Existing Mocks**: Check for existing mock files before creating new ones
-- **File Naming**: `mock_[feature]_test.go` (e.g., `mock_group_reader_test.go`, `mock_track_writer_test.go`)
+#### Policy: Func-field pattern only
+- All test doubles use the **Func-field pattern**. `testify/mock` (`mock.Mock`) is **not used**.
+- Prefer state/result assertions over call-order assertions.
+
+#### Naming Convention
+- **`Fake*` prefix**: Test doubles that model real system behavior with realistic defaults (e.g., `FakeQUICStream` models quic-go stream semantics — idempotent Close, CancelWrite, CancelRead via `context.WithCancelCause`).
+- **`Mock*` prefix**: Simple Func-field stubs that provide zero-value defaults without modeling specific system behavior (e.g., `MockStreamConn`).
+
+#### File Organization
+- **Existing Fakes/Mocks**: Check for existing files before creating new ones
+- **File Naming**: `fake_[feature]_test.go` or `mock_[feature]_test.go` (e.g., `fake_quic_stream_test.go`, `mock_quic_connection_test.go`)
 - **Package Declaration**: Always use `package [packagename]` (not `package [packagename]_test`)
 
-#### Mock Structure Pattern
-Mock structures can be implemented using either of the following patterns:
+#### Test Double Structure Pattern
+All test doubles use the **Func-field pattern**:
 
-**Pattern 1: Using testify/mock** (Recommended for complex mocking):
 ```go
-// In mock_example_test.go
-package moqt
-
-import (
-    "github.com/stretchr/testify/mock"
-)
-
-var _ SomeInterface = (*MockExample)(nil)
-
-type MockExample struct {
-    mock.Mock
-}
-
-func (m *MockExample) SomeMethod(arg string) error {
-    args := m.Called(arg)
-    return args.Error(0)
-}
-```
-
-**Pattern 2: Using function fields** (Suitable for simpler interfaces):
-```go
-// In mock_example_test.go
+// In fake_example_test.go or mock_example_test.go
 package moqt
 
 var _ SomeInterface = (*MockExample)(nil)
@@ -132,22 +114,44 @@ func (m *MockExample) SomeMethod(arg string) error {
     if m.SomeMethodFunc != nil {
         return m.SomeMethodFunc(arg)
     }
-    return nil
+    return nil // sensible zero-value default
 }
 ```
 
-#### Mock Implementation Rules
-1. **Implementation Options**: Mock structs can either embed `mock.Mock` for complex mocking scenarios or use function fields for simpler cases
-2. **Testify/Mock Pattern**: When using `mock.Mock`, all mock methods MUST use `m.Called()` for argument capture and return value handling
-3. **Function Field Pattern**: When using function fields, check if the function is not nil before calling it
-4. **Expectation Verification**: When using testify/mock, always call `mockObj.AssertExpectations(t)` in tests
+#### Default-Oriented Design
+Func-field methods must provide **sensible defaults** when the field is nil, so tests only configure what they actually need:
 
-#### Mock Discovery Rules
-1. **Search First**: Before creating new mocks, search for existing mock files in the same package
-2. **Reuse Existing**: If a mock already exists, use it instead of creating a duplicate
-3. **Create New**: Only create new mock files when no suitable mock exists
-4. **Consistent Naming**: Follow the existing pattern: `Mock[InterfaceName]` (e.g., `MockGroupReader`, `MockTrackWriter`)
-5. **No Factory Functions**: Do not create `createMock...()`, `newMock...()`, or similar helper functions for mock initialization
+- **Write-like methods**: Default to success (`return len(p), nil`)
+- **Read-like methods**: Default to EOF (`return 0, io.EOF`)
+- **Close/Cancel methods**: Default to no-op or idempotent behavior
+- **Context methods**: Default to `context.Background()`
+- **Address methods**: Default to `&net.TCPAddr{}`
+
+This eliminates boilerplate: tests that don't care about a method's behavior use `&FakeXxx{}` with zero configuration.
+
+#### ParentCtx Pattern
+Fakes that expose `Context()` accept an optional `ParentCtx` field to derive cancellation from:
+
+```go
+type FakeQUICStream struct {
+    ParentCtx context.Context // optional; defaults to context.Background()
+    // ... Func fields ...
+}
+```
+
+#### Implementation Rules
+1. **Func-field only**: All test doubles use Func-field pattern. `testify/mock` is prohibited.
+2. **Nil check required**: All methods must check if the Func field is nil before calling it and return a sensible default.
+3. **Model real behavior** (for `Fake*`): Fakes should model the real system's behavior (e.g., idempotent Close, EOF on Read, CancelCause propagation).
+4. **Interface compliance**: Always add a compile-time interface check: `var _ SomeInterface = (*FakeExample)(nil)`
+
+#### Discovery Rules
+1. **Search First**: Before creating new test doubles, search for existing fake/mock files in the same package
+2. **Reuse Existing**: If a suitable test double already exists, use it instead of creating a duplicate
+3. **Create New**: Only create new files when no suitable test double exists
+4. **Consistent Naming**: Follow the existing pattern: `Fake[Name]` for behavior-modeling doubles, `Mock[Name]` for simple stubs
+5. **No Factory Functions for test doubles**: Do not create `createMock...()`, `newMock...()`, or similar helper functions for mock initialization
+6. **Shared setup helpers are allowed**: Helpers like `newTestConn()` that configure a test double with common defaults are allowed when repeated 3+ times
 
 ### 5. Package Declaration
 - **Internal Tests**: `package [packagename]` - Can test private functions and access internal structures
@@ -312,6 +316,25 @@ func TestObject_BoundaryValues(t *testing.T) {
 #### 5. Helper Functions
 Define test helper functions in the same file or dedicated `*_test.go` files:
 
+Helper implementation policy:
+- **Reuse existing helpers first**: Before adding a new helper, check whether an existing helper can express the setup.
+- **Use helpers for repeated non-mock setup**: If the same setup appears 3+ times (e.g., request fixtures, common context/config), extract/use a helper.
+- **Do not over-abstract**: If only one test needs custom setup, keep it inline for readability.
+- **Default-oriented helpers are preferred**: Provide sensible defaults and expose only parameters that actually vary in many tests.
+- **Helper signature**: Prefer `testing.TB` and call `tb.Helper()` inside helpers.
+- **Test double setup helpers are allowed**: Shared helpers like `newTestConn()` are allowed when the same test double configuration appears 3+ times. They must not hide test-critical behavior.
+
+Pattern example (recommended):
+
+```go
+func testSubscribeRequest(tb testing.TB, config *SubscribeConfig) *SubscribeRequest {
+    tb.Helper()
+    req, err := NewSubscribeRequest("/test", "video", config)
+    require.NoError(tb, err)
+    return req
+}
+```
+
 ```go
 // createTestContext creates a test context for testing purposes
 func createTestContext() *Context {
@@ -360,8 +383,7 @@ Notes and rules for `testing/synctest`:
 - `Wait` must not be called outside a synctest bubble and must not be called concurrently by multiple goroutines in the same bubble.
 - Do not call `t.Run`, `t.Parallel`, or `t.Deadline` from within the synctest bubble; they are not supported.
 - `T.Cleanup` functions registered within the bubble run inside the bubble and execute immediately before the bubble exits.
- - `T.Cleanup` functions registered within the bubble run inside the bubble and execute immediately before the bubble exits.
- - `T.Context()` returns a `context.Context` with a `Done` channel associated with the bubble; timeouts and cancellations created from that context are scoped to the bubble.
+- `T.Context()` returns a `context.Context` with a `Done` channel associated with the bubble; timeouts and cancellations created from that context are scoped to the bubble.
 - Local `sync.WaitGroup`s (e.g., `var wg sync.WaitGroup`) become associated with the current bubble when `Add` or `Go` is called from that bubble. Do not rely on package-level `var wg sync.WaitGroup` variables — they cannot be associated with a bubble and may not be durably blocking.
 - Some operations are not considered durably blocking and therefore will not cause `synctest.Wait()` to return, such as `sync.Mutex` lock waits, network I/O, or system calls. Prefer in-process fakes (e.g., `net.Pipe`) or mocks when testing network behavior.
 - Operations that are durably blocking include blocking `chan` send/receive (for channels created within the bubble), `sync.Cond.Wait`, `sync.WaitGroup.Wait` (when `Add`/`Go` was called in the bubble), and `time.Sleep`.
@@ -459,152 +481,154 @@ assert.ElementsMatch(t, expected, actual)
 4. **Error Cases**: Test both normal and error cases
 5. **Mock Discovery**: Always search for existing mocks before creating new ones
 6. **Mock Package Placement**: All mocks must be in the same package (`package [packagename]`), never in `_test` packages
-7. **Mock File Organization**: Use dedicated `mock_[feature]_test.go` files for mock definitions
-8. **Mock Structure Requirements**: **MANDATORY** - All mock structures MUST embed `mock.Mock` from testify/mock
-9. **Mock Initialization**: Initialize mocks directly in each test function - do not create factory functions or helper functions for mock initialization
+7. **Mock File Organization**: Use dedicated `fake_[feature]_test.go` or `mock_[feature]_test.go` files for test double definitions
+8. **Func-field pattern only**: All test doubles use Func-field pattern; `testify/mock` is prohibited
+9. **Default-oriented design**: Func-field methods provide sensible defaults when nil, so tests only configure what they need
+10. **No test double factory functions**: Initialize and configure test doubles directly in each test; shared setup helpers (e.g., `newTestConn()`) are allowed for non-mock repeated setup (3+ times)
 10. **Interface Testing Policy**: **PROHIBITED** - Never create test files or test functions for interface definitions themselves
 11. **Setup and Cleanup**: Use setup/teardown functions when necessary
 12. **Comments**: Add comments for complex test logic
 
-## Mock Patterns and Management
+## Test Double Patterns and Management
 
-### Mock File Discovery
-Before creating any mock, always search for existing mock implementations:
-1. Look for `mock_[feature]_test.go` files in the same package
-2. Check if the required mock interface already exists
-3. Only create new mock files when no suitable mock exists
+### File Discovery
+Before creating any test double, always search for existing implementations:
+1. Look for `fake_[feature]_test.go` or `mock_[feature]_test.go` files in the same package
+2. Check if the required interface fake/mock already exists
+3. Only create new files when no suitable test double exists
 
-### Mock File Creation
-When creating new mock files:
+### File Creation
+When creating new test double files:
 ```go
-// File: mock_example_test.go
+// File: fake_example_test.go (or mock_example_test.go)
 package moqt  // Always same package, never _test
 
-// Option 1: Using testify/mock
-import (
-    "github.com/stretchr/testify/mock"
-)
+var _ ExampleInterface = (*FakeExample)(nil)
 
-var _ ExampleInterface = (*MockExample)(nil)
-
-type MockExample struct {
-    mock.Mock
-}
-
-func (m *MockExample) SomeMethod(arg string) error {
-    args := m.Called(arg)
-    return args.Error(0)
-}
-
-// Option 2: Using function fields
-var _ ExampleInterface = (*MockExampleFunc)(nil)
-
-type MockExampleFunc struct {
+type FakeExample struct {
+    ParentCtx      context.Context     // optional; defaults to context.Background()
     SomeMethodFunc func(arg string) error
 }
 
-func (m *MockExampleFunc) SomeMethod(arg string) error {
-    if m.SomeMethodFunc != nil {
-        return m.SomeMethodFunc(arg)
+func (f *FakeExample) SomeMethod(arg string) error {
+    if f.SomeMethodFunc != nil {
+        return f.SomeMethodFunc(arg)
     }
-    return nil
+    return nil // sensible default
 }
 ```
 
-### Mock Initialization Rules
-Mock structures can be initialized directly within each test function using either pattern.
+### Initialization and Usage
+Test doubles are initialized directly in each test function. Configure only the Func fields needed for the test.
 
-#### Mock Initialization Examples
+#### Usage Examples
 ```go
-func TestWithMock(t *testing.T) {
-    // Using testify/mock pattern
-    mockObj := &MockExample{}
-    mockObj.On("SomeMethod", "input").Return(nil)
-    
-    err := mockObj.SomeMethod("input")
-    
-    assert.NoError(t, err)
-    mockObj.AssertExpectations(t)
+// Minimal: rely on sensible defaults (Read→EOF, Write→success)
+func TestWithDefaults(t *testing.T) {
+    stream := &FakeQUICStream{}  // no setup needed
+    _, err := stream.Read(make([]byte, 10))
+    assert.ErrorIs(t, err, io.EOF)
 }
 
-func TestWithFunctionFieldMock(t *testing.T) {
-    // Using function field pattern
-    mockObj := &MockExampleFunc{
-        SomeMethodFunc: func(arg string) error {
-            assert.Equal(t, "input", arg)
-            return nil
+// Configure only what the test needs
+func TestWithCustomBehavior(t *testing.T) {
+    stream := &FakeQUICStream{
+        ReadFunc: func(p []byte) (int, error) {
+            copy(p, []byte("hello"))
+            return 5, nil
         },
     }
-    
-    err := mockObj.SomeMethod("input")
+    buf := make([]byte, 10)
+    n, err := stream.Read(buf)
     assert.NoError(t, err)
+    assert.Equal(t, 5, n)
 }
 
-func TestTableDrivenWithMocks(t *testing.T) {
+// Shared setup helper for repeated configuration (3+ uses)
+func newTestConn() *MockStreamConn {
+    conn := &MockStreamConn{}
+    conn.AcceptStreamFunc = func(context.Context) (transport.Stream, error) { return nil, io.EOF }
+    conn.AcceptUniStreamFunc = func(context.Context) (transport.ReceiveStream, error) { return nil, io.EOF }
+    conn.RemoteAddrFunc = func() net.Addr { return &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 8080} }
+    return conn
+}
+
+// Table-driven test with Func-field fakes
+func TestTableDrivenWithFakes(t *testing.T) {
     tests := map[string]struct {
-        setupMock func() ExampleInterface
-        input     string
-        expected  string
-        wantErr   bool
+        setupStream func() *FakeQUICStream
+        wantErr     bool
     }{
-        "success case with testify/mock": {
-            setupMock: func() ExampleInterface {
-                mockObj := &MockExample{}
-                mockObj.On("SomeMethod", "input").Return("result", nil)
-                return mockObj
-            },
-            input:    "input",
-            expected: "result",
-            wantErr:  false,
+        "default stream": {
+            // nil setupStream → use &FakeQUICStream{} with defaults
         },
-        "success case with function field": {
-            setupMock: func() ExampleInterface {
-                return &MockExampleFunc{
-                    SomeMethodFunc: func(arg string) error {
-                        return nil
+        "custom read": {
+            setupStream: func() *FakeQUICStream {
+                return &FakeQUICStream{
+                    ReadFunc: func(p []byte) (int, error) {
+                        return 0, errors.New("read error")
                     },
                 }
             },
-            input:    "input",
-            expected: "result",
-            wantErr:  false,
+            wantErr: true,
         },
     }
 
     for name, tt := range tests {
         t.Run(name, func(t *testing.T) {
-            mockObj := tt.setupMock()
-            // Test implementation
-            if mockWithExpectations, ok := mockObj.(*MockExample); ok {
-                mockWithExpectations.AssertExpectations(t)
+            var stream *FakeQUICStream
+            if tt.setupStream != nil {
+                stream = tt.setupStream()
+            } else {
+                stream = &FakeQUICStream{}
             }
+            // ... test logic ...
+            _ = stream
         })
     }
+}
+
+// Variadic option pattern for helpers with optional configuration
+func newTestWriter(t *testing.T, opts ...func(*FakeQUICStream)) (*Writer, *FakeQUICStream) {
+    t.Helper()
+    stream := &FakeQUICStream{}
+    for _, opt := range opts {
+        opt(stream)
+    }
+    return NewWriter(stream), stream
 }
 ```
 
 #### Prohibited Patterns
 ```go
-// ❌ DO NOT create factory functions for mocks
+// ❌ DO NOT use testify/mock
+type MockExample struct {
+    mock.Mock  // PROHIBITED
+}
+
+// ❌ DO NOT create factory functions for test doubles
 func createMockExample() *MockExample {
     return &MockExample{}
 }
 
-// ❌ DO NOT create helper functions for mock initialization
-func newMockExampleWithDefaults() *MockExample {
-    mock := &MockExample{}
-    mock.On("SomeMethod", mock.Anything).Return(nil)
-    return mock
+// ❌ DO NOT pass empty callbacks when the default behavior suffices
+stream := &FakeQUICStream{
+    ReadFunc: func(p []byte) (int, error) {
+        return 0, io.EOF  // redundant — this is already the default
+    },
 }
+// ✅ Instead, use:
+stream := &FakeQUICStream{}
 ```
 
-### Mock Usage Guidelines
-1. **Implementation Flexibility**: Mock structures can use either `mock.Mock` embedding or function fields based on complexity requirements
-2. **Testify/Mock Methods**: When using `mock.Mock`, all mock methods MUST use `m.Called()` for proper argument capture and return value handling
-3. **Function Field Methods**: When using function fields, check if the function is not nil before calling it
-4. **Direct Initialization**: Initialize mocks directly in test functions using `&MockStruct{}`
-5. **No Factory Functions**: Do not create `createMock...()` or `newMock...()` helper functions
-6. **Per-Test Configuration**: Configure mock expectations within each test function or test case setup
-7. **Expectation Verification**: When using testify/mock, always call `mockObj.AssertExpectations(t)`
+### Usage Guidelines
+1. **Func-field only**: All test doubles use Func-field pattern. `testify/mock` is prohibited.
+2. **Nil check + default**: All methods must check if the Func field is nil and return a sensible default when nil.
+3. **Direct Initialization**: Initialize test doubles directly in test functions using `&FakeXxx{}` or `&MockXxx{}`.
+4. **Minimal configuration**: Only set Func fields that the test actually exercises. Rely on defaults for everything else.
+5. **Shared setup helpers**: Allowed for repeated non-mock configuration (3+ times). Example: `newTestConn()` for common connection setup.
+6. **Variadic option pattern**: Use `...func(*FakeXxx)` for test helpers where optional configuration is sometimes needed, to avoid passing empty callbacks.
+7. **Behavior modeling** (`Fake*`): Fakes should model the real system's semantics (e.g., idempotent Close, CancelCause propagation, EOF on Read).
+8. **ParentCtx pattern**: Use a `ParentCtx` field for test doubles that need to derive context cancellation from a parent.
 
 Follow these rules to generate consistent test code.
