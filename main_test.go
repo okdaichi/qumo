@@ -187,9 +187,13 @@ func TestMain_Subprocess(t *testing.T) {
 // runChildMain re-executes the test binary in a special child mode that calls
 // main(). It returns combined stdout+stderr and any exec error.
 func runChildMain(t *testing.T, args ...string) (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
 	// Use the current test binary and ask it to run only the helper test.
 	cmdArgs := append([]string{"-test.run=TestMain_ChildProcess", "--"}, args...)
-	cmd := exec.Command(os.Args[0], cmdArgs...)
+	cmd := exec.Command(exe, cmdArgs...)
 	// Signal to the child that it should execute main().
 	cmd.Env = append(os.Environ(), "QUOMO_TEST_MAIN=1")
 	b, err := cmd.CombinedOutput()

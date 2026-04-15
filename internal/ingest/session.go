@@ -7,10 +7,14 @@
 // # Adding a new protocol
 //
 // Implement a listener that accepts connections for the target protocol,
-// create a [Session] per publish stream, and push frames:
+// create a [Session] per publish stream, register tracks when codec
+// configuration becomes available, and push frames:
 //
-//	sess := ingest.NewSession(trackMux, "/app/stream")
+//	sess, err := ingest.NewSession(trackMux, "/app/stream")
+//	if err != nil { /* handle */ }
 //	defer sess.Close()
+//	sess.RegisterVideo(avcCfg)
+//	sess.RegisterAudio(aacCfg)
 //	for {
 //	    ts, data, isKey := readFromProtocol()
 //	    sess.PushVideo(ts, data, isKey)
@@ -19,6 +23,7 @@ package ingest
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	"github.com/okdaichi/gomoqt/moqt"
@@ -43,11 +48,16 @@ type Session struct {
 // the media pushed via [Session.PushVideo] and [Session.PushAudio].
 //
 // Call [Session.Close] when the publisher disconnects.
-func NewSession(trackMux *moqt.TrackMux, path moqt.BroadcastPath) *Session {
+func NewSession(trackMux *moqt.TrackMux, path moqt.BroadcastPath) (*Session, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	ann, endAnn := moqt.NewAnnouncement(ctx, path)
 
-	h := newIngestHandler()
+	h, err := newIngestHandler(ctx)
+	if err != nil {
+		endAnn()
+		cancel()
+		return nil, fmt.Errorf("ingest session %s: %w", path, err)
+	}
 	trackMux.Announce(ann, h)
 
 	slog.Info("ingest session started", "broadcast_path", path)
@@ -57,7 +67,23 @@ func NewSession(trackMux *moqt.TrackMux, path moqt.BroadcastPath) *Session {
 		handler: h,
 		endAnn:  endAnn,
 		cancel:  cancel,
-	}
+	}, nil
+}
+
+// RegisterVideo registers (or replaces) the video track in the MSF catalog
+// using codec configuration extracted from a sequence header. Subscribers
+// can discover the track via the catalog and receive video frames pushed
+// through [Session.PushVideo].
+func (s *Session) RegisterVideo(cfg *AVCConfig) error {
+	return s.handler.registerVideo(cfg)
+}
+
+// RegisterAudio registers (or replaces) the audio track in the MSF catalog
+// using codec configuration extracted from a sequence header. Subscribers
+// can discover the track via the catalog and receive audio frames pushed
+// through [Session.PushAudio].
+func (s *Session) RegisterAudio(cfg *AACConfig) error {
+	return s.handler.registerAudio(cfg)
 }
 
 // PushVideo appends converted video data (Annex-B bitstream) as a MoQT
@@ -68,8 +94,8 @@ func NewSession(trackMux *moqt.TrackMux, path moqt.BroadcastPath) *Session {
 func (s *Session) PushVideo(timestampUS int64, data []byte, isKeyframe bool) {
 	payload := buildMediaFrame(timestampUS, data)
 	f := moqt.NewFrame(len(payload))
-	_, _ = f.Write(payload) // TODO: Log write error (currently ignored because frame pool writes never fail)
-	s.handler.video.pushVideo(f, isKeyframe)
+	_, _ = f.Write(payload)
+	s.handler.video.push(f, isKeyframe)
 }
 
 // PushAudio appends converted audio data (raw AAC frame) as an
@@ -80,16 +106,7 @@ func (s *Session) PushAudio(timestampUS int64, data []byte) {
 	payload := buildMediaFrame(timestampUS, data)
 	f := moqt.NewFrame(len(payload))
 	_, _ = f.Write(payload)
-	s.handler.audio.pushAudio(f)
-}
-
-// PublishCatalog publishes the MSF catalog as a single-frame group on the
-// catalog track so that subscribers can discover track metadata (codec,
-// resolution, sample rate, etc.).
-func (s *Session) PublishCatalog(catalogJSON []byte) {
-	f := moqt.NewFrame(len(catalogJSON))
-	_, _ = f.Write(catalogJSON)
-	s.handler.catalog.pushCatalog(f)
+	s.handler.audio.push(f)
 }
 
 // Close ends the MoQT announcement and signals all subscribers that

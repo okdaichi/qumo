@@ -135,7 +135,15 @@ func (s *RTMPServer) handleConn(ctx context.Context, conn *rtmp.Conn) {
 	defer mr.Close()
 
 	path := moqt.BroadcastPath("/" + mr.App() + "/" + mr.StreamKey())
-	sess := NewSession(s.config.TrackMux, path)
+	sess, err := NewSession(s.config.TrackMux, path)
+	if err != nil {
+		slog.Warn("failed to create ingest session",
+			"remote", conn.RemoteAddr(),
+			"broadcast_path", path,
+			"error", err,
+		)
+		return
+	}
 	defer sess.Close()
 
 	slog.Info("RTMP ingest started",
@@ -190,7 +198,9 @@ func ingestRTMP(ctx context.Context, mr *rtmp.MessageReader, sess *Session) {
 					"width", cfg.Width,
 					"height", cfg.Height,
 				)
-				publishCatalog(sess, avcCfg, aacCfg)
+				if err := sess.RegisterVideo(avcCfg); err != nil {
+					slog.Warn("failed to register video track", "error", err)
+				}
 				continue
 			}
 
@@ -222,7 +232,9 @@ func ingestRTMP(ctx context.Context, mr *rtmp.MessageReader, sess *Session) {
 					"sample_rate", cfg.SampleRate,
 					"channels", cfg.ChannelConfig,
 				)
-				publishCatalog(sess, avcCfg, aacCfg)
+				if err := sess.RegisterAudio(aacCfg); err != nil {
+					slog.Warn("failed to register audio track", "error", err)
+				}
 				continue
 			}
 
@@ -236,21 +248,6 @@ func ingestRTMP(ctx context.Context, mr *rtmp.MessageReader, sess *Session) {
 			sess.PushAudio(pts, raw)
 		}
 	}
-}
-
-// publishCatalog builds and publishes the MSF catalog. It is called each
-// time a new sequence header (video or audio) is received, so the catalog
-// is updated if codec parameters change mid-stream.
-func publishCatalog(sess *Session, video *AVCConfig, audio *AACConfig) {
-	if video == nil && audio == nil {
-		return
-	}
-	catalogJSON, err := buildCatalogJSON(video, audio)
-	if err != nil {
-		slog.Warn("failed to build catalog JSON", "error", err)
-		return
-	}
-	sess.PublishCatalog(catalogJSON)
 }
 
 // isVideoKeyframe reports whether the raw FLV/RTMP video tag data begins

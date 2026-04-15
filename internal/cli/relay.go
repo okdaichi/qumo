@@ -172,7 +172,7 @@ func serveComponents(ctx context.Context, relaySrv server, httpSrv server, shutd
 	go func() {
 		<-gctx.Done()
 
-		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.WithoutCancel(gctx), shutdownTimeout)
 		defer shutdownCancel()
 
 		if err := relaySrv.Shutdown(shutdownCtx); err != nil {
