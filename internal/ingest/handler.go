@@ -1,18 +1,18 @@
 package ingest
 
 import (
+	"context"
+	"fmt"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/okdaichi/gomoqt/moqt"
+	"github.com/okdaichi/gomoqt/msf"
 )
 
 const (
-	trackVideo   moqt.TrackName = "video"
-	trackAudio   moqt.TrackName = "audio"
-	trackCatalog moqt.TrackName = "catalog"
-
 	defaultRingSize = 8
 
 	notifyTimeout = 1 * time.Millisecond
@@ -20,204 +20,275 @@ const (
 
 var _ moqt.TrackHandler = (*ingestHandler)(nil)
 
+// ---------------------------------------------------------------------------
+// ingestHandler — moqt.TrackHandler implementation
+// ---------------------------------------------------------------------------
+
 // ingestHandler bridges a single publish stream to MoQT subscribers.
 // It implements [moqt.TrackHandler]; the TrackMux calls ServeTrack once per
 // subscribing client.
+//
+// Track routing and catalog management are delegated to an [msf.Broadcast].
+// Video and audio track handlers are registered via [registerVideo] and
+// [registerAudio] when codec configuration becomes available.
 type ingestHandler struct {
-	video   *trackSource
-	audio   *trackSource
-	catalog *trackSource
-	done    chan struct{} // closed when the publisher disconnects
-	once    sync.Once
+	broadcast *msf.Broadcast
+	video     *videoTrack
+	audio     *singleTrack
+	cancel    context.CancelFunc
+	once      sync.Once
 }
 
-func newIngestHandler() *ingestHandler {
-	return &ingestHandler{
-		video:   newTrackSource(),
-		audio:   newTrackSource(),
-		catalog: newTrackSource(),
-		done:    make(chan struct{}),
+func newIngestHandler(parent context.Context) (*ingestHandler, error) {
+	b, err := msf.NewBroadcast(msf.Catalog{Version: 1})
+	if err != nil {
+		return nil, fmt.Errorf("initializing broadcast: %w", err)
 	}
+	ctx, cancel := context.WithCancel(parent)
+	return &ingestHandler{
+		broadcast: b,
+		video:     newVideoTrack(ctx),
+		audio:     newSingleTrack(ctx),
+		cancel:    cancel,
+	}, nil
 }
 
 // ServeTrack is called by TrackMux for each subscribing MoQT client. It
 // blocks until the subscriber disconnects or the publisher ends.
 func (h *ingestHandler) ServeTrack(tw *moqt.TrackWriter) {
-	var src *trackSource
-	switch tw.TrackName {
-	case trackVideo:
-		src = h.video
-	case trackAudio:
-		src = h.audio
-	case trackCatalog:
-		src = h.catalog
-	default:
-		tw.CloseWithError(moqt.SubscribeErrorCodeNotFound)
-		return
+	h.broadcast.ServeTrack(tw)
+}
+
+// registerVideo adds (or replaces) the video track in the broadcast catalog
+// and wires a handler that streams from the video [trackBuffer].
+func (h *ingestHandler) registerVideo(cfg *AVCConfig) error {
+	track := msf.Track{
+		Name:      "video",
+		Packaging: msf.PackagingLOC,
+		Role:      msf.RoleVideo,
+		IsLive:    new(true),
+		Codec:     cfg.CodecString(),
+		Width:     new(int64(cfg.Width)),
+		Height:    new(int64(cfg.Height)),
 	}
-	src.serve(tw, h.done)
+	return h.broadcast.RegisterTrack(track, moqt.TrackHandlerFunc(func(tw *moqt.TrackWriter) {
+		h.video.serve(tw)
+	}))
+}
+
+// registerAudio adds (or replaces) the audio track in the broadcast catalog
+// and wires a handler that streams from the audio [trackBuffer].
+func (h *ingestHandler) registerAudio(cfg *AACConfig) error {
+	track := msf.Track{
+		Name:          "audio",
+		Packaging:     msf.PackagingLOC,
+		Role:          msf.RoleAudio,
+		IsLive:        new(true),
+		Codec:         cfg.CodecString(),
+		SampleRate:    new(int64(cfg.SampleRate)),
+		ChannelConfig: strconv.Itoa(cfg.ChannelConfig),
+	}
+	return h.broadcast.RegisterTrack(track, moqt.TrackHandlerFunc(func(tw *moqt.TrackWriter) {
+		h.audio.serve(tw)
+	}))
 }
 
 // close signals all subscribers that the publisher has disconnected.
 func (h *ingestHandler) close() {
 	h.once.Do(func() {
-		h.video.closeCurrentGroup()
-		close(h.done)
+		h.video.close()
+		h.cancel()
 	})
 }
 
-// trackSource manages a ring buffer of MoQT groups for a single media track
-// (video or audio) and fans out the data to multiple concurrent subscribers.
-type trackSource struct {
-	// Ring buffer of groups.
+// ---------------------------------------------------------------------------
+// videoTrack — keyframe-based group management
+// ---------------------------------------------------------------------------
+
+// videoTrack manages a video track with keyframe-based group boundaries.
+// Each keyframe opens a new MoQT group so that subscribers joining
+// mid-stream always get a clean decode point (GOP alignment).
+type videoTrack struct {
+	buf       *trackBuffer
+	ctx       context.Context
+	currentMu sync.Mutex
+	current   *sourceGroup
+}
+
+func newVideoTrack(ctx context.Context) *videoTrack {
+	return &videoTrack{buf: newTrackBuffer(), ctx: ctx}
+}
+
+func (v *videoTrack) push(f *moqt.Frame, isKeyframe bool) {
+	v.currentMu.Lock()
+	if v.current == nil || isKeyframe {
+		if v.current != nil {
+			v.current.complete.Store(true)
+		}
+		v.current = v.buf.openGroup()
+	}
+	v.current.append(f)
+	v.currentMu.Unlock()
+
+	v.buf.notify()
+}
+
+// serve writes buffered groups to a single MoQT TrackWriter. It blocks
+// until the subscriber disconnects or the publisher ends.
+func (v *videoTrack) serve(tw *moqt.TrackWriter) {
+	v.buf.serve(v.ctx, tw)
+}
+
+// close marks the current open group as complete. Called when the publisher
+// disconnects.
+func (v *videoTrack) close() {
+	v.currentMu.Lock()
+	if v.current != nil {
+		v.current.complete.Store(true)
+	}
+	v.currentMu.Unlock()
+
+	v.buf.notify()
+}
+
+// ---------------------------------------------------------------------------
+// singleTrack — one frame per group
+// ---------------------------------------------------------------------------
+
+// singleTrack manages a track where each push creates an independent,
+// single-frame, immediately-complete group. This is the right model for
+// audio (each AAC frame is independently decodable and warrants its own
+// QUIC stream) and for catalog updates.
+type singleTrack struct {
+	buf *trackBuffer
+	ctx context.Context
+}
+
+func newSingleTrack(ctx context.Context) *singleTrack {
+	return &singleTrack{buf: newTrackBuffer(), ctx: ctx}
+}
+
+func (s *singleTrack) push(f *moqt.Frame) {
+	g := s.buf.openGroup()
+	g.append(f)
+	g.complete.Store(true)
+
+	s.buf.notify()
+}
+
+// serve writes buffered groups to a single MoQT TrackWriter. It blocks
+// until the subscriber disconnects or the publisher ends.
+func (s *singleTrack) serve(tw *moqt.TrackWriter) {
+	s.buf.serve(s.ctx, tw)
+}
+
+// ---------------------------------------------------------------------------
+// trackBuffer — ring buffer + subscriber fan-out
+// ---------------------------------------------------------------------------
+
+// trackBuffer is the shared ring buffer with subscriber fan-out for a
+// single MoQT track. Like [bytes.Buffer], it is a reusable data structure
+// that decouples producers (push side) from consumers (serve side).
+type trackBuffer struct {
 	ring []atomic.Pointer[sourceGroup]
 	size int
 	pos  atomic.Uint64 // monotonically increasing; first group = 1
 
-	// Current open group (video only; audio completes each group immediately).
-	currentMu sync.Mutex
-	current   *sourceGroup
-
-	// Subscriber notification.
 	subMu       sync.RWMutex
 	subscribers map[chan struct{}]struct{}
 }
 
-func newTrackSource() *trackSource {
-	return &trackSource{
+func newTrackBuffer() *trackBuffer {
+	return &trackBuffer{
 		ring:        make([]atomic.Pointer[sourceGroup], defaultRingSize),
 		size:        defaultRingSize,
 		subscribers: make(map[chan struct{}]struct{}),
 	}
 }
 
-func (s *trackSource) pushVideo(f *moqt.Frame, isKeyframe bool) {
-	s.currentMu.Lock()
-	if s.current == nil || isKeyframe {
-		if s.current != nil {
-			s.current.complete.Store(true)
-		}
-		s.current = s.newGroup()
-	}
-	s.current.append(f)
-	s.currentMu.Unlock()
-
-	s.notify()
-}
-
-func (s *trackSource) pushAudio(f *moqt.Frame) {
-	g := s.newGroup()
-	g.append(f)
-	g.complete.Store(true)
-
-	s.notify()
-}
-
-// pushCatalog publishes a catalog frame as a single-frame group. Each
-// call replaces the previous catalog (new group sequence).
-func (s *trackSource) pushCatalog(f *moqt.Frame) {
-	g := s.newGroup()
-	g.append(f)
-	g.complete.Store(true)
-
-	s.notify()
-}
-
-// closeCurrentGroup marks the current video group as complete. Called when
-// the RTMP publisher disconnects.
-func (s *trackSource) closeCurrentGroup() {
-	s.currentMu.Lock()
-	if s.current != nil {
-		s.current.complete.Store(true)
-	}
-	s.currentMu.Unlock()
-
-	s.notify()
-}
-
-func (s *trackSource) newGroup() *sourceGroup {
-	p := s.pos.Add(1)
+func (b *trackBuffer) openGroup() *sourceGroup {
+	p := b.pos.Add(1)
 	g := &sourceGroup{
 		seq:    moqt.GroupSequence(p),
 		frames: make([]*moqt.Frame, 0, 4),
 	}
-	s.ring[p%uint64(s.size)].Store(g)
+	b.ring[p%uint64(b.size)].Store(g)
 	return g
 }
 
 // --- subscriber notification ---
 
-func (s *trackSource) notify() {
-	s.subMu.RLock()
-	for ch := range s.subscribers {
+func (b *trackBuffer) notify() {
+	b.subMu.RLock()
+	for ch := range b.subscribers {
 		select {
 		case ch <- struct{}{}:
 		default:
 		}
 	}
-	s.subMu.RUnlock()
+	b.subMu.RUnlock()
 }
 
-func (s *trackSource) subscribe() chan struct{} {
-	s.subMu.Lock()
-	defer s.subMu.Unlock()
+func (b *trackBuffer) subscribe() chan struct{} {
+	b.subMu.Lock()
+	defer b.subMu.Unlock()
 	ch := make(chan struct{}, 1)
-	s.subscribers[ch] = struct{}{}
+	b.subscribers[ch] = struct{}{}
 	return ch
 }
 
-func (s *trackSource) unsubscribe(ch chan struct{}) {
-	s.subMu.Lock()
-	defer s.subMu.Unlock()
-	delete(s.subscribers, ch)
+func (b *trackBuffer) unsubscribe(ch chan struct{}) {
+	b.subMu.Lock()
+	defer b.subMu.Unlock()
+	delete(b.subscribers, ch)
 }
 
 // --- ring buffer access ---
 
-func (s *trackSource) head() moqt.GroupSequence {
-	return moqt.GroupSequence(s.pos.Load())
+func (b *trackBuffer) head() moqt.GroupSequence {
+	return moqt.GroupSequence(b.pos.Load())
 }
 
-func (s *trackSource) earliestAvailable() moqt.GroupSequence {
-	h := s.head()
-	if h <= moqt.GroupSequence(s.size) {
+func (b *trackBuffer) earliestAvailable() moqt.GroupSequence {
+	h := b.head()
+	if h <= moqt.GroupSequence(b.size) {
 		return 1
 	}
-	return h - moqt.GroupSequence(s.size) + 1
+	return h - moqt.GroupSequence(b.size) + 1
 }
 
-func (s *trackSource) get(seq moqt.GroupSequence) *sourceGroup {
-	return s.ring[uint64(seq)%uint64(s.size)].Load()
+func (b *trackBuffer) get(seq moqt.GroupSequence) *sourceGroup {
+	return b.ring[uint64(seq)%uint64(b.size)].Load()
 }
 
 // --- subscriber egress ---
 
 // serve writes groups and frames to a single MoQT TrackWriter. It blocks
-// until the subscriber disconnects or the publisher (done channel) exits.
-func (s *trackSource) serve(tw *moqt.TrackWriter, done <-chan struct{}) {
+// until the subscriber disconnects or ctx is cancelled.
+func (b *trackBuffer) serve(ctx context.Context, tw *moqt.TrackWriter) {
 	twCtx := tw.Context()
-	notify := s.subscribe()
-	defer s.unsubscribe(notify)
+	notify := b.subscribe()
+	defer b.unsubscribe(notify)
 
-	last := s.head()
+	last := b.head()
 	if last > 0 {
 		last--
 	}
 
 	for {
-		latest := s.head()
+		latest := b.head()
 
 		if last < latest {
 			last++
 
-			earliest := s.earliestAvailable()
+			earliest := b.earliestAvailable()
 			if last < earliest {
 				// Subscriber fell behind; skip to latest.
 				last = latest - 1
 				continue
 			}
 
-			g := s.get(last)
+			g := b.get(last)
 			if g == nil {
 				last--
 				continue
@@ -248,7 +319,7 @@ func (s *trackSource) serve(tw *moqt.TrackWriter, done <-chan struct{}) {
 				select {
 				case <-notify:
 				case <-time.After(notifyTimeout):
-				case <-done:
+				case <-ctx.Done():
 					_ = gw.Close()
 					return
 				case <-twCtx.Done():
@@ -265,7 +336,7 @@ func (s *trackSource) serve(tw *moqt.TrackWriter, done <-chan struct{}) {
 		select {
 		case <-notify:
 		case <-time.After(notifyTimeout):
-		case <-done:
+		case <-ctx.Done():
 			return
 		case <-twCtx.Done():
 			return
@@ -273,7 +344,9 @@ func (s *trackSource) serve(tw *moqt.TrackWriter, done <-chan struct{}) {
 	}
 }
 
-// --- sourceGroup ---
+// ---------------------------------------------------------------------------
+// sourceGroup
+// ---------------------------------------------------------------------------
 
 // sourceGroup holds the frames of a single MoQT group.
 type sourceGroup struct {
