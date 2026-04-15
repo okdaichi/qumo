@@ -529,7 +529,7 @@ func TestRegisterVideo(t *testing.T) {
 
 	var codec string
 	require.NoError(t, json.Unmarshal(tracks[0]["codec"], &codec))
-	assert.Equal(t, "avc1.64001f", codec)
+	assert.Equal(t, "avc3.64001f", codec)
 }
 
 func TestRegisterAudio(t *testing.T) {

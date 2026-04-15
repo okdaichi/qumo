@@ -69,7 +69,7 @@ func TestParseAVCConfig(t *testing.T) {
 	assert.Equal(t, byte(0x00), cfg.ProfileCompat)
 	assert.Equal(t, byte(0x1F), cfg.LevelIDC)
 	assert.Equal(t, 4, cfg.NALULenSize)
-	assert.Equal(t, "avc1.64001f", cfg.CodecString())
+	assert.Equal(t, "avc3.64001f", cfg.CodecString())
 	require.Len(t, cfg.SPS, 1)
 	assert.Equal(t, sps, cfg.SPS[0])
 	require.Len(t, cfg.PPS, 1)

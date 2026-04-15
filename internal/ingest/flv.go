@@ -53,10 +53,12 @@ type AVCConfig struct {
 	Height int
 }
 
-// CodecString returns the codec identifier string (e.g. "avc1.64001f")
-// used in MSF catalog entries.
+// CodecString returns the codec identifier string (e.g. "avc3.64001f")
+// used in MSF catalog entries. The "avc3" prefix indicates that parameter
+// sets (SPS/PPS) are carried inline in the bitstream (Annex-B format),
+// which matches the output of [AVCCToAnnexB].
 func (c *AVCConfig) CodecString() string {
-	return fmt.Sprintf("avc1.%02x%02x%02x", c.ProfileIDC, c.ProfileCompat, c.LevelIDC)
+	return fmt.Sprintf("avc3.%02x%02x%02x", c.ProfileIDC, c.ProfileCompat, c.LevelIDC)
 }
 
 // ParseAVCConfig parses an AVCDecoderConfigurationRecord from an FLV

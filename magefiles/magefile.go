@@ -299,6 +299,52 @@ func Dev() error {
 	return Relay()
 }
 
+// Rtmp starts the RTMP ingest server (RTMP → MoQT bridge).
+func Rtmp() error {
+	fmt.Println("📡 Starting RTMP ingest server...")
+	fmt.Println("   Config: ./config.rtmp.yaml")
+	fmt.Println("   RTMP:   rtmp://localhost:1935/live/<stream-key>")
+	fmt.Println("   MoQT:   https://localhost:4433 (WebTransport/QUIC)")
+	fmt.Println()
+	fmt.Println("💡 Push a stream with ffmpeg:")
+	fmt.Println("   ffmpeg -re -i input.mp4 -c:v libx264 -c:a aac -f flv rtmp://localhost:1935/live/demo")
+	fmt.Println()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+	go func() {
+		select {
+		case <-sigCh:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+
+	cmd := exec.CommandContext(ctx, "go", "run", ".", "rtmp", "-config", "config.rtmp.yaml")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return nil
+		}
+		if runtime.GOOS == "windows" {
+			return exec.Command("taskkill", "/F", "/T", "/PID",
+				strconv.Itoa(cmd.Process.Pid)).Run()
+		}
+		return cmd.Process.Kill()
+	}
+
+	err := cmd.Run()
+	if ctx.Err() != nil {
+		return nil
+	}
+	return err
+}
+
 // Web starts the web demo application (Vite dev server only)
 // Note: Start relay separately with `./bin/qumo-relay` or `mage relay`
 func Web() error {
