@@ -150,6 +150,10 @@ func (s *RTMPServer) handleConn(ctx context.Context, conn *rtmp.Conn) {
 		"remote", conn.RemoteAddr(),
 		"broadcast_path", path,
 	)
+	slog.Info("subscribe info",
+		"broadcast_path", path,
+		"tracks", []string{"catalog", "video", "audio"},
+	)
 	defer slog.Info("RTMP ingest ended",
 		"remote", conn.RemoteAddr(),
 		"broadcast_path", path,

@@ -299,15 +299,18 @@ func Dev() error {
 	return Relay()
 }
 
-// Rtmp starts the RTMP ingest server (RTMP → MoQT bridge).
-func Rtmp() error {
+// Rtmp provides RTMP ingest commands.
+type Rtmp mg.Namespace
+
+// Serve starts the RTMP ingest server (RTMP → MoQT bridge).
+func (Rtmp) Serve() error {
 	fmt.Println("📡 Starting RTMP ingest server...")
 	fmt.Println("   Config: ./config.rtmp.yaml")
 	fmt.Println("   RTMP:   rtmp://localhost:1935/live/<stream-key>")
 	fmt.Println("   MoQT:   https://localhost:4433 (WebTransport/QUIC)")
 	fmt.Println()
 	fmt.Println("💡 Push a stream with ffmpeg:")
-	fmt.Println("   ffmpeg -re -i input.mp4 -c:v libx264 -c:a aac -f flv rtmp://localhost:1935/live/demo")
+	fmt.Println("   mage rtmp:stream")
 	fmt.Println()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -343,6 +346,131 @@ func Rtmp() error {
 		return nil
 	}
 	return err
+}
+
+// Stream pushes a test stream via ffmpeg to the RTMP ingest server.
+// Generates a 720p color-bar pattern with a 440 Hz sine tone.
+//
+// Environment variables:
+//
+//	APP=live       RTMP application name (default: live)
+//	KEY=demo       Stream key           (default: demo)
+//	RTMP_ADDR=host:port                (default: localhost:1935)
+func (Rtmp) Stream() error {
+	app := envOrDefault("APP", "live")
+	key := envOrDefault("KEY", "demo")
+	addr := envOrDefault("RTMP_ADDR", "localhost:1935")
+
+	broadcastPath := "/" + app + "/" + key
+	rtmpURL := "rtmp://" + addr + "/" + app + "/" + key
+
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		fmt.Println("❌ ffmpeg is not installed!")
+		fmt.Println()
+		fmt.Println("Please install ffmpeg:")
+		fmt.Println("  Windows: winget install Gyan.FFmpeg")
+		fmt.Println("  macOS:   brew install ffmpeg")
+		fmt.Println("  Linux:   apt install ffmpeg")
+		return fmt.Errorf("ffmpeg not found")
+	}
+
+	fmt.Println("🎬 Pushing test stream via ffmpeg...")
+	fmt.Println("   RTMP URL:       ", rtmpURL)
+	fmt.Println("   Broadcast Path: ", broadcastPath)
+	fmt.Println("   Tracks:          catalog, video, audio")
+	fmt.Println("   Video:           1280x720 30fps (H.264 baseline)")
+	fmt.Println("   Audio:           AAC 48kHz stereo")
+	fmt.Println()
+	fmt.Println("📺 To watch in browser:")
+	fmt.Println("   1. Open http://localhost:5173")
+	fmt.Println("   2. Set Broadcast Path to:", broadcastPath)
+	fmt.Println("   3. Click 'Start Subscribing'")
+	fmt.Println()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+	go func() {
+		select {
+		case <-sigCh:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+
+	cmd := exec.CommandContext(ctx, "ffmpeg",
+		"-re",
+		"-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30",
+		"-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000",
+		"-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
+		"-profile:v", "baseline", "-g", "60",
+		"-c:a", "aac", "-ar", "48000", "-ac", "2",
+		"-f", "flv", rtmpURL,
+	)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return nil
+		}
+		if runtime.GOOS == "windows" {
+			return exec.Command("taskkill", "/F", "/T", "/PID",
+				strconv.Itoa(cmd.Process.Pid)).Run()
+		}
+		return cmd.Process.Kill()
+	}
+
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+// Demo prints instructions to run the full RTMP→MoQT demo pipeline.
+func (Rtmp) Demo() {
+	fmt.Println("╔══════════════════════════════════════════════════════════════╗")
+	fmt.Println("║                    RTMP → MoQT Demo                        ║")
+	fmt.Println("╚══════════════════════════════════════════════════════════════╝")
+	fmt.Println()
+	fmt.Println("Run each command in a separate terminal:")
+	fmt.Println()
+	fmt.Println("  Terminal 1 — Start the RTMP→MoQT server:")
+	fmt.Println("    $ mage rtmp:serve")
+	fmt.Println()
+	fmt.Println("  Terminal 2 — Start the web subscriber:")
+	fmt.Println("    $ mage web")
+	fmt.Println()
+	fmt.Println("  Terminal 3 — Push a test stream via ffmpeg:")
+	fmt.Println("    $ mage rtmp:stream")
+	fmt.Println()
+	fmt.Println("  Then open http://localhost:5173 in your browser,")
+	fmt.Println("  set Broadcast Path to /live/demo, and click 'Start Subscribing'.")
+	fmt.Println()
+	fmt.Println("┌──────────────────────────────────────────────────────────────┐")
+	fmt.Println("│  ffmpeg ──RTMP──▶ qumo (:1935)                              │")
+	fmt.Println("│                    │                                         │")
+	fmt.Println("│                    ▼                                         │")
+	fmt.Println("│                  MoQT/QUIC (:4433)                           │")
+	fmt.Println("│                    │                                         │")
+	fmt.Println("│                    ▼                                         │")
+	fmt.Println("│              Browser (:5173)                                 │")
+	fmt.Println("│         /live/demo → catalog, video, audio                   │")
+	fmt.Println("└──────────────────────────────────────────────────────────────┘")
+	fmt.Println()
+	fmt.Println("💡 Custom stream key:  APP=myapp KEY=mystream mage rtmp:stream")
+}
+
+func envOrDefault(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }
 
 // Web starts the web demo application (Vite dev server only)

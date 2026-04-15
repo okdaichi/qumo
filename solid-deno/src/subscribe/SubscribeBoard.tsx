@@ -3,8 +3,8 @@ import { AudioDecodeNode, VideoContext, VideoDecodeNode } from "@okdaichi/av-nod
 import { type Session, SubscribeErrorCode } from "@okdaichi/moq";
 import { parseCatalog } from "@okdaichi/moq/msf";
 import { deserializeMediaFrame } from "../publish/media_frame.ts";
-import { useBroadcastPath } from "../useBroadcastPath.ts";
 import { background, withCancel } from "@okdaichi/golikejs/context";
+import type { BroadcastPath } from "@okdaichi/moq";
 
 export function SubscribeBoard(props: { session: Promise<Session> }) {
 	const [isSubscribed, setIsSubscribed] = createSignal(false);
@@ -14,7 +14,9 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 	// Reactive decoder config: undefined until the first catalog arrives — no pre-config.
 	const [decoderConfig, setDecoderConfig] = createSignal<VideoDecoderConfig | undefined>();
 
-	const broadcastPath = useBroadcastPath();
+	// Editable broadcast path — defaults to /live/demo for RTMP ingest demo.
+	const [broadcastPathInput, setBroadcastPathInput] = createSignal("/live/demo");
+	const broadcastPath = (): BroadcastPath => broadcastPathInput() as BroadcastPath;
 
 	let canvasEle: HTMLCanvasElement | undefined;
 	let videoContext: VideoContext | undefined;
@@ -78,6 +80,7 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 			}
 
 			const session = await props.session;
+			const subscribePath = broadcastPath(); // snapshot at subscription start
 
 			// Gate: the video loop awaits this before feeding any frames to the decoder.
 			// Resolved the moment the first catalog group is received.
@@ -87,7 +90,7 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 
 			// Subscribe to catalog: each new group updates the reactive signal,
 			// which triggers createEffect → videoDecodeNode.configure() automatically.
-			session.subscribe(broadcastPath, "catalog").then(
+			session.subscribe(subscribePath, "catalog").then(
 				async ([catalogTrack, catalogErr]) => {
 					if (catalogErr) {
 						if (!isSubscribed()) return;
@@ -137,7 +140,7 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 				},
 			);
 
-			session.subscribe(broadcastPath, "video").then(
+			session.subscribe(subscribePath, "video").then(
 				([videoTrack, videoErr]) => {
 					if (videoErr) {
 						if (!isSubscribed()) return;
@@ -190,7 +193,7 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 			);
 
 			// Subscribe to audio — gracefully skipped if the publisher has no audio track.
-			session.subscribe(broadcastPath, "audio").then(
+			session.subscribe(subscribePath, "audio").then(
 				async ([audioMoqTrack, audioMoqErr]) => {
 					if (audioMoqErr) {
 						if (!isSubscribed()) return;
@@ -267,7 +270,14 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 			<div class="controls">
 				<div class="path-input">
 					<label>Broadcast Path:</label>
-					<span>{broadcastPath}</span>
+					<input
+						type="text"
+						value={broadcastPathInput()}
+						onInput={(e) => setBroadcastPathInput(e.currentTarget.value)}
+						disabled={isSubscribed()}
+						placeholder="/live/demo"
+						style={{ "font-family": "monospace", padding: "4px 8px" }}
+					/>
 				</div>
 
 				<div class="stream-controls">
@@ -294,7 +304,7 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 
 			<Show when={isSubscribed()}>
 				<div class="status-message">
-					Subscribing to: {broadcastPath}
+					Subscribing to: {broadcastPath()}
 				</div>
 			</Show>
 
