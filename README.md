@@ -9,20 +9,17 @@
 ## Features
 
 - 🚀 **High-Performance Relay**: Built on QUIC for low-latency media streaming
-- 📡 **MoQT Protocol**: Full Media over QUIC Transport support
-- 🧭 **SDN Controller**: Centralized topology and routing management
-- 🔄 **Self-Organizing Topology**: Relays self-register via heartbeat; stale nodes auto-expire (Node TTL)
+- 📡 **MoQT Protocol**: Full Media over QUIC Transport support (moq-lite draft-03)
+- 🔗 **Peer-Based Topology**: Relays connect to each other via ANNOUNCE_PLEASE for decentralized content discovery
 - 📊 **Observability**: Prometheus metrics, health probes, and status APIs
 - 🔒 **TLS Security**: Built-in TLS 1.3 support for encrypted connections
-- 💾 **Persistent Topology**: Optional disk-based topology storage
-- 🌐 **HA Support**: Peer synchronization for high-availability deployments
 - 🐳 **Docker-Support**: Env-var zero-config; prebuilt multi-arch images on GHCR (ghcr.io/okdaichi/qumo)
 
 ## Quick Start
 
 ### Demo Environment (short)
 
-A complete Docker-based demo (SDN + 3 relays) and all Docker-related examples have been consolidated under `docker/`. See `docker/README.md` for quick start, compose files, and GHCR usage.
+A complete Docker-based demo (3 peer-connected relays) and all Docker-related examples have been consolidated under `docker/`. See `docker/README.md` for quick start, compose files, and GHCR usage.
 
 ### For Developers
 
@@ -111,7 +108,7 @@ Edit [config.relay.yaml](config.relay.yaml) with your settings.
 **Key Features:**
 - Fan-out media track forwarding
 - Prometheus metrics export // WIP
-- Auto-announce to SDN controller (opt-in)
+- Peer-based announce relay via ANNOUNCE_PLEASE (draft-03)
 
 **API Endpoints:**
 - `GET /health` - Health probes
@@ -119,36 +116,7 @@ Edit [config.relay.yaml](config.relay.yaml) with your settings.
   - `GET /health?probe=live` - Liveness probe
 - `GET /metrics` - Prometheus metrics
 
-### sdn
-
-Start an SDN controller that manages topology and routing across multiple relay nodes.
-
-**Start Controller:**
-```bash
-qumo sdn -config config.sdn.yaml
-```
-
-**Configuration:**
-Edit [config.sdn.yaml](config.sdn.yaml) with your settings.
-
-**Key Features:**
-- Dynamic relay registration with automatic topology discovery
-- Node TTL & sweeper: relays that stop heartbeating are auto-removed
-- Dijkstra-based routing
-- Track announcement directory
-- Optional persistent storage
-- HA peer synchronization
-
-**API Endpoints:**
-- `PUT /relay/<name>` - Register/heartbeat relay (with neighbors, region, address)
-- `DELETE /relay/<name>` - Deregister relay
-- `GET /route?from=X&to=Y` - Compute optimal route
-- `GET /graph` - Get topology
-- `PUT /announce/<track>` - Announce track
-- `GET /announce/lookup?track=X` - Find relays for track
-- `GET /sync` / `PUT /sync` - HA synchronization
-
-See [config.relay.yaml](config.relay.yaml) and [config.sdn.yaml](config.sdn.yaml) for all configuration options. For Docker-based environment variables and setup, see [docker/README.md](docker/README.md).
+See [config.relay.yaml](config.relay.yaml) for all configuration options. For Docker-based environment variables and setup, see [docker/README.md](docker/README.md).
 
 ## Architecture
 
@@ -157,30 +125,26 @@ See [config.relay.yaml](config.relay.yaml) and [config.sdn.yaml](config.sdn.yaml
 ```mermaid
 graph LR
     Publisher["Publisher<br/>(Browser)"]
-    Relay["Relay Node<br/>(qumo)"]
+    RelayA["Relay A<br/>(qumo)"]
+    RelayB["Relay B<br/>(qumo)"]
     Subscriber["Subscriber<br/>(Browser)"]
-    SDN["SDN Controller<br/>(qumo)"]
-    Routing["Dijkstra<br/>Routing"]
 
-    Publisher -->|QUIC/MoQ| Relay
-    Relay -->|QUIC/MoQ| Subscriber
-    Relay -->|"register neighbors<br/>heartbeat (PUT /relay)"| SDN
-    SDN -->|route query| Routing
+    Publisher -->|QUIC/MoQ| RelayA
+    RelayA <-->|"ANNOUNCE_PLEASE<br/>peer connection"| RelayB
+    RelayB -->|QUIC/MoQ| Subscriber
 ```
 
-### Topology Lifecycle
+### Peer Discovery Lifecycle
 
 ```mermaid
 graph TD
-    A["Relay Startup"] -->|PUT /relay/name<br/>region, address, neighbors| B["SDN Registers Relay<br/>(Adds to Topology Graph)"]
-    B --> C["Heartbeat Loop<br/>(every 30s)"]
-    C -->|PUT /relay/name<br/>Keep-alive| D["SDN Refreshes TTL<br/>(node_ttl_sec = 90s)"]
-    D --> C
-    C -->|Stop/Failure| E["No Heartbeat<br/>for 90s"]
-    E -->|Sweeper Job| F["SDN Removes Relay<br/>(Deletes from Graph)"]
-    F --> G["Relay Offline"]
-    D -->|Route Query| H["Dijkstra<br/>Compute Path"]
-    H -->|Next-hop only| I["Relay Forwards<br/>via SDN Path"]
+    A["Relay A Startup"] -->|"Dial peer address<br/>(moqt:// or https://)"| B["Connect to Relay B"]
+    B --> C["Send ANNOUNCE_PLEASE<br/>prefix='/'"]
+    C --> D["Receive ANNOUNCE<br/>from Relay B"]
+    D --> E["Register on local TrackMux"]
+    E --> F["Subscribers can access<br/>remote content"]
+    B -->|"Connection lost"| G["Retry after 5s"]
+    G --> B
 ```
 
 ## Development
@@ -206,15 +170,14 @@ qumo/
 │   ├── docker-entrypoint.sh    # Auto-config from env vars
 │   ├── docker-compose.yml      # Local build + dev
 │   ├── docker-compose.external.yml  # GHCR-based deployment
-│   ├── docker-compose.simple.yml    # Demo (SDN + 3 relays)
+│   ├── docker-compose.simple.yml    # Demo (3 peer-connected relays)
 │   └── README.md               # Docker usage guide
 │
 ├── internal/                   # Core implementation
 │   ├── cli/                    # CLI entrypoints & config loading
-│   ├── relay/                  # Relay server (handlers, sessions, caching)
-│   ├── sdn/                    # SDN controller & client (topology, announce table)
+│   ├── relay/                  # Relay server (handlers, peer connections, caching)
 │   ├── rtmp/                   # RTMP utilities
-│   ├── topology/               # Dijkstra routing & graph management
+│   ├── ingest/                 # RTMP ingest & FLV parsing
 │   └── version/                # Version info
 │
 ├── magefiles/                  # Build automation (Mage tasks)
@@ -233,7 +196,6 @@ qumo/
 ├── docs/                       # Additional documentation
 │
 ├── config.relay.yaml           # Relay configuration template
-├── config.sdn.yaml             # SDN configuration template
 ├── .github/workflows/          # CI/CD pipelines
 ├── go.mod & go.sum             # Go dependencies
 └── main.go                     # Entry point
@@ -250,9 +212,8 @@ mage build         # Build binary to bin/qumo
 mage test          # Run tests
 mage check         # Format, vet, and test
 mage docker:build  # Build Docker image
-mage demo:up       # Start 3-relay + SDN demo
+mage demo:up       # Start 3-relay peer demo
 mage relay         # Run relay server
-mage sdn           # Run SDN controller
 ```
 
 ### Building with Version Info

@@ -10,48 +10,19 @@ server:
   key_file: "${KEY_FILE:-certs/server.key}"
 
 relay:
+  node_id: "${RELAY_NAME:-relay-${HOSTNAME}}"
+  region: "${REGION:-}"
   group_cache_size: ${GROUP_CACHE_SIZE:-100}
   frame_capacity: ${FRAME_CAPACITY:-1500}
 EOF
 
-    # Add SDN config if SDN_URL is set
-    if [ -n "$SDN_URL" ]; then
-        cat >> /tmp/config.relay.yaml <<EOF
-
-sdn:
-  url: "$SDN_URL"
-  relay_name: "${RELAY_NAME:-relay-${HOSTNAME}}"
-  heartbeat_interval_sec: ${HEARTBEAT_INTERVAL:-30}
-EOF
-
-        # Add topology registration fields (neighbors, region, address)
-        # Relays self-register via PUT /relay/<name> heartbeat
-        if [ -n "$NEIGHBORS" ]; then
-            echo "  address: \"${RELAY_MOQT_ADDR:-https://${RELAY_NAME:-relay}:4433}\"" >> /tmp/config.relay.yaml
-            if [ -n "$REGION" ]; then
-                echo "  region: \"$REGION\"" >> /tmp/config.relay.yaml
-            fi
-            echo "  neighbors:" >> /tmp/config.relay.yaml
-            # Parse comma-separated neighbors: "relay-london:250,relay-newyork:80"
-            echo "$NEIGHBORS" | tr ',' '\n' | while IFS=: read -r name cost; do
-                echo "    $name: $cost" >> /tmp/config.relay.yaml
-            done
-        fi
-    fi
-}
-
-generate_sdn_config() {
-    cat > /tmp/config.sdn.yaml <<EOF
-graph:
-  listen_addr: "${SDN_ADDR:-:8090}"
-  data_dir: "${DATA_DIR:-./data}"
-  sync_interval_sec: ${SYNC_INTERVAL:-10}
-  node_ttl_sec: ${NODE_TTL_SEC:-90}
-EOF
-
-    # Add peer URL if specified
-    if [ -n "$PEER_URL" ]; then
-        echo "  peer_url: \"$PEER_URL\"" >> /tmp/config.sdn.yaml
+    # Add peers config if PEERS is set (comma-separated: "moqt://relay-a:4433,moqt://relay-b:4433")
+    if [ -n "$PEERS" ]; then
+        echo "" >> /tmp/config.relay.yaml
+        echo "peers:" >> /tmp/config.relay.yaml
+        echo "$PEERS" | tr ',' '\n' | while read -r addr; do
+            echo "  - address: \"$addr\"" >> /tmp/config.relay.yaml
+        done
     fi
 }
 
@@ -92,20 +63,6 @@ case "$COMMAND" in
             exec /app/qumo relay -config /tmp/config.relay.yaml
         else
             generate_insecure_certs
-            exec /app/qumo "$@"
-        fi
-        ;;
-    sdn)
-        # If no config file provided, generate from env vars
-        if [ "$CONFIG_FILE" = "-config" ] && [ ! -f "$3" ]; then
-            echo "📝 Generating SDN config from environment variables..."
-            generate_sdn_config
-            generate_insecure_certs
-            mkdir -p "${DATA_DIR:-./data}"
-            exec /app/qumo sdn -config /tmp/config.sdn.yaml
-        else
-            generate_insecure_certs
-            mkdir -p "${DATA_DIR:-./data}"
             exec /app/qumo "$@"
         fi
         ;;

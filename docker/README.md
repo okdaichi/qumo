@@ -7,16 +7,16 @@ Files
 - `docker-entrypoint.sh` — entrypoint used in the image
 - `docker-compose.yml` — local build + compose example
 - `docker-compose.external.yml` — compose for external deployment
-- `docker-compose.simple.yml` — demo environment (SDN + 3 relays)
+- `docker-compose.simple.yml` — demo environment (3 peer-connected relays)
 
 Quick start (demo)
 
 ```bash
-# Start demo (SDN + 3 relays)
+# Start demo (3 relays)
 docker compose -f docker/docker-compose.simple.yml up
 
-# View topology
-curl http://localhost:8090/graph | jq
+# Check relay health
+curl http://localhost:8080/health
 
 # Stop demo
 docker compose -f docker/docker-compose.simple.yml down

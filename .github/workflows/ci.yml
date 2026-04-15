@@ -53,7 +53,7 @@ jobs:
         run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
 
       - name: Upload coverage to Codecov
-        if: matrix.go-version == '1.21'
+        if: matrix.go-version == '1.26'
         uses: codecov/codecov-action@v5
         with:
           files: ./coverage.out
@@ -70,14 +70,14 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: '1.21'
+          go-version: '1.26'
           cache: true
 
-      - name: Build relay
-        run: go build -v -o bin/qumo-relay ./cmd/qumo-relay
+      - name: Build
+        run: go build -v -o bin/qumo .
 
       - name: Check binary
-        run: ./bin/qumo-relay --help || echo "Binary created successfully"
+        run: ./bin/qumo version
 
   security:
     name: Security Scan

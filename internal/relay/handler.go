@@ -2,117 +2,158 @@ package relay
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/okdaichi/gomoqt/moqt"
+	"golang.org/x/sync/singleflight"
 )
 
 // Optimized timeout for best CPU/latency tradeoff (based on benchmarks)
 var NotifyTimeout = 1 * time.Millisecond
 
-var _ moqt.TrackHandler = (*RelayHandler)(nil)
+var errTrackNotFound = errors.New("track not found")
 
-type RelayHandler struct {
-	Announcement *moqt.Announcement
-	Session      *moqt.Session
+var _ moqt.TrackHandler = (*relayHandler)(nil)
 
-	GroupCacheSize int
+type relayHandler struct {
+	announcement *moqt.Announcement
+	session      *moqt.Session
 
-	FramePool *FramePool
+	tracks  *trackManager
+	flights singleflight.Group
 
-	relaying sync.Map // moqt.TrackName → *trackDistributor
+	ctx context.Context
 }
 
-// newRelayHandler creates a RelayHandler with the given parameters. The
-// Announcement may be nil; callers (e.g. server.relay) will set it later if
-// necessary. A zero-valued GroupCacheSize or nil FramePool is acceptable (the
-// handler will fall back to defaults).
-func newRelayHandler(ann *moqt.Announcement, sess *moqt.Session, cacheSize int, pool *FramePool) *RelayHandler {
-	return &RelayHandler{
-		Announcement:   ann,
-		Session:        sess,
-		GroupCacheSize: cacheSize,
-		FramePool:      pool,
+func newRelayHandler(ann *moqt.Announcement, sess *moqt.Session) *relayHandler {
+	if sess == nil || ann == nil {
+		return nil
 	}
+
+	h := &relayHandler{
+		announcement: ann,
+		session:      sess,
+		tracks:       newTrackManager(),
+		ctx:          sess.Context(),
+	}
+	return h
 }
 
-func (h *RelayHandler) ServeTrack(tw *moqt.TrackWriter) {
+func (h *relayHandler) ServeTrack(tw *moqt.TrackWriter) {
 	logger := slog.With(
 		"broadcast_path", tw.BroadcastPath,
 		"track_name", tw.TrackName,
 	)
 
 	// Fast path: reuse existing distributor
-	if v, ok := h.relaying.Load(tw.TrackName); ok {
-		v.(*trackDistributor).egress(tw)
+	if d, ok := h.tracks.load(tw.TrackName); ok {
+		d.egress(tw)
 		return
 	}
 
-	// Slow path: subscribe upstream (no lock held)
-	tr := h.subscribe(tw.TrackName)
-	if tr == nil {
-		tw.CloseWithError(moqt.TrackNotFoundErrorCode)
-		logger.Warn("Track not found, closing track writer")
+	// Dedup: only one upstream subscribe per track name at a time
+	ch := h.flights.DoChan(string(tw.TrackName), func() (any, error) {
+		d := h.subscribe(tw.TrackName)
+		if d == nil {
+			return nil, errTrackNotFound
+		}
+		return d, nil
+	})
+
+	select {
+	case result := <-ch:
+		if result.Err != nil {
+			tw.CloseWithError(moqt.SubscribeErrorCodeNotFound)
+			logger.Warn("Track not found, closing track writer")
+			return
+		}
+		logger.Debug("Relaying track")
+		result.Val.(*trackDistributor).egress(tw)
+	case <-tw.Context().Done():
+		// Client unsubscribed before we could subscribe upstream - just return
 		return
 	}
-
-	// Atomic store: if another goroutine stored first, use theirs
-	if actual, loaded := h.relaying.LoadOrStore(tw.TrackName, tr); loaded {
-		tr.close()
-		tr = actual.(*trackDistributor)
-	}
-
-	logger.Debug("Relaying track")
-
-	tr.egress(tw)
 }
 
-func (h *RelayHandler) subscribe(name moqt.TrackName) *trackDistributor {
-	if h.Session == nil {
+func (h *relayHandler) subscribe(name moqt.TrackName) *trackDistributor {
+	if d, ok := h.tracks.load(name); ok {
+		return d
+	}
+
+	session := h.session
+	if session == nil {
 		return nil
 	}
 
-	if h.Announcement == nil {
+	announcement := h.announcement
+	if announcement == nil {
 		return nil
 	}
-	if !h.Announcement.IsActive() {
+	if !announcement.IsActive() {
 		return nil
 	}
 
-	src, err := h.Session.Subscribe(h.Announcement.BroadcastPath(), name, nil)
+	src, err := session.Subscribe(context.Background(), announcement.BroadcastPath(), name, nil)
 	if err != nil {
 		return nil
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	d := newTrackDistributor(name, h.tracks)
 
-	d := &trackDistributor{
-		ring:        newGroupRing(h.GroupCacheSize, h.FramePool),
-		subscribers: make(map[chan struct{}]struct{}),
-		onClose: func() {
-			// Cancel ingestion context
-			cancel()
+	go d.ingest(src)
 
-			// Remove from relaying map
-			h.relaying.Delete(name)
-		},
-	}
-
-	go d.ingest(ctx, src)
+	h.tracks.store(name, d)
 
 	return d
 }
 
-type trackDistributor struct {
-	ring *groupRing
+// trackManager manages the set of active track distributors.
+type trackManager struct {
+	m sync.Map // moqt.TrackName → *trackDistributor
+}
 
-	// Broadcast channel pattern: each subscriber gets its own notification channel
+func newTrackManager() *trackManager {
+	return &trackManager{}
+}
+
+func (tm *trackManager) load(name moqt.TrackName) (*trackDistributor, bool) {
+	v, ok := tm.m.Load(name)
+	if !ok {
+		return nil, false
+	}
+	return v.(*trackDistributor), true
+}
+
+func (tm *trackManager) store(name moqt.TrackName, d *trackDistributor) {
+	tm.m.Store(name, d)
+}
+
+func (tm *trackManager) remove(name moqt.TrackName, d *trackDistributor) {
+	tm.m.CompareAndDelete(name, d)
+}
+
+type trackDistributor struct {
+	name    moqt.TrackName
+	ring    *groupRing
+	manager *trackManager
+
 	mu          sync.RWMutex
 	subscribers map[chan struct{}]struct{}
 
-	onClose func()
+	done chan struct{} // closed when ingest returns
+}
+
+func newTrackDistributor(name moqt.TrackName, manager *trackManager) *trackDistributor {
+	return &trackDistributor{
+		name:        name,
+		ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
+		manager:     manager,
+		subscribers: make(map[chan struct{}]struct{}),
+		done:        make(chan struct{}),
+	}
 }
 
 func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
@@ -181,7 +222,7 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 						)
 					}
 					if err := gw.WriteFrame(frame); err != nil {
-						gw.Close()
+						_ = gw.Close()
 						return
 					}
 					frameIdx++
@@ -200,13 +241,16 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 					// New frame may be available
 				case <-time.After(NotifyTimeout):
 					// Poll timeout
+				case <-d.done:
+					_ = gw.Close()
+					return
 				case <-twCtx.Done():
-					gw.Close()
+					_ = gw.Close()
 					return
 				}
 			}
 
-			gw.Close()
+			_ = gw.Close()
 			continue
 		}
 
@@ -216,16 +260,14 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 			// New group available, retry immediately
 		case <-time.After(NotifyTimeout):
 			// Timeout fallback (1ms for optimal CPU/latency balance)
+		case <-d.done:
+			// Distributor shut down (upstream ended)
+			return
 		case <-twCtx.Done():
 			// Client disconnected or relay shutdown
 			return
 		}
 	}
-}
-
-func (d *trackDistributor) close() {
-	// d.src.Close()
-	d.onClose()
 }
 
 // subscribe registers a new subscriber and returns its notification channel
@@ -246,28 +288,29 @@ func (d *trackDistributor) unsubscribe(ch chan struct{}) {
 	delete(d.subscribers, ch)
 }
 
-func (d *trackDistributor) ingest(ctx context.Context, src *moqt.TrackReader) {
-	defer d.close()
+func (d *trackDistributor) ingest(src *moqt.TrackReader) {
+	defer d.manager.remove(d.name, d)
+	defer close(d.done)
 
 	for {
-		gr, err := src.AcceptGroup(ctx)
+		gr, err := src.AcceptGroup(context.Background())
 		if err != nil {
 			slog.Debug("ingest stopped", "error", err)
 			return
 		}
 
-		// Pass notification callback to ring.add() for frame-level notifications
-		d.ring.add(gr, func() {
-			// Broadcast notification for each frame (RLock only, non-blocking)
-			d.mu.RLock()
-			for ch := range d.subscribers {
-				select {
-				case ch <- struct{}{}:
-				default:
-					// Channel full, subscriber will wake up on timeout
-				}
-			}
-			d.mu.RUnlock()
-		})
+		d.ring.add(gr, d.broadcast)
 	}
+}
+
+// broadcast notifies all subscribers that new data is available.
+func (d *trackDistributor) broadcast() {
+	d.mu.RLock()
+	for ch := range d.subscribers {
+		select {
+		case ch <- struct{}{}:
+		default:
+		}
+	}
+	d.mu.RUnlock()
 }

@@ -20,7 +20,7 @@ func TestPrintUsage_WritesHelpToStderr(t *testing.T) {
 
 	printUsage()
 
-	w.Close()
+	_ = w.Close()
 	var buf bytes.Buffer
 	_, err = buf.ReadFrom(r)
 	require.NoError(t, err)
@@ -40,18 +40,15 @@ func TestPrintUsage_WritesHelpToStderr(t *testing.T) {
 
 func TestRun_Unit(t *testing.T) {
 	origRelay := runRelay
-	origSDN := runSDN
 	origRTMP := runRTMP
 	defer func() {
 		runRelay = origRelay
-		runSDN = origSDN
 		runRTMP = origRTMP
 	}()
 
 	tests := map[string]struct {
 		args               []string
 		stubRelay          func([]string) error
-		stubSDN            func([]string) error
 		stubRTMP           func([]string) error
 		wantCode           int
 		wantStderrContains []string
@@ -85,17 +82,6 @@ func TestRun_Unit(t *testing.T) {
 			},
 			wantCode: 0,
 		},
-		"sdn success": {
-			args:     []string{"sdn"},
-			stubSDN:  func(_ []string) error { return nil },
-			wantCode: 0,
-		},
-		"sdn error": {
-			args:               []string{"sdn"},
-			stubSDN:            func(_ []string) error { return fmt.Errorf("sdn-fail") },
-			wantCode:           1,
-			wantStderrContains: []string{"error: sdn-fail"},
-		},
 		"rtmp success": {
 			args:     []string{"rtmp"},
 			stubRTMP: func(_ []string) error { return nil },
@@ -116,11 +102,6 @@ func TestRun_Unit(t *testing.T) {
 			} else {
 				runRelay = func([]string) error { return nil }
 			}
-			if tt.stubSDN != nil {
-				runSDN = tt.stubSDN
-			} else {
-				runSDN = func([]string) error { return nil }
-			}
 			if tt.stubRTMP != nil {
 				runRTMP = tt.stubRTMP
 			} else {
@@ -135,7 +116,7 @@ func TestRun_Unit(t *testing.T) {
 
 			code := run(tt.args)
 
-			w.Close()
+			_ = w.Close()
 			var buf bytes.Buffer
 			_, err = buf.ReadFrom(r)
 			require.NoError(t, err)

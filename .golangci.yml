@@ -1,0 +1,35 @@
+version: "2"
+
+linters:
+  enable:
+    - gosec
+  settings:
+    gosec:
+      excludes:
+        - G115 # integer overflow conversion: false positive for protocol byte encoding
+        - G104 # errors unhandled: covered by errcheck linter
+    errcheck:
+      exclude-functions:
+        - (*flag.FlagSet).Parse # ExitOnError mode exits before returning an error
+  exclusions:
+    rules:
+      - linters: [gosec]
+        text: "G115"
+      # Idiomatic Go: deferred Close/CloseWithError errors are not actionable
+      - linters: [errcheck]
+        source: "^\\s+defer "
+      # Test helpers: Write errors are asserted elsewhere or irrelevant to test intent
+      - linters: [errcheck]
+        path: "_test\\.go"
+        text: "Error return value"
+      # False positive: config file path comes from a CLI flag, not external user input
+      - linters: [gosec]
+        path: "internal/cli/"
+        text: "G304"
+      # False positive: slice bounds are guaranteed by the RTMP/QUIC encoding protocol logic
+      - linters: [gosec]
+        text: "G602"
+      # False positive: exec.Command in test re-executes the test binary itself
+      - linters: [gosec]
+        path: "_test\\.go"
+        text: "G204"

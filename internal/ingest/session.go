@@ -68,7 +68,7 @@ func NewSession(trackMux *moqt.TrackMux, path moqt.BroadcastPath) *Session {
 func (s *Session) PushVideo(timestampUS int64, data []byte, isKeyframe bool) {
 	payload := buildMediaFrame(timestampUS, data)
 	f := moqt.NewFrame(len(payload))
-	f.Write(payload)
+	_, _ = f.Write(payload) // TODO: Log write error (currently ignored because frame pool writes never fail)
 	s.handler.video.pushVideo(f, isKeyframe)
 }
 
@@ -79,7 +79,7 @@ func (s *Session) PushVideo(timestampUS int64, data []byte, isKeyframe bool) {
 func (s *Session) PushAudio(timestampUS int64, data []byte) {
 	payload := buildMediaFrame(timestampUS, data)
 	f := moqt.NewFrame(len(payload))
-	f.Write(payload)
+	_, _ = f.Write(payload)
 	s.handler.audio.pushAudio(f)
 }
 
@@ -88,7 +88,7 @@ func (s *Session) PushAudio(timestampUS int64, data []byte) {
 // resolution, sample rate, etc.).
 func (s *Session) PublishCatalog(catalogJSON []byte) {
 	f := moqt.NewFrame(len(catalogJSON))
-	f.Write(catalogJSON)
+	_, _ = f.Write(catalogJSON)
 	s.handler.catalog.pushCatalog(f)
 }
 

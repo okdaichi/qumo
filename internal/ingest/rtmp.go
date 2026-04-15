@@ -55,7 +55,7 @@ func (s *RTMPServer) ListenAndServe(ctx context.Context) error {
 	// Close the listener when ctx is cancelled so Accept unblocks.
 	go func() {
 		<-ctx.Done()
-		ln.Close()
+		_ = ln.Close()
 	}()
 
 	for {
@@ -101,7 +101,7 @@ func (s *RTMPServer) Shutdown(ctx context.Context) error {
 
 	// Stop accepting new connections.
 	if ln != nil {
-		ln.Close()
+		_ = ln.Close()
 	}
 
 	// Wait for active connections or ctx cancellation.
@@ -116,7 +116,7 @@ func (s *RTMPServer) Shutdown(ctx context.Context) error {
 		return nil
 	case <-ctx.Done():
 		// Force-close remaining connections.
-		s.Close()
+		_ = s.Close()
 		return ctx.Err()
 	}
 }

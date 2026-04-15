@@ -3,12 +3,11 @@ package relay
 import (
 	"context"
 	"crypto/tls"
-	"net/http"
 	"testing"
 	"time"
 
 	"github.com/okdaichi/gomoqt/moqt"
-	"github.com/okdaichi/gomoqt/quic"
+	"github.com/quic-go/quic-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -18,7 +17,7 @@ func TestServer_Init(t *testing.T) {
 	t.Run("init with TLS config", func(t *testing.T) {
 		server := &Server{
 			Addr:      "localhost:4433",
-			TLSConfig: &tls.Config{},
+			TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12},
 		}
 
 		defer func() {
@@ -41,13 +40,13 @@ func TestServer_Init(t *testing.T) {
 				t.Error("Expected panic but got none")
 			}
 		}()
-		server.ListenAndServe()
+		_ = server.ListenAndServe()
 	})
 
 	t.Run("init with custom config", func(t *testing.T) {
 		server := &Server{
 			Addr:      "localhost:4433",
-			TLSConfig: &tls.Config{},
+			TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12},
 			Config: &Config{
 				NodeID:         "node-1",
 				Region:         "us-west",
@@ -70,7 +69,7 @@ func TestServer_Init(t *testing.T) {
 func TestServer_Init_Idempotent(t *testing.T) {
 	server := &Server{
 		Addr:      "localhost:4433",
-		TLSConfig: &tls.Config{},
+		TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12},
 	}
 
 	server.init()
@@ -89,7 +88,7 @@ func TestServer_Init_Idempotent(t *testing.T) {
 func TestServer_Close_WithoutInit(t *testing.T) {
 	server := &Server{
 		Addr:      "localhost:4433",
-		TLSConfig: &tls.Config{},
+		TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12},
 	}
 
 	err := server.Close()
@@ -100,7 +99,7 @@ func TestServer_Close_WithoutInit(t *testing.T) {
 func TestServer_Close_AfterInit(t *testing.T) {
 	server := &Server{
 		Addr:      "localhost:4433",
-		TLSConfig: &tls.Config{},
+		TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12},
 	}
 	server.init()
 
@@ -112,7 +111,7 @@ func TestServer_Close_AfterInit(t *testing.T) {
 func TestServer_Shutdown_WithoutInit(t *testing.T) {
 	server := &Server{
 		Addr:      "localhost:4433",
-		TLSConfig: &tls.Config{},
+		TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12},
 	}
 	ctx := context.Background()
 
@@ -124,7 +123,7 @@ func TestServer_Shutdown_WithoutInit(t *testing.T) {
 func TestServer_Shutdown_AfterInit(t *testing.T) {
 	server := &Server{
 		Addr:      "localhost:4433",
-		TLSConfig: &tls.Config{},
+		TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12},
 	}
 	server.init()
 	ctx := context.Background()
@@ -137,7 +136,7 @@ func TestServer_Shutdown_AfterInit(t *testing.T) {
 func TestServer_Shutdown_WithTimeout(t *testing.T) {
 	server := &Server{
 		Addr:      "localhost:4433",
-		TLSConfig: &tls.Config{},
+		TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12},
 	}
 	server.init()
 
@@ -152,7 +151,7 @@ func TestServer_Shutdown_WithTimeout(t *testing.T) {
 func TestServer_Muxes_SeparateInstances(t *testing.T) {
 	server := &Server{
 		Addr:      "localhost:4433",
-		TLSConfig: &tls.Config{},
+		TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12},
 	}
 	server.init()
 
@@ -171,7 +170,7 @@ func TestServer_ListenAndServe_WithNilTLSConfig(t *testing.T) {
 			t.Error("Expected panic but got none")
 		}
 	}()
-	server.ListenAndServe()
+	_ = server.ListenAndServe()
 }
 
 // TestServer_Config_Persistence tests that provided config is preserved
@@ -185,7 +184,7 @@ func TestServer_Config_Persistence(t *testing.T) {
 
 	server := &Server{
 		Addr:      "localhost:4433",
-		TLSConfig: &tls.Config{},
+		TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12},
 		Config:    customConfig,
 	}
 	server.init()
@@ -201,7 +200,7 @@ func TestServer_Config_Persistence(t *testing.T) {
 func TestServer_Init_Concurrent(t *testing.T) {
 	server := &Server{
 		Addr:      "localhost:4433",
-		TLSConfig: &tls.Config{},
+		TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12},
 	}
 
 	done := make(chan bool)
@@ -223,7 +222,7 @@ func TestServer_Init_Concurrent(t *testing.T) {
 func TestServer_Close_Idempotent(t *testing.T) {
 	server := &Server{
 		Addr:      "localhost:4433",
-		TLSConfig: &tls.Config{},
+		TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12},
 	}
 	server.init()
 
@@ -236,7 +235,7 @@ func TestServer_Close_Idempotent(t *testing.T) {
 func TestServer_Shutdown_Idempotent(t *testing.T) {
 	server := &Server{
 		Addr:      "localhost:4433",
-		TLSConfig: &tls.Config{},
+		TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12},
 	}
 	server.init()
 	ctx := context.Background()
@@ -257,7 +256,7 @@ func TestServer_Config_CustomValues(t *testing.T) {
 
 	server := &Server{
 		Addr:      "localhost:4433",
-		TLSConfig: &tls.Config{},
+		TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12},
 		Config:    customConfig,
 	}
 	server.init()
@@ -271,7 +270,7 @@ func TestServer_Config_CustomValues(t *testing.T) {
 func TestServer_Mux_Initialization(t *testing.T) {
 	server := &Server{
 		Addr:      "localhost:4433",
-		TLSConfig: &tls.Config{},
+		TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12},
 	}
 	server.init()
 
@@ -283,7 +282,7 @@ func TestServer_Mux_CustomTrackMux(t *testing.T) {
 	customMux := moqt.NewTrackMux()
 	server := &Server{
 		Addr:      "localhost:4433",
-		TLSConfig: &tls.Config{},
+		TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12},
 	}
 	server.TrackMux = customMux
 	server.init()
@@ -295,7 +294,7 @@ func TestServer_Mux_CustomTrackMux(t *testing.T) {
 func TestServer_Close_WithNilComponents(t *testing.T) {
 	server := &Server{
 		Addr:      "localhost:4433",
-		TLSConfig: &tls.Config{},
+		TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12},
 	}
 
 	err := server.Close()
@@ -306,7 +305,7 @@ func TestServer_Close_WithNilComponents(t *testing.T) {
 func TestServer_Shutdown_WithNilComponents(t *testing.T) {
 	server := &Server{
 		Addr:      "localhost:4433",
-		TLSConfig: &tls.Config{},
+		TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12},
 	}
 	ctx := context.Background()
 
@@ -319,7 +318,7 @@ func TestServer_Init_WithQUICConfig(t *testing.T) {
 	quicConfig := &quic.Config{}
 	server := &Server{
 		Addr:      "localhost:4433",
-		TLSConfig: &tls.Config{},
+		TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12},
 	}
 	server.QUICConfig = quicConfig
 	server.init()
@@ -331,7 +330,7 @@ func TestServer_Init_WithQUICConfig(t *testing.T) {
 func TestServer_Init_MultipleCallsWithDifferentConfigs(t *testing.T) {
 	server := &Server{
 		Addr:      "localhost:4433",
-		TLSConfig: &tls.Config{},
+		TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12},
 		Config: &Config{
 			NodeID: "node-1",
 		},
@@ -355,29 +354,6 @@ func TestServer_Init_MultipleCallsWithDifferentConfigs(t *testing.T) {
 	assert.Equal(t, "node-2", server.Config.NodeID, "Config assignment should work even after init")
 }
 
-// TestServer_CheckHTTPOrigin tests CheckHTTPOrigin configuration
-func TestServer_CheckHTTPOrigin(t *testing.T) {
-	called := false
-	originFunc := func(r *http.Request) bool {
-		called = true
-		return true
-	}
-
-	server := &Server{
-		Addr:      "localhost:4433",
-		TLSConfig: &tls.Config{},
-	}
-	server.CheckHTTPOrigin = originFunc
-	server.init()
-
-	require.NotNil(t, server.CheckHTTPOrigin, "CheckHTTPOrigin should be preserved")
-
-	// Test that the function works
-	result := server.CheckHTTPOrigin(nil)
-	assert.True(t, called, "CheckHTTPOrigin function should be callable")
-	assert.True(t, result, "CheckHTTPOrigin should return true")
-}
-
 // TestServer_Address_Formats tests various address formats
 func TestServer_Address_Formats(t *testing.T) {
 	tests := []struct {
@@ -396,7 +372,7 @@ func TestServer_Address_Formats(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			server := &Server{
 				Addr:      tt.addr,
-				TLSConfig: &tls.Config{},
+				TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12},
 			}
 			server.init()
 

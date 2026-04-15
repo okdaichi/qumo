@@ -3,13 +3,13 @@ package relay
 import (
 	"context"
 	"crypto/tls"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/okdaichi/gomoqt/moqt"
-	"github.com/okdaichi/gomoqt/quic"
+	"github.com/quic-go/quic-go"
 )
 
 type Server struct {
@@ -18,20 +18,13 @@ type Server struct {
 	QUICConfig *quic.Config
 	Config     *Config
 
-	CheckHTTPOrigin func(r *http.Request) bool
-
 	TrackMux *moqt.TrackMux
-
-	// AnnounceRegistrar pushes announcements to the SDN controller.
-	// If nil, auto-announce is disabled.
-	AnnounceRegistrar AnnounceRegistrar
 
 	server *moqt.Server
 
 	initOnce sync.Once
 
 	statusHandler *statusHandler
-	peerRegistry  *peerRegistry
 }
 
 func (s *Server) init() {
@@ -41,7 +34,6 @@ func (s *Server) init() {
 		}
 
 		s.statusHandler = newStatusHandler()
-		s.peerRegistry = newPeerRegistry()
 	})
 }
 
@@ -59,25 +51,14 @@ func (s *Server) ListenAndServe() error {
 
 	s.init()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
 	s.server = &moqt.Server{
-		Addr:            s.Addr,
-		TLSConfig:       s.TLSConfig,
-		QUICConfig:      s.QUICConfig,
-		CheckHTTPOrigin: s.CheckHTTPOrigin,
-		SetupHandler: moqt.SetupHandlerFunc(func(w moqt.SetupResponseWriter, r *moqt.SetupRequest) {
-			downstream, err := moqt.Accept(w, r, s.TrackMux)
-			if err != nil {
-				slog.Error("failed to accept connection", "err", err)
-				return
-			}
+		Addr:       s.Addr,
+		TLSConfig:  s.TLSConfig,
+		QUICConfig: s.QUICConfig,
+		Handler: moqt.HandleFunc(func(sess *moqt.Session) {
+			defer sess.CloseWithError(moqt.NoError, moqt.NoError.String())
 
-			defer downstream.CloseWithError(moqt.NoError, moqt.SessionErrorText(moqt.NoError))
-
-			err = s.relay(ctx, downstream)
-
+			err := s.relay(sess)
 			if err != nil {
 				slog.Warn("relay session ended", "err", err)
 				return
@@ -87,16 +68,6 @@ func (s *Server) ListenAndServe() error {
 
 	// Start server - this will block until server closes
 	return s.server.ListenAndServe()
-}
-
-func (s *Server) HandleWebTransport(w http.ResponseWriter, r *http.Request) error {
-	s.init()
-
-	if s.server == nil {
-		return fmt.Errorf("relay.Server: ListenAndServe has not been called")
-	}
-
-	return s.server.HandleWebTransport(w, r)
 }
 
 func (s *Server) Close() error {
@@ -113,14 +84,104 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	s.init()
 
 	if s.server != nil {
-		// s.server.Shutdown already respects ctx cancellation.
 		return s.server.Shutdown(ctx)
 	}
 
 	return nil
 }
 
-func (s *Server) relay(ctx context.Context, sess *moqt.Session) error {
+// RouteWebTransport registers the WebTransport MoQ endpoint at path on mux.
+// Browser and HTTP/3 clients connect via this handler; sessions are handled
+// identically to native QUIC connections.
+func (s *Server) RouteWebTransport(path string, mux *http.ServeMux) {
+	s.init()
+	mux.Handle(path, &moqt.WebTransportHandler{
+		TrackMux:             s.TrackMux,
+		ApplicationProtocols: []string{moqt.NextProtoMOQ},
+		Handler: moqt.HandleFunc(func(sess *moqt.Session) {
+			defer sess.CloseWithError(moqt.NoError, moqt.NoError.String())
+			if err := s.relay(sess); err != nil {
+				slog.Warn("relay session ended", "err", err)
+			}
+		}),
+	})
+}
+
+// ConnectPeers dials configured peer relays and discovers their announcements
+// via ANNOUNCE_PLEASE. Received announcements are registered on the local
+// TrackMux so that subscribers can transparently access remote content.
+// It blocks until ctx is cancelled.
+func (s *Server) ConnectPeers(ctx context.Context) {
+	s.init()
+
+	peers := s.Config.Peers
+	if len(peers) == 0 {
+		return
+	}
+
+	dialer := &moqt.Dialer{
+		TLSConfig:  s.TLSConfig,
+		QUICConfig: s.QUICConfig,
+	}
+
+	var wg sync.WaitGroup
+	for _, peer := range peers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s.maintainPeer(ctx, dialer, peer)
+		}()
+	}
+
+	wg.Wait()
+}
+
+// maintainPeer keeps a connection to a peer alive, reconnecting on failure.
+func (s *Server) maintainPeer(ctx context.Context, dialer *moqt.Dialer, peer Peer) {
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+
+		slog.Info("connecting to peer", "address", peer.Address)
+
+		sess, err := dialer.Dial(ctx, peer.Address, s.TrackMux)
+		if err != nil {
+			slog.Warn("failed to dial peer", "address", peer.Address, "error", err)
+			if !waitRetry(ctx, 5*time.Second) {
+				return
+			}
+			continue
+		}
+
+		slog.Info("peer connected", "address", peer.Address)
+
+		err = s.relay(sess)
+		if err != nil {
+			slog.Warn("peer session ended", "address", peer.Address, "error", err)
+		}
+		_ = sess.CloseWithError(moqt.NoError, moqt.NoError.String())
+
+		if !waitRetry(ctx, 5*time.Second) {
+			return
+		}
+	}
+}
+
+// waitRetry waits for the specified duration or until ctx is cancelled.
+// Returns false if ctx was cancelled.
+func waitRetry(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
+	}
+}
+
+func (s *Server) relay(sess *moqt.Session) error {
 	slog.Info("session established", "remote", sess.RemoteAddr())
 	defer slog.Info("session closed", "remote", sess.RemoteAddr())
 
@@ -129,25 +190,13 @@ func (s *Server) relay(ctx context.Context, sess *moqt.Session) error {
 		defer s.statusHandler.decrementConnections()
 	}
 
-	// Register peer for topology tracking
-	if s.peerRegistry != nil {
-		peerID := s.peerRegistry.register(sess)
-		defer s.peerRegistry.deregister(peerID)
-	}
-
-	// TODO: measure accept time
-	peer, err := sess.AcceptAnnounce("/")
+	announced, err := sess.AcceptAnnounce("/")
 	if err != nil {
 		return err
 	}
 
-	for ann := range peer.Announcements(ctx) {
-		// Push to SDN announce table if configured
-		if s.AnnounceRegistrar != nil {
-			s.AnnounceRegistrar.Register(string(ann.BroadcastPath()))
-		}
-
-		handler := newRelayHandler(ann, sess, DefaultGroupCacheSize, DefaultFramePool)
+	for ann := range announced.Announcements(context.Background()) {
+		handler := newRelayHandler(ann, sess)
 
 		s.TrackMux.Announce(ann, handler)
 	}

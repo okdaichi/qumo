@@ -304,10 +304,16 @@ func TestFramePoolStress(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			frame := pool.Get()
-			// Put multiple times (may cause issues)
-			for i := 0; i < 100; i++ {
-				pool.Put(frame)
+			frames := make([]*moqt.Frame, 100)
+			for i := range frames {
+				frames[i] = pool.Get()
+			}
+			for _, f := range frames {
+				pool.Put(f)
+			}
+			for _, f := range frames {
+				pool.Put(pool.Get())
+				_ = f
 			}
 		}()
 

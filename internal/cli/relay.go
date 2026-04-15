@@ -18,10 +18,9 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/okdaichi/gomoqt/moqt"
-	"github.com/okdaichi/gomoqt/quic"
 	"github.com/okdaichi/qumo/internal/relay"
-	"github.com/okdaichi/qumo/internal/sdn"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/quic-go/quic-go"
 	"gopkg.in/yaml.v3"
 )
 
@@ -30,7 +29,6 @@ type config struct {
 	CertFile    string
 	KeyFile     string
 	RelayConfig relay.Config
-	SDNConfig   *sdn.ClientConfig // nil if auto-announce is disabled
 }
 
 func RunRelay(args []string) error {
@@ -66,55 +64,34 @@ func RunRelay(args []string) error {
 		},
 		Config:   &config.RelayConfig,
 		TrackMux: trackMux,
-		CheckHTTPOrigin: func(r *http.Request) bool {
-			return true //TODO:
-		},
 	}
 
-	// Set up SDN auto-announce client if configured
-	if config.SDNConfig != nil {
-		var err error
-		sdnClient, err := sdn.NewClient(*config.SDNConfig)
-		if err != nil {
-			return fmt.Errorf("failed to create SDN client: %w", err)
-		}
-		relayServer.AnnounceRegistrar = sdnClient
-		go sdnClient.Run(ctx)
-
-		// Start remote fetcher to discover and subscribe to remote broadcasts
-		fetcher := &relay.RemoteFetcher{
-			SDNClient:      sdnClient,
-			TrackMux:       trackMux,
-			TLSConfig:      tlsConfig,
-			GroupCacheSize: config.RelayConfig.GroupCacheSize,
-		}
-		go fetcher.Run(ctx)
-	}
-
-	// All handlers are registered on DefaultServeMux.
-	// moqt.Server uses DefaultServeMux internally for HTTP/3 QUIC routing,
-	// and the TCP httpServer below also uses it (Handler: nil).
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if err := relayServer.HandleWebTransport(w, r); err != nil {
-			slog.Error("failed to handle web transport", "err", err)
-		}
-	})
-	http.Handle("/health", &healthHandler{
+	httpMux := http.NewServeMux()
+	wtPath := "/"
+	relayServer.RouteWebTransport(wtPath, httpMux)
+	httpMux.Handle("/health", &healthHandler{
 		statusFunc: relayServer.Status,
 	})
-	http.Handle("/metrics", promhttp.Handler())
+	httpMux.Handle("/metrics", promhttp.Handler())
 
 	httpServer := &http.Server{
 		Addr:              config.Address,
+		Handler:           httpMux,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	log.Println("	Host    :", config.Address)
-	log.Println("	Node ID :", config.RelayConfig.NodeID)
-	log.Println("	Region  :", config.RelayConfig.Region)
-	log.Println("	/       : WebTransport endpoint")
-	log.Println("	/health : liveness/readiness probe")
-	log.Println("	/metrics: Prometheus metrics")
+	log.Printf("\t%-8s: %s\n", "Host", config.Address)
+	log.Printf("\t%-8s: %s\n", "Node ID", config.RelayConfig.NodeID)
+	log.Printf("\t%-8s: %s\n", "Region", config.RelayConfig.Region)
+	log.Printf("\t%-8s: WebTransport endpoint\n", wtPath)
+	log.Printf("\t%-8s: liveness/readiness probe\n", "/health")
+	log.Printf("\t%-8s: Prometheus metrics\n", "/metrics")
+	for _, p := range config.RelayConfig.Peers {
+		log.Printf("\t%-8s: %s\n", "Peer", p.Address)
+	}
+
+	// Start peer connections in background
+	go relayServer.ConnectPeers(ctx)
 
 	// Delegate to testable helper that runs servers until ctx is cancelled
 	if err := serveComponents(ctx, relayServer, httpServer, 10*time.Second); err != nil {
@@ -230,18 +207,9 @@ func loadConfig(filename string) (*config, error) {
 			GroupCacheSize int    `yaml:"group_cache_size"`
 			FrameCapacity  int    `yaml:"frame_capacity"`
 		} `yaml:"relay"`
-		SDN *struct {
-			URL               string             `yaml:"url"`
-			RelayName         string             `yaml:"relay_name"`
-			HeartbeatInterval int                `yaml:"heartbeat_interval_sec"`
-			Address           string             `yaml:"address"`
-			Neighbors         map[string]float64 `yaml:"neighbors"`
-			TLS               *struct {
-				CertFile string `yaml:"cert_file"`
-				KeyFile  string `yaml:"key_file"`
-				CAFile   string `yaml:"ca_file"`
-			} `yaml:"tls"`
-		} `yaml:"sdn"`
+		Peers []struct {
+			Address string `yaml:"address"`
+		} `yaml:"peers"`
 	}
 
 	file, err := os.Open(filename)
@@ -264,6 +232,11 @@ func loadConfig(filename string) (*config, error) {
 		ymlConfig.Relay.GroupCacheSize = 100
 	}
 
+	var peers []relay.Peer
+	for _, p := range ymlConfig.Peers {
+		peers = append(peers, relay.Peer{Address: p.Address})
+	}
+
 	config := &config{
 		Address:  ymlConfig.Server.Address,
 		CertFile: ymlConfig.Server.CertFile,
@@ -273,32 +246,8 @@ func loadConfig(filename string) (*config, error) {
 			Region:         ymlConfig.Relay.Region,
 			FrameCapacity:  ymlConfig.Relay.FrameCapacity,
 			GroupCacheSize: ymlConfig.Relay.GroupCacheSize,
+			Peers:          peers,
 		},
-	}
-
-	// Parse optional SDN auto-announce config
-	if ymlConfig.SDN != nil && ymlConfig.SDN.URL != "" {
-		sdnCfg := &sdn.ClientConfig{
-			URL:       ymlConfig.SDN.URL,
-			RelayName: ymlConfig.SDN.RelayName,
-			Region:    ymlConfig.Relay.Region,
-			Address:   ymlConfig.SDN.Address,
-			Neighbors: ymlConfig.SDN.Neighbors,
-		}
-		if sdnCfg.RelayName == "" {
-			sdnCfg.RelayName = ymlConfig.Relay.NodeID
-		}
-		if ymlConfig.SDN.HeartbeatInterval > 0 {
-			sdnCfg.HeartbeatInterval = time.Duration(ymlConfig.SDN.HeartbeatInterval) * time.Second
-		}
-		if ymlConfig.SDN.TLS != nil {
-			sdnCfg.TLS = &sdn.TLSConfig{
-				CertFile: ymlConfig.SDN.TLS.CertFile,
-				KeyFile:  ymlConfig.SDN.TLS.KeyFile,
-				CAFile:   ymlConfig.SDN.TLS.CAFile,
-			}
-		}
-		config.SDNConfig = sdnCfg
 	}
 
 	return config, nil
@@ -311,8 +260,9 @@ func setupTLS(certFile, keyFile string) (*tls.Config, error) {
 	}
 
 	return &tls.Config{
+		MinVersion:   tls.VersionTLS12,
 		Certificates: []tls.Certificate{cert},
-		NextProtos:   []string{"h3", "moq-00"}, // HTTP/3 for WebTransport, MOQ native QUIC
+		NextProtos:   []string{"h3", moqt.NextProtoMOQ}, // HTTP/3 for WebTransport, MOQ native QUIC
 	}, nil
 }
 
@@ -336,7 +286,7 @@ func (h *healthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodHead {
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]string{"status": "alive"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "alive"})
 		return
 
 	case "ready":
@@ -366,7 +316,7 @@ func (h *healthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if !ready {
 			response["reason"] = reason
 		}
-		json.NewEncoder(w).Encode(response)
+			_ = json.NewEncoder(w).Encode(response)
 		return
 
 	default:
@@ -402,7 +352,7 @@ func (h *healthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodHead {
 			return
 		}
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 		return
 	}
 }

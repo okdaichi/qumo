@@ -34,6 +34,5 @@ func (fp *FramePool) Get() *moqt.Frame {
 }
 
 func (fp *FramePool) Put(f *moqt.Frame) {
-	f.Reset()
 	fp.pool.Put(f)
 }

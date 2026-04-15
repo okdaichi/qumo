@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.4.0] - 2026-04-15
+
+### Breaking Changes
+
+- **SDN controller removed:** `qumo sdn` subcommand and all SDN-related packages (`internal/sdn`,
+  `internal/topology`) have been removed. Cross-relay content discovery is now handled natively
+  by moq-lite draft-03's ANNOUNCE_PLEASE mechanism.
+- **config.sdn.yaml removed:** No longer needed. Relay-to-relay connectivity is configured via
+  `peers` in `config.relay.yaml`.
+- **ALPN changed from `moq-00` to `moq-lite-03`:** Peers must be upgraded together; mixed
+  deployments with older versions are not supported.
+
+### Added
+
+- **Peer-based announce relay:** Each relay can dial upstream peers (via `peers` config section).
+  On connect, the relay sends `ANNOUNCE_PLEASE "/"` to receive all announcements, then registers
+  them on the local `TrackMux`. Subscribers transparently access remote content without a central
+  controller.
+- **`relay.Config.Peers`:** New config field accepts a list of peer addresses in
+  `moqt://host:port` or `https://host:port` form.
+- **Auto-reconnect:** `ConnectPeers` maintains each peer connection with a 5-second retry loop,
+  recovering from transient network failures.
+- **`docker-entrypoint.sh` PEERS env var:** `PEERS=moqt://relay-b:4433,moqt://relay-c:4433`
+  generates the `peers:` block in the relay config automatically.
+
+### Changed
+
+- **gomoqt upgraded to v0.12.1** (moq-lite draft-03): `moqt.Dialer` replaces the old client
+  API; `Session.AcceptAnnounce` / `AnnouncementReader.Announcements` used for peer discovery.
+- **`docker-compose.simple.yml` rewritten:** Now runs 3 peer-connected relay nodes instead of
+  SDN + 3 relays. Node interconnection is via `PEERS` env var.
+- **CI workflow fixed:** Build job updated to Go 1.26, correct binary path (`./bin/qumo`), and
+  `qumo version` check. Codecov condition corrected to `1.26`.
+- **Dockerfile fixed:** Removed `config.sdn.yaml` COPY (file deleted), corrected
+  `docker-entrypoint.sh` path relative to build context, removed SDN port 8090.
+- **NextProtos updated:** `setupTLS` now uses `moqt.NextProtoMOQ` constant (`"moq-lite-03"`)
+  instead of a hardcoded `"moq-00"` string.
+- `internal/relay/session.go` removed (empty `Session interface{}`).
+
+### Fixed
+
+- `TestIsVideoSequenceHeader`: `0x27 0x00` correctly returns `true` — codec ID is AVC and
+  packet type is sequence header regardless of keyframe bit.
+- `TestRelayHandler_ConcurrentSubscribe`: fixed `newTestRelayHandler` to construct handler
+  directly, bypassing the nil-session guard added to `newRelayHandler`.
+
 ## [v0.3.1] - 2026-03-12
 
 ### Fixed
@@ -96,7 +142,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Basic Mage build automation.
 - CI workflow with test coverage.
 
-[Unreleased]: https://github.com/okdaichi/qumo/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/okdaichi/qumo/compare/v0.4.0...HEAD
+[v0.4.0]: https://github.com/okdaichi/qumo/compare/v0.3.1...v0.4.0
 [v0.3.1]: https://github.com/okdaichi/qumo/compare/v0.3.0...v0.3.1
 [v0.3.0]: https://github.com/okdaichi/qumo/compare/v0.2.0...v0.3.0
 [v0.2.0]: https://github.com/okdaichi/qumo/compare/v0.1.0...v0.2.0
