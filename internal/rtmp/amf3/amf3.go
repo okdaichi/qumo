@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
-	"reflect"
 	"sort"
 	"time"
 )
@@ -248,7 +246,7 @@ func (e *Encoder) encodeObject(obj Object) error {
 		return err
 	}
 
-	traitHeader := int32(0x03) // inline object + inline traits
+	var traitHeader int32
 	if len(obj.Sealed) > 0 {
 		traitHeader = int32((len(obj.Sealed) << 4) | 0x03)
 	} else {
@@ -305,19 +303,6 @@ func (e *Encoder) writeAMF3String(s string) error {
 	}
 	e.stringRefs[s] = len(e.stringRefs)
 	return nil
-}
-
-func (e *Encoder) objectRefKey(v any) uintptr {
-	rv := reflect.ValueOf(v)
-	if !rv.IsValid() {
-		return 0
-	}
-	switch rv.Kind() {
-	case reflect.Map, reflect.Slice, reflect.Pointer:
-		return rv.Pointer()
-	default:
-		return 0
-	}
 }
 
 // Decoder reads AMF3 values.
@@ -700,18 +685,4 @@ func sortedKeys[V any](m map[string]V) []string {
 	}
 	sort.Strings(keys)
 	return keys
-}
-
-func floatToU29Candidate(f float64) (int32, bool) {
-	if math.IsNaN(f) || math.IsInf(f, 0) {
-		return 0, false
-	}
-	i := int64(f)
-	if float64(i) != f {
-		return 0, false
-	}
-	if i < minSignedU29 || i > maxSignedU29 {
-		return 0, false
-	}
-	return int32(i), true
 }

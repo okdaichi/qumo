@@ -85,8 +85,8 @@ func RunRTMP(args []string) error {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
 
-	rtmpSrv.Shutdown(shutdownCtx)
-	moqtSrv.Shutdown(shutdownCtx)
+	_ = rtmpSrv.Shutdown(shutdownCtx)
+	_ = moqtSrv.Shutdown(shutdownCtx)
 
 	return nil
 }
