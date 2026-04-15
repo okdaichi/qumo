@@ -319,12 +319,14 @@ func TestNewIngestHandler(t *testing.T) {
 	require.NotNil(t, h.broadcast)
 	require.NotNil(t, h.video)
 	require.NotNil(t, h.audio)
-	require.NotNil(t, h.cancel)
 }
 
 func TestIngestHandler_Close(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		h, err := newIngestHandler(context.Background())
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		h, err := newIngestHandler(ctx)
 		require.NoError(t, err)
 
 		// Push a video frame so there's a current group.
@@ -341,7 +343,8 @@ func TestIngestHandler_Close(t *testing.T) {
 		// Video group completed.
 		assert.True(t, g.isComplete())
 
-		// Context cancelled.
+		// Context cancelled by caller (Session) — simulate.
+		cancel()
 		select {
 		case <-h.video.ctx.Done():
 		default:
@@ -521,11 +524,11 @@ func TestRegisterVideo(t *testing.T) {
 	require.Len(t, tracks, 1)
 
 	var name string
-	json.Unmarshal(tracks[0]["name"], &name)
+	require.NoError(t, json.Unmarshal(tracks[0]["name"], &name))
 	assert.Equal(t, "video", name)
 
 	var codec string
-	json.Unmarshal(tracks[0]["codec"], &codec)
+	require.NoError(t, json.Unmarshal(tracks[0]["codec"], &codec))
 	assert.Equal(t, "avc1.64001f", codec)
 }
 
@@ -552,11 +555,11 @@ func TestRegisterAudio(t *testing.T) {
 	require.Len(t, tracks, 1)
 
 	var name string
-	json.Unmarshal(tracks[0]["name"], &name)
+	require.NoError(t, json.Unmarshal(tracks[0]["name"], &name))
 	assert.Equal(t, "audio", name)
 
 	var codec string
-	json.Unmarshal(tracks[0]["codec"], &codec)
+	require.NoError(t, json.Unmarshal(tracks[0]["codec"], &codec))
 	assert.Equal(t, "mp4a.40.2", codec)
 }
 

@@ -18,7 +18,7 @@ server:
 ingest:
   ingest_address: ":1935"
 `
-	if err := os.WriteFile(configFile, []byte(yaml), 0o644); err != nil {
+	if err := os.WriteFile(configFile, []byte(yaml), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 
@@ -53,7 +53,7 @@ server:
 ingest:
   rtmp_address: ":1936"
 `
-	if err := os.WriteFile(configFile, []byte(yaml), 0o644); err != nil {
+	if err := os.WriteFile(configFile, []byte(yaml), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 

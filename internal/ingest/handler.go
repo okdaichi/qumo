@@ -35,21 +35,18 @@ type ingestHandler struct {
 	broadcast *msf.Broadcast
 	video     *videoTrack
 	audio     *singleTrack
-	cancel    context.CancelFunc
 	once      sync.Once
 }
 
-func newIngestHandler(parent context.Context) (*ingestHandler, error) {
+func newIngestHandler(ctx context.Context) (*ingestHandler, error) {
 	b, err := msf.NewBroadcast(msf.Catalog{Version: 1})
 	if err != nil {
 		return nil, fmt.Errorf("initializing broadcast: %w", err)
 	}
-	ctx, cancel := context.WithCancel(parent)
 	return &ingestHandler{
 		broadcast: b,
 		video:     newVideoTrack(ctx),
 		audio:     newSingleTrack(ctx),
-		cancel:    cancel,
 	}, nil
 }
 
@@ -62,6 +59,9 @@ func (h *ingestHandler) ServeTrack(tw *moqt.TrackWriter) {
 // registerVideo adds (or replaces) the video track in the broadcast catalog
 // and wires a handler that streams from the video [trackBuffer].
 func (h *ingestHandler) registerVideo(cfg *AVCConfig) error {
+	if cfg == nil {
+		return fmt.Errorf("video config must not be nil")
+	}
 	track := msf.Track{
 		Name:      "video",
 		Packaging: msf.PackagingLOC,
@@ -79,6 +79,9 @@ func (h *ingestHandler) registerVideo(cfg *AVCConfig) error {
 // registerAudio adds (or replaces) the audio track in the broadcast catalog
 // and wires a handler that streams from the audio [trackBuffer].
 func (h *ingestHandler) registerAudio(cfg *AACConfig) error {
+	if cfg == nil {
+		return fmt.Errorf("audio config must not be nil")
+	}
 	track := msf.Track{
 		Name:          "audio",
 		Packaging:     msf.PackagingLOC,
@@ -97,7 +100,6 @@ func (h *ingestHandler) registerAudio(cfg *AACConfig) error {
 func (h *ingestHandler) close() {
 	h.once.Do(func() {
 		h.video.close()
-		h.cancel()
 	})
 }
 
@@ -191,7 +193,7 @@ func (s *singleTrack) serve(tw *moqt.TrackWriter) {
 // that decouples producers (push side) from consumers (serve side).
 type trackBuffer struct {
 	ring []atomic.Pointer[sourceGroup]
-	size int
+	size uint64
 	pos  atomic.Uint64 // monotonically increasing; first group = 1
 
 	subMu       sync.RWMutex
@@ -212,7 +214,7 @@ func (b *trackBuffer) openGroup() *sourceGroup {
 		seq:    moqt.GroupSequence(p),
 		frames: make([]*moqt.Frame, 0, 4),
 	}
-	b.ring[p%uint64(b.size)].Store(g)
+	b.ring[p%b.size].Store(g)
 	return g
 }
 
@@ -258,7 +260,7 @@ func (b *trackBuffer) earliestAvailable() moqt.GroupSequence {
 }
 
 func (b *trackBuffer) get(seq moqt.GroupSequence) *sourceGroup {
-	return b.ring[uint64(seq)%uint64(b.size)].Load()
+	return b.ring[uint64(seq)%b.size].Load()
 }
 
 // --- subscriber egress ---

@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Ingest: migrate to `msf.Broadcast`:** Track routing and catalog management now delegated to
+  `msf.Broadcast` from gomoqt. Video/audio tracks registered via `RegisterTrack()` with MSF
+  metadata; catalog track auto-served. Removed `catalog.go` (`msfCatalog`/`msfTrack`/
+  `buildCatalogJSON`) and `publishCatalog()` helper.
+- **Ingest: `context.Context` adoption:** `newIngestHandler` accepts parent context; `videoTrack`
+  and `singleTrack` hold `context.Context` instead of `<-chan struct{}`; `trackBuffer.serve`
+  takes `context.Context` as first argument.
+- **Ingest: encapsulation improvements:** Added `serve()` methods to `videoTrack`/`singleTrack`
+  to hide `trackBuffer` internals. Replaced `boolPtr`/`int64Ptr` helpers with Go 1.26
+  `new(literal)` syntax.
+- **API change:** `NewSession()` now returns `(*Session, error)`. `Session.PublishCatalog()`
+  removed; replaced by `Session.RegisterVideo(*AVCConfig) error` and
+  `Session.RegisterAudio(*AACConfig) error`.
+
 ## [v0.4.0] - 2026-04-15
 
 ### Breaking Changes
