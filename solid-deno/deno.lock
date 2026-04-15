@@ -1,11 +1,10 @@
 {
   "version": "5",
   "specifiers": {
-    "jsr:@okdaichi/av-nodes@*": "0.9.1",
     "jsr:@okdaichi/av-nodes@~0.9.1": "0.9.1",
     "jsr:@okdaichi/golikejs@0.8": "0.8.0",
     "jsr:@okdaichi/golikejs@0.8.0": "0.8.0",
-    "jsr:@okdaichi/moq@0.11": "0.11.0",
+    "jsr:@okdaichi/moq@~0.12.1": "0.12.1",
     "npm:@deno/vite-plugin@^1.0.6": "1.0.6_vite@7.3.0__@types+node@25.0.3__picomatch@4.0.3_@types+node@25.0.3",
     "npm:@types/node@^25.0.3": "25.0.3",
     "npm:solid-js@^1.9.10": "1.9.10_seroval@1.3.2",
@@ -24,8 +23,8 @@
     "@okdaichi/golikejs@0.8.0": {
       "integrity": "dd1a6418bf53ae80078881e8bfe114e1a666f5e158b7fe2d17d60b34f28edc9a"
     },
-    "@okdaichi/moq@0.11.0": {
-      "integrity": "2ec4921a9bd5f49a8f26c0a16f5bd498e0799a2473eeee09665fadef2d168c59",
+    "@okdaichi/moq@0.12.1": {
+      "integrity": "13706e62a8a4aef42473eab45bba4d2552a985b8aa44cc245dfd4aa00dfd1c32",
       "dependencies": [
         "jsr:@okdaichi/golikejs@0.8.0",
         "npm:zod"
@@ -799,7 +798,7 @@
     "dependencies": [
       "jsr:@okdaichi/av-nodes@~0.9.1",
       "jsr:@okdaichi/golikejs@0.8",
-      "jsr:@okdaichi/moq@0.11"
+      "jsr:@okdaichi/moq@~0.12.1"
     ],
     "packageJson": {
       "dependencies": [
