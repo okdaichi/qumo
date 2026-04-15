@@ -222,7 +222,7 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 						)
 					}
 					if err := gw.WriteFrame(frame); err != nil {
-						gw.Close()
+						_ = gw.Close()
 						return
 					}
 					frameIdx++
@@ -242,15 +242,15 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 				case <-time.After(NotifyTimeout):
 					// Poll timeout
 				case <-d.done:
-					gw.Close()
+					_ = gw.Close()
 					return
 				case <-twCtx.Done():
-					gw.Close()
+					_ = gw.Close()
 					return
 				}
 			}
 
-			gw.Close()
+			_ = gw.Close()
 			continue
 		}
 

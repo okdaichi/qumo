@@ -233,7 +233,7 @@ func (s *trackSource) serve(tw *moqt.TrackWriter, done <-chan struct{}) {
 				f := g.next(frameIdx)
 				if f != nil {
 					if err := gw.WriteFrame(f); err != nil {
-						gw.Close()
+						_ = gw.Close()
 						return
 					}
 					frameIdx++
@@ -249,15 +249,15 @@ func (s *trackSource) serve(tw *moqt.TrackWriter, done <-chan struct{}) {
 				case <-notify:
 				case <-time.After(notifyTimeout):
 				case <-done:
-					gw.Close()
+					_ = gw.Close()
 					return
 				case <-twCtx.Done():
-					gw.Close()
+					_ = gw.Close()
 					return
 				}
 			}
 
-			gw.Close()
+			_ = gw.Close()
 			continue
 		}
 

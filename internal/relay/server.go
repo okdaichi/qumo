@@ -160,7 +160,7 @@ func (s *Server) maintainPeer(ctx context.Context, dialer *moqt.Dialer, peer Pee
 		if err != nil {
 			slog.Warn("peer session ended", "address", peer.Address, "error", err)
 		}
-		sess.CloseWithError(moqt.NoError, moqt.NoError.String())
+		_ = sess.CloseWithError(moqt.NoError, moqt.NoError.String())
 
 		if !waitRetry(ctx, 5*time.Second) {
 			return

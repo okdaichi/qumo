@@ -32,7 +32,7 @@ relay:
   frame_capacity: 2000
 `
 
-	if err := os.WriteFile(configFile, []byte(validConfig), 0644); err != nil {
+	if err := os.WriteFile(configFile, []byte(validConfig), 0600); err != nil {
 		t.Fatalf("Failed to create test config: %v", err)
 	}
 
@@ -72,7 +72,7 @@ server:
 relay: {}
 `
 
-	if err := os.WriteFile(configFile, []byte(minimalConfig), 0644); err != nil {
+	if err := os.WriteFile(configFile, []byte(minimalConfig), 0600); err != nil {
 		t.Fatalf("Failed to create test config: %v", err)
 	}
 
@@ -109,7 +109,7 @@ server:
   # Missing closing quote above
 `
 
-	if err := os.WriteFile(configFile, []byte(invalidYAML), 0644); err != nil {
+	if err := os.WriteFile(configFile, []byte(invalidYAML), 0600); err != nil {
 		t.Fatalf("Failed to create test config: %v", err)
 	}
 
@@ -124,7 +124,7 @@ func TestLoadConfigEmptyFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "empty.yaml")
 
-	if err := os.WriteFile(configFile, []byte(""), 0644); err != nil {
+	if err := os.WriteFile(configFile, []byte(""), 0600); err != nil {
 		t.Fatalf("Failed to create test config: %v", err)
 	}
 
@@ -147,7 +147,7 @@ relay:
   frame_capacity: 3000
 `
 
-	if err := os.WriteFile(configFile, []byte(partialConfig), 0644); err != nil {
+	if err := os.WriteFile(configFile, []byte(partialConfig), 0600); err != nil {
 		t.Fatalf("Failed to create test config: %v", err)
 	}
 
@@ -183,7 +183,7 @@ relay:
   frame_capacity: 5000
 `
 
-	if err := os.WriteFile(configFile, []byte(configContent), 0644); err != nil {
+	if err := os.WriteFile(configFile, []byte(configContent), 0600); err != nil {
 		t.Fatalf("Failed to create test config: %v", err)
 	}
 
@@ -225,7 +225,7 @@ relay:
   frame_capacity: 0
 `
 
-	if err := os.WriteFile(configFile, []byte(zeroConfig), 0644); err != nil {
+	if err := os.WriteFile(configFile, []byte(zeroConfig), 0600); err != nil {
 		t.Fatalf("Failed to create test config: %v", err)
 	}
 
@@ -297,7 +297,7 @@ relay:
   frame_capacity: 2000   # Frame buffer size
 `
 
-	if err := os.WriteFile(configFile, []byte(commentedConfig), 0644); err != nil {
+	if err := os.WriteFile(configFile, []byte(commentedConfig), 0600); err != nil {
 		t.Fatalf("Failed to create test config: %v", err)
 	}
 

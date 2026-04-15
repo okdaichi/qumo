@@ -24,17 +24,3 @@ type Peer struct {
 	// Address is the dial address (e.g. "moqt://relay-tokyo:4433" or "https://relay-tokyo:4433").
 	Address string
 }
-
-func (c *Config) groupCacheSize() int {
-	if c != nil && c.GroupCacheSize > 0 {
-		return c.GroupCacheSize
-	}
-	return DefaultGroupCacheSize
-}
-
-func (c *Config) frameCapacity() int {
-	if c != nil && c.FrameCapacity > 0 {
-		return c.FrameCapacity
-	}
-	return DefaultNewFrameCapacity
-}

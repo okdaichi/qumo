@@ -260,6 +260,7 @@ func setupTLS(certFile, keyFile string) (*tls.Config, error) {
 	}
 
 	return &tls.Config{
+		MinVersion:   tls.VersionTLS12,
 		Certificates: []tls.Certificate{cert},
 		NextProtos:   []string{"h3", moqt.NextProtoMOQ}, // HTTP/3 for WebTransport, MOQ native QUIC
 	}, nil
@@ -285,7 +286,7 @@ func (h *healthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodHead {
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]string{"status": "alive"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "alive"})
 		return
 
 	case "ready":
@@ -315,7 +316,7 @@ func (h *healthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if !ready {
 			response["reason"] = reason
 		}
-		json.NewEncoder(w).Encode(response)
+			_ = json.NewEncoder(w).Encode(response)
 		return
 
 	default:
@@ -351,7 +352,7 @@ func (h *healthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodHead {
 			return
 		}
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 		return
 	}
 }

@@ -20,7 +20,7 @@ func TestPrintUsage_WritesHelpToStderr(t *testing.T) {
 
 	printUsage()
 
-	w.Close()
+	_ = w.Close()
 	var buf bytes.Buffer
 	_, err = buf.ReadFrom(r)
 	require.NoError(t, err)
@@ -116,7 +116,7 @@ func TestRun_Unit(t *testing.T) {
 
 			code := run(tt.args)
 
-			w.Close()
+			_ = w.Close()
 			var buf bytes.Buffer
 			_, err = buf.ReadFrom(r)
 			require.NoError(t, err)
