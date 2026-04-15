@@ -30,7 +30,7 @@ const (
 
 // RunRTMP starts a standalone RTMP ingest server that bridges published
 // streams to MoQT. Unlike the relay command this does not participate in
-// the mesh (no SDN, no remote fetcher, no peer registry).
+// the mesh (no peer connections, no announce relay).
 func RunRTMP(args []string) error {
 	fs := flag.NewFlagSet("rtmp", flag.ExitOnError)
 	configFile := fs.String("config", "config.rtmp.yaml", "path to config file")
@@ -55,13 +55,8 @@ func RunRTMP(args []string) error {
 	// Minimal MoQT origin that serves subscribers from the shared TrackMux.
 	moqtSrv := &moqt.Server{
 		Addr: cfg.ServeAddr,
-		SetupHandler: moqt.SetupHandlerFunc(func(w moqt.SetupResponseWriter, r *moqt.SetupRequest) {
-			sess, err := moqt.Accept(w, r, trackMux)
-			if err != nil {
-				slog.Error("failed to accept MoQT session", "err", err)
-				return
-			}
-			defer sess.CloseWithError(moqt.NoError, moqt.SessionErrorText(moqt.NoError))
+		Handler: moqt.HandleFunc(func(sess *moqt.Session) {
+			defer sess.CloseWithError(moqt.NoError, moqt.NoError.String())
 			<-sess.Context().Done()
 		}),
 	}
@@ -90,8 +85,8 @@ func RunRTMP(args []string) error {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
 
-	rtmpSrv.Shutdown(shutdownCtx)
-	moqtSrv.Shutdown(shutdownCtx)
+	_ = rtmpSrv.Shutdown(shutdownCtx)
+	_ = moqtSrv.Shutdown(shutdownCtx)
 
 	return nil
 }

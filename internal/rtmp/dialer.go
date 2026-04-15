@@ -17,7 +17,7 @@ func Dial(ctx context.Context, address string) (*Conn, error) {
 
 	conn, err := ClientConn(transport)
 	if err != nil {
-		transport.Close()
+		_ = transport.Close()
 		return nil, err
 	}
 

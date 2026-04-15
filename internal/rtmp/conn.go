@@ -437,31 +437,31 @@ func (c *Conn) checkAck() error {
 
 func (c *Conn) sendAck(seq uint32) error {
 	var buf bytes.Buffer
-	(&messageAck{SequenceNumber: seq}).encode(&buf)
+	_ = (&messageAck{SequenceNumber: seq}).encode(&buf)
 	return c.writeRawMessage(csidControl, &rawMessage{typeID: messageTypeAck, payload: buf.Bytes()})
 }
 
 func (c *Conn) sendSetChunkSize(size uint32) error {
 	var buf bytes.Buffer
-	(&messageSetChunkSize{ChunkSize: size}).encode(&buf)
+	_ = (&messageSetChunkSize{ChunkSize: size}).encode(&buf)
 	return c.writeRawMessage(csidControl, &rawMessage{typeID: messageTypeSetChunkSize, payload: buf.Bytes()})
 }
 
 func (c *Conn) sendWindowAckSize(size uint32) error {
 	var buf bytes.Buffer
-	(&messageWindowAckSize{Size: size}).encode(&buf)
+	_ = (&messageWindowAckSize{Size: size}).encode(&buf)
 	return c.writeRawMessage(csidControl, &rawMessage{typeID: messageTypeWindowAckSize, payload: buf.Bytes()})
 }
 
 func (c *Conn) sendSetPeerBandwidth(bandwidth uint32, limitType bandwidthLimitType) error {
 	var buf bytes.Buffer
-	(&messageSetPeerBandwidth{Bandwidth: bandwidth, LimitType: limitType}).encode(&buf)
+	_ = (&messageSetPeerBandwidth{Bandwidth: bandwidth, LimitType: limitType}).encode(&buf)
 	return c.writeRawMessage(csidControl, &rawMessage{typeID: messageTypeSetPeerBandwidth, payload: buf.Bytes()})
 }
 
 func (c *Conn) sendUserControl(eventType uint16, data []byte) error {
 	var buf bytes.Buffer
-	(&messageUserControl{EventType: eventType, EventData: data}).encode(&buf)
+	_ = (&messageUserControl{EventType: eventType, EventData: data}).encode(&buf)
 	return c.writeRawMessage(csidControl, &rawMessage{typeID: messageTypeUserControl, payload: buf.Bytes()})
 }
 
@@ -501,7 +501,7 @@ func (c *Conn) sendCommand(streamID messageStreamID, name string, txID float64, 
 func (c *Conn) readCommand(msg *rawMessage) (name string, txID float64, args []any, err error) {
 	r := bytes.NewReader(msg.payload)
 	if msg.typeID == messageTypeAMF3Command && len(msg.payload) > 0 {
-		r.ReadByte() // skip leading byte
+		_, _ = r.ReadByte() // skip leading byte
 	}
 	dec := amf0.NewDecoder(r)
 

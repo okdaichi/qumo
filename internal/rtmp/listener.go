@@ -39,7 +39,7 @@ func (l *Listener) Accept() (*Conn, error) {
 
 	conn, err := ServerConn(transport)
 	if err != nil {
-		transport.Close()
+		_ = transport.Close()
 		return nil, err
 	}
 
