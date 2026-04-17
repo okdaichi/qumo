@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -44,7 +45,7 @@ func RunRTMP(args []string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	trackMux := moqt.NewTrackMux()
+	trackMux := moqt.NewTrackMux(0)
 
 	// RTMP ingest server
 	rtmpSrv := ingest.NewRTMPServer(ingest.RTMPConfig{
@@ -52,13 +53,26 @@ func RunRTMP(args []string) error {
 		TrackMux: trackMux,
 	})
 
-	// Minimal MoQT origin that serves subscribers from the shared TrackMux.
-	moqtSrv := &moqt.Server{
-		Addr: cfg.ServeAddr,
+	// WebTransportHandler upgrades HTTP/3 requests into MoQT sessions.
+	wtHandler := &moqt.WebTransportHandler{
+		TrackMux: trackMux,
+		CheckOrigin: func(r *http.Request) bool {
+			return true // allow cross-origin (Vite dev server)
+		},
 		Handler: moqt.HandleFunc(func(sess *moqt.Session) {
 			defer sess.CloseWithError(moqt.NoError, moqt.NoError.String())
 			<-sess.Context().Done()
 		}),
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("/", wtHandler)
+
+	// Minimal MoQT origin that serves subscribers from the shared TrackMux.
+	moqtSrv := &moqt.Server{
+		Addr:               cfg.ServeAddr,
+		WebTransportServer: moqt.NewWebTransportServer(mux),
+		TrackMux:           trackMux,
 	}
 
 	log.Println("	Ingest  :", cfg.IngestAddr)

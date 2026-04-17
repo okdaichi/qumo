@@ -1,5 +1,5 @@
-import { createEffect, createMemo, createSignal, onCleanup, onMount, Show, untrack } from "solid-js";
-import { AudioDecodeNode, VideoContext, VideoDecodeNode } from "@okdaichi/av-nodes";
+import { createSignal, onCleanup, onMount, Show } from "solid-js";
+import { AudioDecodeNode } from "@okdaichi/av-nodes";
 import { type Session, SubscribeErrorCode } from "@okdaichi/moq";
 import { parseCatalog } from "@okdaichi/moq/msf";
 import { deserializeMediaFrame } from "../publish/media_frame.ts";
@@ -11,43 +11,23 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 	const [error, setError] = createSignal<string | null>(null);
 	const [canvasWidth, setCanvasWidth] = createSignal(1280);
 	const [canvasHeight, setCanvasHeight] = createSignal(720);
-	// Reactive decoder config: undefined until the first catalog arrives — no pre-config.
-	const [decoderConfig, setDecoderConfig] = createSignal<VideoDecoderConfig | undefined>();
 
 	// Editable broadcast path — defaults to /live/demo for RTMP ingest demo.
 	const [broadcastPathInput, setBroadcastPathInput] = createSignal("/live/demo");
 	const broadcastPath = (): BroadcastPath => broadcastPathInput() as BroadcastPath;
 
 	let canvasEle: HTMLCanvasElement | undefined;
-	let videoContext: VideoContext | undefined;
-	let videoDecodeNode: VideoDecodeNode | undefined;
+	let canvasCtx: CanvasRenderingContext2D | undefined;
+	let videoDecoder: VideoDecoder | undefined;
 	let audioContext: AudioContext | undefined;
 	let audioDecodeNode: AudioDecodeNode | undefined;
 	let currentCancel: (() => void) | null = null;
 
-	// Memo: stable fingerprint of active codec parameters.
-	// createMemo uses === equality — downstream effects only re-run when the key string actually changes,
-	// preventing spurious configure() calls that would reset decoder state and require a key frame.
-	const configKey = createMemo((): string => {
-		const cfg = decoderConfig();
-		if (!cfg) return "";
-		let descKey = "";
-		if (cfg.description != null) {
-			const buf = cfg.description instanceof ArrayBuffer
-				? new Uint8Array(cfg.description)
-				: new Uint8Array((cfg.description as ArrayBufferView).buffer);
-			descKey = btoa(String.fromCharCode(...buf));
-		}
-		return `${cfg.codec}|${cfg.codedWidth ?? ""}|${cfg.codedHeight ?? ""}|${descKey}`;
-	});
+
 
 	onMount(() => {
 		if (canvasEle) {
-			videoContext = new VideoContext({ canvas: canvasEle });
-			videoDecodeNode = new VideoDecodeNode(videoContext);
-			videoDecodeNode.connect(videoContext.destination);
-			setCanvasWidth(videoContext.destination.canvas.width);
-			setCanvasHeight(videoContext.destination.canvas.height);
+			canvasCtx = canvasEle.getContext("2d") ?? undefined;
 
 			// AudioContext for playback of the subscribed audio track.
 			audioContext = new AudioContext();
@@ -56,13 +36,7 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 		}
 	});
 
-	// Effect depends only on the memo — skipped entirely when configKey() returns the same string.
-	// decoderConfig() is read via untrack so it doesn't add a separate dependency.
-	createEffect(() => {
-		if (!configKey()) return;
-		const cfg = untrack(decoderConfig)!;
-		videoDecodeNode?.configure(cfg);
-	});
+
 
 	onCleanup(() => {
 		stopSubscribing();
@@ -75,8 +49,8 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 		try {
 			setError(null);
 
-			if (!videoContext || !videoDecodeNode) {
-				throw new Error("Video context not initialized");
+			if (!canvasCtx || !canvasEle) {
+				throw new Error("Canvas not initialized");
 			}
 
 			const session = await props.session;
@@ -114,8 +88,25 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 									codec: videoTrack.codec,
 									codedWidth: videoTrack.width,
 									codedHeight: videoTrack.height,
+									hardwareAcceleration: "prefer-software",
+									optimizeForLatency: true,
 								};
-								setDecoderConfig(cfg); // → createEffect → videoDecodeNode.configure()
+								// Create / configure VideoDecoder directly (no av-nodes wrapper).
+								if (!videoDecoder || videoDecoder.state === "closed") {
+									videoDecoder = new VideoDecoder({
+										output: (frame: VideoFrame) => {
+											if (canvasCtx && canvasEle) {
+												canvasCtx.drawImage(frame, 0, 0, canvasEle.width, canvasEle.height);
+											}
+											frame.close();
+										},
+										error: (e: DOMException) => {
+											console.error("[Subscribe] VideoDecoder error:", e);
+										},
+									});
+								}
+								videoDecoder.configure(cfg);
+								console.log("[Subscribe] VideoDecoder configured:", cfg.codec, "state:", videoDecoder.state);
 								// Update canvas bitmap dimensions to match the actual video so portrait
 								// (or any non-default-aspect) streams are not stretched.
 								if (videoTrack.width) setCanvasWidth(videoTrack.width);
@@ -141,54 +132,73 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 			);
 
 			session.subscribe(subscribePath, "video").then(
-				([videoTrack, videoErr]) => {
+				async ([videoTrack, videoErr]) => {
 					if (videoErr) {
 						if (!isSubscribed()) return;
 						console.warn("[Subscribe] video subscribe failed:", videoErr);
 						return;
 					}
 
-					const videoStream = new ReadableStream<EncodedVideoChunk>({
-						async start(controller) {
-							try {
-								// Wait for the first catalog before feeding any frames.
-								await firstConfigReady;
+					try {
+						// Wait for the first catalog before feeding any frames.
+						await firstConfigReady;
+						console.log("[Subscribe] video: catalog ready, starting decode loop");
 
-								while (isSubscribed()) {
-									const [group, groupErr] = await videoTrack.acceptGroup(ctx.done());
-									if (groupErr) {
-										if (!isSubscribed()) break;
-										console.error("moq: Error accepting video group:", groupErr);
-										break;
-									}
-
-									let isKey = true;
-									for await (const frame of group.frames()) {
-										const { timestamp, data } = deserializeMediaFrame(frame.bytes);
-										const chunk = new EncodedVideoChunk({
-											type: isKey ? "key" : "delta",
-											timestamp,
-											data,
-										});
-										controller.enqueue(chunk);
-										isKey = false;
-									}
-								}
-								controller.close();
-							} catch (err) {
-								if (isSubscribed()) {
-									console.error("Video track error:", err);
-									controller.error(err);
-								} else {
-									controller.close();
-								}
-							} finally {
-								videoTrack.closeWithError(SubscribeErrorCode.InternalError);
+						let frameCount = 0;
+						while (isSubscribed()) {
+							const [group, groupErr] = await videoTrack.acceptGroup(ctx.done());
+							if (groupErr) {
+								if (!isSubscribed()) break;
+								console.error("[Subscribe] video acceptGroup error:", groupErr);
+								break;
 							}
-						},
-					});
 
-					videoDecodeNode?.decodeFrom(videoStream);
+							let isKey = true;
+							for await (const frame of group.frames()) {
+								const { timestamp, data } = deserializeMediaFrame(frame.bytes);
+
+								// Log first 10 frames for diagnostics.
+								if (frameCount < 10) {
+									const hex = Array.from(data.slice(0, 48))
+										.map((b: number) => b.toString(16).padStart(2, "0"))
+										.join(" ");
+									console.log(
+										`[Subscribe] video #${frameCount}: type=${isKey ? "key" : "delta"} ts=${timestamp} len=${data.byteLength} hex=[${hex}]`,
+									);
+									frameCount++;
+								}
+
+								if (!videoDecoder || videoDecoder.state !== "configured") {
+									console.warn("[Subscribe] decoder not ready, state:", videoDecoder?.state);
+									isKey = false;
+									continue;
+								}
+
+								// Drop frames if decoder is stalled — prevents infinite loop.
+								if (videoDecoder.decodeQueueSize > 10) {
+									if (frameCount <= 10) {
+										console.warn(`[Subscribe] dropping frame, queue: ${videoDecoder.decodeQueueSize}`);
+									}
+									isKey = false;
+									continue;
+								}
+
+								const chunk = new EncodedVideoChunk({
+									type: isKey ? "key" : "delta",
+									timestamp,
+									data,
+								});
+								videoDecoder.decode(chunk);
+								isKey = false;
+							}
+						}
+					} catch (err) {
+						if (isSubscribed()) {
+							console.error("[Subscribe] video track error:", err);
+						}
+					} finally {
+						videoTrack.closeWithError(SubscribeErrorCode.InternalError);
+					}
 				},
 			);
 
@@ -258,7 +268,10 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 			currentCancel();
 			currentCancel = null;
 		}
-		setDecoderConfig(undefined); // reset for next subscription
+		if (videoDecoder && videoDecoder.state !== "closed") {
+			videoDecoder.close();
+		}
+		videoDecoder = undefined;
 		audioContext?.suspend().catch(() => {});
 		setIsSubscribed(false);
 	};

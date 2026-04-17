@@ -53,7 +53,7 @@ func RunRelay(args []string) error {
 	defer cancel()
 
 	// Create relay relayServer
-	trackMux := moqt.NewTrackMux()
+	trackMux := moqt.NewTrackMux(moqt.NewHopID())
 	relayServer := &relay.Server{
 		Addr:      config.Address,
 		TLSConfig: tlsConfig,

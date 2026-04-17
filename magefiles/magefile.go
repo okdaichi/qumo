@@ -5,14 +5,21 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/hex"
 	"encoding/pem"
 	"fmt"
+	"math/big"
+	"net"
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -509,60 +516,86 @@ func WebClean() error {
 	return sh.Rm("solid-deno/dist")
 }
 
-// Cert generates TLS certificates using mkcert
+// Cert generates a short-lived self-signed ECDSA certificate for WebTransport development.
+// Chrome's serverCertificateHashes requires the certificate validity to be ≤14 days.
+// The SHA-256 fingerprint is automatically written to solid-deno/.env as VITE_CERT_HASH.
 func Cert() error {
-	fmt.Println("🔐 Generating TLS certificates...")
+	fmt.Println("🔐 Generating WebTransport-compatible TLS certificate...")
 
-	// Check if mkcert is installed
-	if err := exec.Command("mkcert", "-version").Run(); err != nil {
-		fmt.Println("❌ mkcert is not installed!")
-		fmt.Println()
-		fmt.Println("Please install mkcert:")
-		fmt.Println("  Windows: winget install FiloSottile.mkcert")
-		fmt.Println("  macOS:   brew install mkcert")
-		fmt.Println("  Linux:   See https://github.com/FiloSottile/mkcert#installation")
-		return fmt.Errorf("mkcert not found")
-	}
-
-	// Ensure certs directory exists
 	if err := os.MkdirAll("certs", 0755); err != nil {
 		return err
 	}
 
-	// Install local CA if not already installed
-	fmt.Println("📦 Setting up local CA...")
-	installCmd := exec.Command("mkcert", "-install")
-	installCmd.Stdout = os.Stdout
-	installCmd.Stderr = os.Stderr
-	if err := installCmd.Run(); err != nil {
-		fmt.Println("⚠️  Warning: Failed to install CA, continuing anyway...")
-	}
-
-	// Generate certificates for localhost
-	fmt.Println("📝 Generating certificates for localhost...")
-	certCmd := exec.Command("mkcert",
-		"-cert-file", "certs/server.crt",
-		"-key-file", "certs/server.key",
-		"localhost", "127.0.0.1", "::1")
-	certCmd.Stdout = os.Stdout
-	certCmd.Stderr = os.Stderr
-	if err := certCmd.Run(); err != nil {
-		return fmt.Errorf("failed to generate certificates: %w", err)
-	}
-
-	// Compute SHA-256 of the generated certificate and write to certs/server.crt.sha256
-	err := Hash()
+	// Generate ECDSA P-256 key
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		fmt.Println("⚠️  Warning: failed to compute cert hash:", err)
+		return fmt.Errorf("failed to generate key: %w", err)
+	}
+
+	// Self-signed certificate, valid for 14 days (Chrome WebTransport limit)
+	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return fmt.Errorf("failed to generate serial: %w", err)
+	}
+
+	notBefore := time.Now()
+	notAfter := notBefore.Add(14 * 24 * time.Hour)
+
+	template := &x509.Certificate{
+		SerialNumber: serialNumber,
+		Subject:      pkix.Name{Organization: []string{"qumo dev"}},
+		NotBefore:    notBefore,
+		NotAfter:     notAfter,
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		DNSNames:     []string{"localhost"},
+		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")},
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		return fmt.Errorf("failed to create certificate: %w", err)
+	}
+
+	// Write certificate PEM
+	certFile, err := os.Create(filepath.Join("certs", "server.crt"))
+	if err != nil {
+		return err
+	}
+	defer certFile.Close()
+	if err := pem.Encode(certFile, &pem.Block{Type: "CERTIFICATE", Bytes: certDER}); err != nil {
+		return err
+	}
+
+	// Write key PEM
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		return err
+	}
+	keyFile, err := os.Create(filepath.Join("certs", "server.key"))
+	if err != nil {
+		return err
+	}
+	defer keyFile.Close()
+	if err := pem.Encode(keyFile, &pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}); err != nil {
+		return err
+	}
+
+	// Compute SHA-256 fingerprint and write to solid-deno/.env
+	fingerprint := sha256.Sum256(certDER)
+	hexStr := hex.EncodeToString(fingerprint[:])
+
+	if err := writeCertHashToEnv(hexStr); err != nil {
+		fmt.Println("⚠️  Warning: failed to write cert hash to .env:", err)
 	}
 
 	fmt.Println()
-	fmt.Println("✅ Certificates generated successfully!")
-	fmt.Println("   📄 certs/server.crt")
+	fmt.Println("✅ Certificate generated (valid 14 days)!")
+	fmt.Printf("   📄 certs/server.crt  (expires %s)\n", notAfter.Format("2006-01-02"))
 	fmt.Println("   🔑 certs/server.key")
+	fmt.Println("   🔐 VITE_CERT_HASH written to solid-deno/.env")
 	fmt.Println()
-	fmt.Println("💡 These certificates are trusted by your system")
-	fmt.Println("   You can now use WebTransport without certificate errors!")
+	fmt.Println("💡 Re-run 'mage cert' when the certificate expires")
 	return nil
 }
 
@@ -584,6 +617,39 @@ func computeCertHash() (string, error) {
 	sha := sha256.Sum256(cert.Raw)
 	hexStr := hex.EncodeToString(sha[:])
 	return hexStr, nil
+}
+
+// writeCertHashToEnv writes or updates the VITE_CERT_HASH entry in solid-deno/.env.
+// Other existing entries in the file are preserved.
+func writeCertHashToEnv(hash string) error {
+	envPath := filepath.Join("solid-deno", ".env")
+	lines := []string{}
+	found := false
+
+	if data, err := os.ReadFile(envPath); err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			if strings.HasPrefix(line, "VITE_CERT_HASH=") {
+				lines = append(lines, "VITE_CERT_HASH="+hash)
+				found = true
+			} else {
+				lines = append(lines, line)
+			}
+		}
+	}
+
+	if !found {
+		if len(lines) == 0 {
+			// Start from .env.example if .env doesn't exist
+			if tpl, err := os.ReadFile(filepath.Join("solid-deno", ".env.example")); err == nil {
+				lines = strings.Split(string(tpl), "\n")
+			}
+		}
+		lines = append(lines, "", "# Certificate hash for WebTransport (auto-generated by mage cert)")
+		lines = append(lines, "VITE_CERT_HASH="+hash)
+	}
+
+	content := strings.Join(lines, "\n")
+	return os.WriteFile(envPath, []byte(content), 0644)
 }
 
 // copyToClipboard attempts to copy the provided text to the system clipboard

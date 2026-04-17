@@ -368,7 +368,7 @@ func TestIngestHandler_Close_Idempotent(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestNewSession_PushVideo_PushAudio_Close(t *testing.T) {
-	mux := moqt.NewTrackMux()
+	mux := moqt.NewTrackMux(0)
 
 	sess, err := NewSession(mux, "/live/test")
 	require.NoError(t, err)
@@ -390,7 +390,7 @@ func TestNewSession_PushVideo_PushAudio_Close(t *testing.T) {
 }
 
 func TestSession_Close_Idempotent(t *testing.T) {
-	mux := moqt.NewTrackMux()
+	mux := moqt.NewTrackMux(0)
 	sess, err := NewSession(mux, "/live/test2")
 	require.NoError(t, err)
 
@@ -399,7 +399,7 @@ func TestSession_Close_Idempotent(t *testing.T) {
 }
 
 func TestSession_PushMultipleKeyframes(t *testing.T) {
-	mux := moqt.NewTrackMux()
+	mux := moqt.NewTrackMux(0)
 	sess, err := NewSession(mux, "/live/gop-test")
 	require.NoError(t, err)
 	defer sess.Close()
@@ -431,7 +431,7 @@ func TestSession_PushMultipleKeyframes(t *testing.T) {
 }
 
 func TestSession_AudioIndependentGroups(t *testing.T) {
-	mux := moqt.NewTrackMux()
+	mux := moqt.NewTrackMux(0)
 	sess, err := NewSession(mux, "/live/audio-test")
 	require.NoError(t, err)
 	defer sess.Close()
