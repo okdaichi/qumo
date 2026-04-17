@@ -41,15 +41,18 @@ func TestPrintUsage_WritesHelpToStderr(t *testing.T) {
 func TestRun_Unit(t *testing.T) {
 	origRelay := runRelay
 	origRTMP := runRTMP
+	origBootstrap := runBootstrap
 	defer func() {
 		runRelay = origRelay
 		runRTMP = origRTMP
+		runBootstrap = origBootstrap
 	}()
 
 	tests := map[string]struct {
 		args               []string
 		stubRelay          func([]string) error
 		stubRTMP           func([]string) error
+		stubBootstrap      func([]string) error
 		wantCode           int
 		wantStderrContains []string
 	}{
@@ -93,6 +96,17 @@ func TestRun_Unit(t *testing.T) {
 			wantCode:           1,
 			wantStderrContains: []string{"error: rtmp-fail"},
 		},
+		"bootstrap success": {
+			args:          []string{"bootstrap"},
+			stubBootstrap: func(_ []string) error { return nil },
+			wantCode:      0,
+		},
+		"bootstrap error": {
+			args:               []string{"bootstrap"},
+			stubBootstrap:      func(_ []string) error { return fmt.Errorf("boot-fail") },
+			wantCode:           1,
+			wantStderrContains: []string{"error: boot-fail"},
+		},
 	}
 
 	for name, tt := range tests {
@@ -106,6 +120,11 @@ func TestRun_Unit(t *testing.T) {
 				runRTMP = tt.stubRTMP
 			} else {
 				runRTMP = func([]string) error { return nil }
+			}
+			if tt.stubBootstrap != nil {
+				runBootstrap = tt.stubBootstrap
+			} else {
+				runBootstrap = func([]string) error { return nil }
 			}
 
 			// capture stderr
