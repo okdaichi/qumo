@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Bootstrap server (`qumo bootstrap`):** Minimal HTTP-based bootstrap service for MoQ node
+  registration and peer discovery. Nodes register via `POST /register` (with server-side IP
+  correction for NAT/proxy scenarios) and discover peers via `GET /peers` (with self-exclusion,
+  region filtering, random shuffling, and configurable max cap). Includes TTL-based expiration
+  with background cleanup, request body size limiting, and graceful shutdown. CLI flags:
+  `--listen`, `--ttl`, `--cleanup-interval`, `--max-peers`.
+
 ### Changed
 
 - **Ingest: migrate to `msf.Broadcast`:** Track routing and catalog management now delegated to
