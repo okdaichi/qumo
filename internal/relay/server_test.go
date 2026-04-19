@@ -250,6 +250,20 @@ func TestServer_MarkConnected(t *testing.T) {
 	assert.True(t, server.markConnected("moqt://relay-b:4433"), "different addr should return true")
 }
 
+// TestServer_MarkUnconnected tests that markUnconnected removes the address so it can be re-connected.
+func TestServer_MarkUnconnected(t *testing.T) {
+	server := newTestServer("localhost:4433")
+	server.init()
+
+	addr := "moqt://relay-a:4433"
+
+	require.True(t, server.markConnected(addr))
+	assert.False(t, server.markConnected(addr), "should be blocked while connected")
+
+	server.markUnconnected(addr)
+	assert.True(t, server.markConnected(addr), "should be connectable again after markUnconnected")
+}
+
 // TestServer_MarkConnected_Concurrent tests that markConnected is safe for concurrent use
 // and that only one caller wins for a given address.
 func TestServer_MarkConnected_Concurrent(t *testing.T) {

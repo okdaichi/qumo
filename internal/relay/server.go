@@ -130,6 +130,7 @@ func (s *Server) ConnectPeers(ctx context.Context) {
 		}
 		wg.Go(func() {
 			s.maintainPeer(ctx, peer)
+			s.markUnconnected(peer.Address)
 		})
 	}
 
@@ -163,6 +164,7 @@ func (s *Server) discoverPeers(ctx context.Context, wg *sync.WaitGroup, interval
 			p := p
 			wg.Go(func() {
 				s.maintainPeer(ctx, Peer{Address: p.Addr})
+				s.markUnconnected(p.Addr)
 			})
 		}
 	}
@@ -237,6 +239,14 @@ func (s *Server) markConnected(addr string) bool {
 	}
 	s.connected[addr] = struct{}{}
 	return true
+}
+
+// markUnconnected removes addr from the connected set.
+// It is safe for concurrent use.
+func (s *Server) markUnconnected(addr string) {
+	s.connectedMu.Lock()
+	defer s.connectedMu.Unlock()
+	delete(s.connected, addr)
 }
 
 func (s *Server) maintainPeer(ctx context.Context, peer Peer) {
@@ -325,6 +335,10 @@ func (s *Server) Relay(sess *moqt.Session) {
 				}
 			}
 		}
+
+		// Ensure handler.cancel is called when the session ends to release
+		// the child context from the parent's internal children list.
+		context.AfterFunc(sess.Context(), handler.cancel)
 
 		s.TrackMux.Announce(ann, handler)
 	}
