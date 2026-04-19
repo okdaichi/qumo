@@ -85,34 +85,34 @@ graph LR
     EdgeB -->|"POST /register (heartbeat)<br/>GET /peers (discovery)"| Bootstrap
 ```
 
-### Peer Discovery Lifecycle
+### Peer Discovery (Join Workflow)
+
+On startup, each relay runs two independent loops:
+
+1. **Static peers** (`PEERS`): dial each address directly and maintain the connection.
+2. **Bootstrap discovery** (`BOOTSTRAP_URLS`): register itself via `POST /register` (heartbeat), then periodically call `GET /peers` with `region`, `role`, and `limit` parameters. The returned peer list — which may include nodes from other regions — is dialed and maintained the same way as static peers.
+
+Each connection dials QUIC with ALPN `moqt`, exchanges `ANNOUNCE_PLEASE` / `ANNOUNCE`, and registers the peer's tracks on the local `TrackMux`. On disconnect the connection is retried after 5 s.
 
 ```mermaid
 graph TD
-    Start["Relay Startup"] --> Static{"Static PEERS<br/>configured?"}
-    Static -->|yes| DialStatic["Dial static peer<br/>(maintainPeer — goroutine)"]
-    Static -->|no| BS{"BOOTSTRAP_URLS<br/>configured?"}
-    DialStatic --> BS
+    Start["Relay Startup"]
 
-    BS -->|yes| Register["POST /register<br/>(heartbeat every interval)"]
-    Register --> Tick["Periodic tick<br/>(every BOOTSTRAP_INTERVAL)"]
-    Tick --> Discover["GET /peers<br/>(role-aware query)"]
-    Discover -->|"edge: local edges + local hub"| DialDynamic
-    Discover -->|"hub: local peers + cross-region hub"| DialDynamic
-    Discover -->|"default: local peers"| DialDynamic
-    Discover --> Tick
+    Start -->|"for each PEER"| ALPN
+    Start -->|"for each BOOTSTRAP_URL"| Register["POST /register\n(heartbeat loop)"]
 
-    DialDynamic["Dial new peer<br/>(maintainPeer — goroutine,<br/>skip already-connected)"] --> ALPN["QUIC dial<br/>(ALPN: moqt)"]
-    ALPN --> Announce["Send ANNOUNCE_PLEASE<br/>prefix='/'"]
-    Announce --> Receive["Receive ANNOUNCE<br/>from peer"]
-    Receive --> TrackMux["Register on local TrackMux"]
-    TrackMux --> Serve["Subscribers can access<br/>remote content"]
+    Register --> Tick["Periodic tick"]
+    Tick -->|"GET /peers?region=…&role=…&limit=…"| FetchPeers["Received peer list"]
+    FetchPeers -->|"for each new peer"| ALPN
+    FetchPeers --> Tick
 
-    ALPN -->|"dial failed"| Retry["Wait 5s"]
-    Serve -->|"connection lost"| Retry
+    ALPN["QUIC dial (ALPN: moqt)"] --> Announce["ANNOUNCE_PLEASE / ANNOUNCE"]
+    Announce --> TrackMux["Register tracks on local TrackMux"]
+    TrackMux --> Serve["Serve subscribers"]
+
+    ALPN -->|"failed"| Retry["Wait 5s → retry"]
+    Serve -->|"disconnected"| Retry
     Retry --> ALPN
-
-    BS -->|no| Idle["Accept incoming<br/>connections only"]
 ```
 
 ## Development
