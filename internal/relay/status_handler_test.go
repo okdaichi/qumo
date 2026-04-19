@@ -129,18 +129,27 @@ func TestStatusHandler_ProbeLive_GETAndHEAD(t *testing.T) {
 
 func TestStatusHandler_ProbeReady_Cases(t *testing.T) {
 	tests := map[string]struct {
-		wantCode  int
-		wantReady bool
+		wantCode   int
+		wantReady  bool
+		wantReason string
 	}{
 		"ready with healthy status": {
 			wantCode:  http.StatusOK,
 			wantReady: true,
+		},
+		"invalid connection state": {
+			wantCode:   http.StatusServiceUnavailable,
+			wantReady:  false,
+			wantReason: "invalid_connection_state",
 		},
 	}
 
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			h := newStatusHandler()
+			if tt.wantReason != "" {
+				h.decrementConnections()
+			}
 			req := httptest.NewRequest(http.MethodGet, "/health?probe=ready", nil)
 			rec := httptest.NewRecorder()
 			h.ServeHTTP(rec, req)
@@ -150,6 +159,9 @@ func TestStatusHandler_ProbeReady_Cases(t *testing.T) {
 			err := json.NewDecoder(rec.Body).Decode(&resp)
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantReady, resp["ready"])
+			if tt.wantReason != "" {
+				assert.Equal(t, tt.wantReason, resp["reason"])
+			}
 		})
 	}
 }

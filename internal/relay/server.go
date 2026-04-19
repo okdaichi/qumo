@@ -3,7 +3,6 @@ package relay
 import (
 	"context"
 	"crypto/tls"
-	"encoding/json"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -24,129 +23,65 @@ type Server struct {
 	WebTransportServer moqt.WebTransportServer
 
 	moqServer *moqt.Server
-
 	moqDialer *moqt.Dialer
 
 	webtransportHandler *moqt.WebTransportHandler
-
-	statusHandler *statusHandler
+	statusHandler       *statusHandler
+	initOnce            sync.Once
 }
 
-func (s *Server) ServeHelth(w http.ResponseWriter, r *http.Request) {
-	// single handler that supports probes via query param: ?probe=live|ready
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		w.WriteHeader(http.StatusMethodNotAllowed)
+func (s *Server) ServeHealth(w http.ResponseWriter, r *http.Request) {
+	s.init()
+	if s.statusHandler == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
 		return
 	}
-
-	probe := r.URL.Query().Get("probe")
-
-	switch probe {
-	case "live":
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		if r.Method == http.MethodHead {
-			return
-		}
-		_ = json.NewEncoder(w).Encode(map[string]string{"status": "alive"})
-		return
-
-	case "ready":
-		status := s.statusHandler.getStatus()
-		activeConns := status.ActiveConnections
-
-		ready := true
-		reason := "ready"
-
-		if activeConns < 0 {
-			ready = false
-			reason = "invalid_connection_state"
-		}
-
-		statusCode := http.StatusOK
-		if !ready {
-			statusCode = http.StatusServiceUnavailable
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(statusCode)
-		if r.Method == http.MethodHead {
-			return
-		}
-
-		response := map[string]any{"ready": ready}
-		if !ready {
-			response["reason"] = reason
-		}
-		_ = json.NewEncoder(w).Encode(response)
-		return
-
-	default:
-		// full status
-		status := s.statusHandler.getStatus()
-
-		ready := true
-		reason := "ready"
-		if status.ActiveConnections < 0 {
-			ready = false
-			reason = "invalid_connection_state"
-		}
-
-		response := map[string]any{
-			"status":             status.Status,
-			"timestamp":          status.Timestamp,
-			"uptime":             status.Uptime,
-			"active_connections": status.ActiveConnections,
-			"live":               true,
-			"ready":              ready,
-		}
-		if !ready {
-			response["ready_reason"] = reason
-		}
-
-		statusCode := http.StatusOK
-		if status.Status == "unhealthy" {
-			statusCode = http.StatusServiceUnavailable
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(statusCode)
-		if r.Method == http.MethodHead {
-			return
-		}
-		_ = json.NewEncoder(w).Encode(response)
-		return
-	}
+	s.statusHandler.ServeHTTP(w, r)
 }
 
 func (s *Server) HandleWebTransport(w http.ResponseWriter, r *http.Request) {
+	s.init()
+	if s.webtransportHandler == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
 	s.webtransportHandler.ServeHTTP(w, r)
 }
 
 func (s *Server) init() {
-	if s.TrackMux == nil {
-		s.TrackMux = moqt.DefaultMux
-	}
+	s.initOnce.Do(func() {
+		if s.TrackMux == nil {
+			s.TrackMux = moqt.NewTrackMux(0)
+		}
 
-	s.moqServer = &moqt.Server{
-		Addr:               s.Addr,
-		TLSConfig:          s.TLSConfig,
-		QUICConfig:         s.QUICConfig,
-		Handler:            moqt.HandleFunc(s.Relay),
-		WebTransportServer: moqt.NewWebTransportServer(nil),
-		Logger:             s.Logger,
-	}
+		if s.statusHandler == nil {
+			s.statusHandler = newStatusHandler()
+		}
 
-	s.moqDialer = &moqt.Dialer{
-		TLSConfig:  s.TLSConfig,
-		QUICConfig: s.QUICConfig,
-	}
+		if s.WebTransportServer == nil {
+			s.WebTransportServer = moqt.NewWebTransportServer(nil)
+		}
 
-	s.webtransportHandler = &moqt.WebTransportHandler{
-		TrackMux: s.TrackMux,
-		Handler:  moqt.HandleFunc(s.Relay),
-		Logger:   s.Logger,
-	}
+		s.moqDialer = &moqt.Dialer{
+			TLSConfig:  s.TLSConfig,
+			QUICConfig: s.QUICConfig,
+		}
+
+		s.moqServer = &moqt.Server{
+			Addr:               s.Addr,
+			TLSConfig:          s.TLSConfig,
+			QUICConfig:         s.QUICConfig,
+			Handler:            moqt.HandleFunc(s.Relay),
+			WebTransportServer: s.WebTransportServer,
+			Logger:             s.Logger,
+		}
+
+		s.webtransportHandler = &moqt.WebTransportHandler{
+			TrackMux: s.TrackMux,
+			Handler:  moqt.HandleFunc(s.Relay),
+			Logger:   s.Logger,
+		}
+	})
 }
 
 // ListenAndServe starts the relay server.
@@ -183,6 +118,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 // It also starts bootstrap clients for each configured bootstrap server.
 // It blocks until ctx is cancelled.
 func (s *Server) ConnectPeers(ctx context.Context) {
+	s.init()
 	var wg sync.WaitGroup
 
 	// Static peers from config.
@@ -334,7 +270,13 @@ func waitRetry(ctx context.Context, d time.Duration) bool {
 }
 
 func (s *Server) Relay(sess *moqt.Session) {
+	s.init()
 	defer sess.CloseWithError(moqt.NoError, moqt.NoError.String())
+
+	if s.statusHandler != nil {
+		s.statusHandler.incrementConnections()
+		defer s.statusHandler.decrementConnections()
+	}
 
 	slog.Info("session established", "remote", sess.RemoteAddr())
 	defer slog.Info("session closed", "remote", sess.RemoteAddr())

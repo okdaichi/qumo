@@ -145,7 +145,7 @@ func RunRelay(_ []string) error {
 	}
 
 	httpMux.HandleFunc("/", relayServer.HandleWebTransport)
-	httpMux.HandleFunc("/health", relayServer.ServeHelth)
+	httpMux.HandleFunc("/health", relayServer.ServeHealth)
 	httpMux.Handle("/metrics", promhttp.Handler())
 
 	httpServer := &http.Server{
