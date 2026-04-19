@@ -43,3 +43,7 @@ linters:
       - linters: [gosec]
         path: "_test\\.go"
         text: "G104"
+      # False positive: cancel is stored in the relayHandler struct (h.cancel) and called
+      # later via Drain or context.AfterFunc; gosec cannot trace cross-function ownership.
+      - linters: [gosec]
+        text: "G118"

@@ -68,6 +68,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **G118 excluded (`internal/relay`):** `context.WithCancel` cancel function is stored
+  in `relayHandler.cancel` and called later via `Drain` or `context.AfterFunc`; gosec cannot
+  trace cross-function ownership so the finding is a false positive.
 - **gosec integrated into golangci-lint:** Removed the standalone `securego/gosec`
   GitHub Actions step; gosec now runs as part of `golangci-lint` with SARIF output
   uploaded to GitHub Security. Rule exclusions are centrally managed in `.golangci.yml`
