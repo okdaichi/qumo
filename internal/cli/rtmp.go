@@ -33,9 +33,11 @@ const (
 // streams to MoQT. Unlike the relay command this does not participate in
 // the mesh (no peer connections, no announce relay).
 func RunRTMP(args []string) error {
-	fs := flag.NewFlagSet("rtmp", flag.ExitOnError)
+	fs := flag.NewFlagSet("rtmp", flag.ContinueOnError)
 	configFile := fs.String("config", "", "path to config file (required)")
-	fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
 
 	if *configFile == "" {
 		return fmt.Errorf("rtmp: -config flag is required")

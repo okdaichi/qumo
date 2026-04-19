@@ -94,7 +94,7 @@ func (c *Client) register(ctx context.Context) error {
 		return err
 	}
 	defer resp.Body.Close()
-	io.Copy(io.Discard, resp.Body) //nolint:errcheck
+	_, _ = io.Copy(io.Discard, resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("register: unexpected status %d", resp.StatusCode)
@@ -138,7 +138,7 @@ func (c *Client) FetchPeers(ctx context.Context, q PeerQuery) ([]Node, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		io.Copy(io.Discard, resp.Body) //nolint:errcheck
+		_, _ = io.Copy(io.Discard, resp.Body)
 		return nil, fmt.Errorf("peers: unexpected status %d", resp.StatusCode)
 	}
 
