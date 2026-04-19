@@ -28,6 +28,10 @@ x-bootstrap-base: &bootstrap-base
     dockerfile: docker/Dockerfile
   command: ["bootstrap"]
   restart: unless-stopped
+  environment:
+    BOOTSTRAP_LISTEN: ":8080"
+    BOOTSTRAP_TTL: "60s"
+    BOOTSTRAP_MAX_PEERS: "200"
   healthcheck:
     test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8080/peers"]
     interval: 10s
@@ -63,21 +67,18 @@ services:
   bootstrap-asia:
     <<: *bootstrap-base
     container_name: qumo-bootstrap-asia
-    command: ["bootstrap", "--listen", ":8080", "--ttl", "60s", "--max-peers", "200"]
     ports:
       - "8091:8080"
 
   bootstrap-europe:
     <<: *bootstrap-base
     container_name: qumo-bootstrap-europe
-    command: ["bootstrap", "--listen", ":8080", "--ttl", "60s", "--max-peers", "200"]
     ports:
       - "8092:8080"
 
   bootstrap-americas:
     <<: *bootstrap-base
     container_name: qumo-bootstrap-americas
-    command: ["bootstrap", "--listen", ":8080", "--ttl", "60s", "--max-peers", "200"]
     ports:
       - "8093:8080"
 
