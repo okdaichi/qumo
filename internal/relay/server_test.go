@@ -238,6 +238,56 @@ func TestServer_Mux_CustomTrackMux(t *testing.T) {
 	assert.Same(t, customMux, server.TrackMux, "Custom TrackMux should be preserved")
 }
 
+// TestServer_MarkConnected tests server-level peer deduplication.
+func TestServer_MarkConnected(t *testing.T) {
+	server := newTestServer("localhost:4433")
+	server.init()
+
+	addr := "moqt://relay-a:4433"
+
+	assert.True(t, server.markConnected(addr), "first call should return true")
+	assert.False(t, server.markConnected(addr), "second call for same addr should return false")
+	assert.True(t, server.markConnected("moqt://relay-b:4433"), "different addr should return true")
+}
+
+// TestServer_MarkUnconnected tests that markUnconnected removes the address so it can be re-connected.
+func TestServer_MarkUnconnected(t *testing.T) {
+	server := newTestServer("localhost:4433")
+	server.init()
+
+	addr := "moqt://relay-a:4433"
+
+	require.True(t, server.markConnected(addr))
+	assert.False(t, server.markConnected(addr), "should be blocked while connected")
+
+	server.markUnconnected(addr)
+	assert.True(t, server.markConnected(addr), "should be connectable again after markUnconnected")
+}
+
+// TestServer_MarkConnected_Concurrent tests that markConnected is safe for concurrent use
+// and that only one caller wins for a given address.
+func TestServer_MarkConnected_Concurrent(t *testing.T) {
+	server := newTestServer("localhost:4433")
+	server.init()
+
+	addr := "moqt://relay-concurrent:4433"
+	wins := make(chan bool, 20)
+
+	for i := 0; i < 20; i++ {
+		go func() {
+			wins <- server.markConnected(addr)
+		}()
+	}
+
+	var trueCount int
+	for i := 0; i < 20; i++ {
+		if <-wins {
+			trueCount++
+		}
+	}
+	assert.Equal(t, 1, trueCount, "exactly one goroutine should win the race")
+}
+
 // TestServer_Close_WithNilComponents tests Close with uninitialized components
 func TestServer_Close_WithNilComponents(t *testing.T) {
 	server := &Server{}

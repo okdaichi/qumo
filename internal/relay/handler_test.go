@@ -15,11 +15,13 @@ import (
 
 func newTestRelayHandler(ctx context.Context) *relayHandler {
 	ann, _ := moqt.NewAnnouncement(ctx, "/test")
+	ctx, cancel := context.WithCancel(ctx)
 	return &relayHandler{
 		announcement: ann,
 		session:      nil,
 		tracks:       newTrackManager(),
 		ctx:          ctx,
+		cancel:       cancel,
 	}
 }
 
@@ -852,4 +854,207 @@ func TestRelayHandler_SingleflightDedup(t *testing.T) {
 	// Subsequent load should miss
 	_, ok = h.tracks.load(moqt.TrackName("video"))
 	assert.False(t, ok, "Should not find deleted entry")
+}
+
+// ============================================================================
+// RouteStats Tests
+// ============================================================================
+
+// TestRelayHandler_RouteStats_Interface verifies that *relayHandler satisfies
+// the RouteReporter interface and is discoverable via type assertion.
+func TestRelayHandler_RouteStats_Interface(t *testing.T) {
+	ctx := context.Background()
+	h := newTestRelayHandler(ctx)
+
+	var th moqt.TrackHandler = h
+	rr, ok := th.(RouteReporter)
+	require.True(t, ok, "*relayHandler must implement RouteReporter")
+	assert.NotNil(t, rr)
+}
+
+// TestRelayHandler_Hops_LocalAnnouncement confirms that a locally created
+// announcement (no forwarding) reports 0 hops.
+func TestRelayHandler_Hops_LocalAnnouncement(t *testing.T) {
+	ctx := context.Background()
+	h := newTestRelayHandler(ctx)
+
+	assert.Equal(t, 0, h.RouteStats().Hops, "local announcement should have 0 hops")
+}
+
+// TestRelayHandler_RTT_NilSession returns a RouteStats with nil Probe when
+// the session is nil.
+func TestRelayHandler_RTT_NilSession(t *testing.T) {
+	ctx := context.Background()
+	h := newTestRelayHandler(ctx) // session is nil
+
+	assert.Equal(t, 0, h.RouteStats().Hops, "nil session should yield 0 hops without panic")
+	assert.Equal(t, uint64(0), h.RouteStats().Bitrate, "nil session should yield 0 bitrate without panic")
+	assert.Equal(t, uint64(0), h.RouteStats().RTT, "nil session should yield 0 RTT without panic")
+}
+
+// ============================================================================
+// isBetterRoute Tests
+// ============================================================================
+
+func TestIsBetterRoute(t *testing.T) {
+	type testCase struct {
+		candidate RouteStats
+		current   RouteStats
+		want      bool
+	}
+	tests := map[string]testCase{
+		"fewer hops wins regardless of RTT": {
+			candidate: RouteStats{Alive: true, Hops: 1, RTT: 100},
+			current:   RouteStats{Alive: true, Hops: 2, RTT: 10},
+			want:      true,
+		},
+		"more hops loses regardless of RTT": {
+			candidate: RouteStats{Alive: true, Hops: 3, RTT: 1},
+			current:   RouteStats{Alive: true, Hops: 2, RTT: 999},
+			want:      false,
+		},
+		"equal hops: higher bitrate wins over lower RTT": {
+			candidate: RouteStats{Alive: true, Hops: 2, Bitrate: 10_000_000, RTT: 80},
+			current:   RouteStats{Alive: true, Hops: 2, Bitrate: 5_000_000, RTT: 20},
+			want:      true,
+		},
+		"equal hops and bitrate: lower RTT wins": {
+			candidate: RouteStats{Alive: true, Hops: 2, Bitrate: 5_000_000, RTT: 20},
+			current:   RouteStats{Alive: true, Hops: 2, Bitrate: 5_000_000, RTT: 50},
+			want:      true,
+		},
+		"equal hops: higher RTT loses": {
+			candidate: RouteStats{Alive: true, Hops: 2, RTT: 80},
+			current:   RouteStats{Alive: true, Hops: 2, RTT: 50},
+			want:      false,
+		},
+		"equal hops: zero bitrate/RTT keeps existing route": {
+			candidate: RouteStats{Alive: true, Hops: 2},
+			current:   RouteStats{Alive: true, Hops: 2, Bitrate: 5_000_000, RTT: 50},
+			want:      false,
+		},
+		// Alive dominates all quality metrics.
+		"alive candidate beats dead current regardless of hops": {
+			candidate: RouteStats{Alive: true, Hops: 5},
+			current:   RouteStats{Alive: false, Hops: 1},
+			want:      true,
+		},
+		"dead candidate loses to alive current regardless of hops": {
+			candidate: RouteStats{Alive: false, Hops: 1},
+			current:   RouteStats{Alive: true, Hops: 5},
+			want:      false,
+		},
+		"both dead: keep existing route": {
+			candidate: RouteStats{Alive: false, Hops: 1, RTT: 1},
+			current:   RouteStats{Alive: false, Hops: 5, RTT: 999},
+			want:      false,
+		},
+		"both alive: normal hop comparison applies": {
+			candidate: RouteStats{Alive: true, Hops: 1, RTT: 100},
+			current:   RouteStats{Alive: true, Hops: 2, RTT: 10},
+			want:      true,
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, tt.want, isBetterRoute(tt.candidate, tt.current))
+		})
+	}
+}
+
+// ============================================================================
+// RouteStats.Alive Tests
+// ============================================================================
+
+// TestRelayHandler_Alive_ActiveContext verifies Alive=true for a live handler.
+func TestRelayHandler_Alive_ActiveContext(t *testing.T) {
+	h := newTestRelayHandler(t.Context())
+	assert.True(t, h.RouteStats().Alive, "handler with active context should be alive")
+}
+
+// TestRelayHandler_Alive_CancelledContext verifies Alive=false after ctx cancel.
+func TestRelayHandler_Alive_CancelledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	ann, _ := moqt.NewAnnouncement(ctx, "/test")
+	h := &relayHandler{
+		announcement: ann,
+		session:      nil,
+		tracks:       newTrackManager(),
+		ctx:          ctx,
+		cancel:       cancel,
+	}
+
+	assert.True(t, h.RouteStats().Alive, "should be alive before cancel")
+	cancel()
+	assert.False(t, h.RouteStats().Alive, "should be dead after cancel")
+}
+
+// TestRelayHandler_Alive_RetractedAnnouncement verifies Alive=false when
+// the announcement is retracted (IsActive=false) even if the context is live.
+func TestRelayHandler_Alive_RetractedAnnouncement(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Create an announcement then retract it via EndAnnouncementFunc.
+	ann, end := moqt.NewAnnouncement(ctx, "/test")
+	h := &relayHandler{
+		announcement: ann,
+		session:      nil,
+		tracks:       newTrackManager(),
+		ctx:          ctx,
+		cancel:       cancel,
+	}
+
+	assert.True(t, h.RouteStats().Alive, "should be alive before retract")
+	end() // retract the announcement
+	<-ann.Done()
+	assert.False(t, h.RouteStats().Alive, "should be dead after announcement retract")
+}
+
+// ============================================================================
+// Drain Tests
+// ============================================================================
+
+// TestRelayHandler_Drain_ZeroTimeout verifies that Drain(0) cancels immediately.
+func TestRelayHandler_Drain_ZeroTimeout(t *testing.T) {
+	h := newTestRelayHandler(context.Background())
+	require.True(t, h.RouteStats().Alive)
+
+	h.Drain(0)
+
+	// time.AfterFunc(0, ...) fires in a separate goroutine; give it a moment.
+	assert.Eventually(t, func() bool {
+		return !h.RouteStats().Alive
+	}, 100*time.Millisecond, time.Millisecond, "Drain(0) should cancel context quickly")
+}
+
+// TestRelayHandler_Drain_WithTimeout verifies that Drain with a positive timeout
+// leaves the handler alive initially and kills it after the delay.
+func TestRelayHandler_Drain_WithTimeout(t *testing.T) {
+	h := newTestRelayHandler(context.Background())
+
+	h.Drain(50 * time.Millisecond)
+
+	assert.True(t, h.RouteStats().Alive, "should still be alive immediately after Drain")
+
+	assert.Eventually(t, func() bool {
+		return !h.RouteStats().Alive
+	}, 200*time.Millisecond, time.Millisecond, "handler should become dead after drain timeout")
+}
+
+// TestRelayHandler_Drain_Idempotent verifies multiple Drain calls don't panic
+// and cancel is idempotent.
+func TestRelayHandler_Drain_Idempotent(t *testing.T) {
+	h := newTestRelayHandler(context.Background())
+
+	require.NotPanics(t, func() {
+		h.Drain(0)
+		h.Drain(0)
+		h.Drain(50 * time.Millisecond)
+	})
+
+	assert.Eventually(t, func() bool {
+		return !h.RouteStats().Alive
+	}, 100*time.Millisecond, time.Millisecond)
 }

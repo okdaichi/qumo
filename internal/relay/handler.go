@@ -14,9 +14,58 @@ import (
 // Optimized timeout for best CPU/latency tradeoff (based on benchmarks)
 var NotifyTimeout = 1 * time.Millisecond
 
+// DrainTimeout is the grace period given to a displaced relayHandler before
+// its upstream context is cancelled. During this window existing subscribers
+// can finish reading in-flight groups before the upstream subscription stops.
+var DrainTimeout = 30 * time.Second
+
 var errTrackNotFound = errors.New("track not found")
 
 var _ moqt.TrackHandler = (*relayHandler)(nil)
+var _ RouteReporter = (*relayHandler)(nil)
+var _ Drainable = (*relayHandler)(nil)
+
+// RouteStats holds routing quality metrics for a relayed broadcast path.
+type RouteStats struct {
+	// Alive reports whether the upstream session is still connected.
+	// A false value means the handler is dead and must be replaced unconditionally.
+	Alive bool
+	// Hops is the number of relay hops the announcement has traversed.
+	// Fewer hops generally implies lower latency.
+	Hops int
+	// Bitrate is the measured bitrate in bits per second. A value of 0 means unknown.
+	Bitrate uint64
+	// RTT is the smoothed round-trip time in milliseconds. A value of 0 means unknown.
+	RTT uint64
+}
+
+// Drainable is implemented by handlers that support graceful drain-then-shutdown.
+// When a handler is displaced by a better route, Drain is called so that
+// in-flight streams can complete before the upstream subscription is torn down.
+type Drainable interface {
+	// Drain schedules cancellation of the handler's context after timeout.
+	// It is idempotent: only the first call schedules a timer; subsequent calls
+	// are no-ops. The handler's context is cancelled once when the timer fires.
+	Drain(timeout time.Duration)
+}
+
+// RouteReporter is implemented by handlers that can report routing quality
+// metrics for a relayed broadcast path. Use a type assertion on the
+// TrackHandler returned by TrackMux.TrackHandler:
+//
+//	_, h := mux.TrackHandler(path)
+//	if rr, ok := h.(relay.RouteReporter); ok {
+//		stats := rr.RouteStats()
+//	}
+//
+// Evaluation is intentionally performed only when a new route candidate
+// arrives, not periodically, to preserve cache hit rates and playback
+// continuity.
+type RouteReporter interface {
+	// RouteStats probes the upstream session once and returns combined
+	// routing metrics. Called at most once per route comparison.
+	RouteStats() RouteStats
+}
 
 type relayHandler struct {
 	announcement *moqt.Announcement
@@ -25,7 +74,41 @@ type relayHandler struct {
 	tracks  *trackManager
 	flights singleflight.Group
 
-	ctx context.Context
+	ctx       context.Context
+	cancel    context.CancelFunc
+	drainOnce sync.Once
+}
+
+// isBetterRoute reports whether candidate is a strictly better route than
+// current. A live route always beats a dead one. Among routes with the same
+// liveness, fewer hops wins outright; equal hops are broken first by bitrate
+// (higher available bandwidth is better for streaming), then by RTT (lower
+// latency is better). When a metric cannot be determined (nil probe or 0
+// value), the current route is preferred.
+func isBetterRoute(candidate, current RouteStats) bool {
+	// A live route always beats a dead one.
+	if candidate.Alive != current.Alive {
+		return candidate.Alive
+	}
+	// Both dead: no benefit in switching.
+	if !candidate.Alive {
+		return false
+	}
+	if candidate.Hops < current.Hops {
+		return true
+	}
+	if candidate.Hops > current.Hops {
+		return false
+	}
+	// Higher available bandwidth wins first.
+	if candidate.Bitrate != current.Bitrate {
+		return candidate.Bitrate > current.Bitrate
+	}
+	// Bandwidth equal or unknown: prefer lower RTT.
+	if candidate.RTT == 0 || current.RTT == 0 {
+		return false
+	}
+	return candidate.RTT < current.RTT
 }
 
 func newRelayHandler(ann *moqt.Announcement, sess *moqt.Session) *relayHandler {
@@ -33,13 +116,42 @@ func newRelayHandler(ann *moqt.Announcement, sess *moqt.Session) *relayHandler {
 		return nil
 	}
 
+	ctx, cancel := context.WithCancel(sess.Context())
 	h := &relayHandler{
 		announcement: ann,
 		session:      sess,
 		tracks:       newTrackManager(),
-		ctx:          sess.Context(),
+		ctx:          ctx,
+		cancel:       cancel,
 	}
 	return h
+}
+
+// Drain schedules cancellation of this handler's context after timeout.
+// New subscribers will find no active handler; existing in-flight groups
+// are allowed to finish within the grace window.
+// It is idempotent: only the first call schedules a timer; subsequent calls
+// are no-ops and do not create additional goroutines.
+func (h *relayHandler) Drain(timeout time.Duration) {
+	h.drainOnce.Do(func() {
+		time.AfterFunc(timeout, h.cancel)
+	})
+}
+
+// RouteStats probes the upstream session and returns combined routing metrics.
+// The probe is performed once per call; results are not cached.
+func (h *relayHandler) RouteStats() RouteStats {
+	rs := RouteStats{
+		Alive: h.ctx.Err() == nil && h.announcement.IsActive(),
+		Hops:  len(h.announcement.HopIDs()),
+	}
+	if h.session != nil {
+		if result, err := h.session.Probe(0); err == nil {
+			rs.Bitrate = result.Bitrate
+			rs.RTT = result.RTT
+		}
+	}
+	return rs
 }
 
 func (h *relayHandler) ServeTrack(tw *moqt.TrackWriter) {
@@ -112,7 +224,7 @@ func (h *relayHandler) subscribe(name moqt.TrackName) *trackDistributor {
 
 	d := newTrackDistributor(name, h.tracks)
 
-	go d.ingest(src)
+	go d.ingest(h.ctx, src)
 
 	h.tracks.store(name, d)
 
@@ -297,12 +409,12 @@ func (d *trackDistributor) unsubscribe(ch chan struct{}) {
 	delete(d.subscribers, ch)
 }
 
-func (d *trackDistributor) ingest(src *moqt.TrackReader) {
+func (d *trackDistributor) ingest(ctx context.Context, src *moqt.TrackReader) {
 	defer d.manager.remove(d.name, d)
 	defer close(d.done)
 
 	for {
-		gr, err := src.AcceptGroup(context.Background())
+		gr, err := src.AcceptGroup(ctx)
 		if err != nil {
 			slog.Debug("ingest stopped", "error", err)
 			return

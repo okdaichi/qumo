@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`RouteStats` struct and `RouteReporter` interface (`internal/relay`):** Routing quality
+  metrics (`Alive`, `Hops`, `Bitrate`, `RTT`) are now exposed per handler. `Alive` is
+  derived from both the handler's child context and `Announcement.IsActive()`.
+- **`Drainable` interface and `DrainTimeout` (`internal/relay`):** Displaced handlers are
+  gracefully drained over a 30-second window before their upstream subscription is cancelled,
+  allowing in-flight groups to finish delivery.
+- **`isBetterRoute` route comparison (`internal/relay`):** Route selection is now explicit:
+  a live route always beats a dead one; among live routes, fewer hops → higher bitrate → lower
+  RTT decides the winner. The existing handler is kept unless the new candidate is strictly better.
+- **`markConnected` / `markUnconnected` peer deduplication (`internal/relay`):** Server-wide
+  address tracking prevents duplicate `maintainPeer` goroutines for the same peer. Static peers
+  and bootstrap-discovered peers now share the same deduplication map. `markUnconnected` is
+  called when a `maintainPeer` goroutine exits, restoring the address for future reconnection.
+- **`context.AfterFunc` handler cleanup (`internal/relay`):** `handler.cancel` is registered
+  via `context.AfterFunc(sess.Context(), ...)` in `Relay`, so the handler's child context is
+  cancelled as soon as the upstream session closes.
+- **`trackDistributor.ingest` context propagation (`internal/relay`):** `AcceptGroup` now
+  receives the handler's child context instead of `context.Background()`, ensuring ingest
+  goroutines stop promptly when the handler is drained or the session closes.
 - **Streaming smoke test (`mage smoke`):** End-to-end smoke test that publishes
   test frames over MoQT and verifies all frames are received intact by a subscriber.
   Accepts `-pub` and `-sub` flags to target independent relay endpoints, enabling
@@ -20,6 +39,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`discoverPeers` deduplication unified (`internal/relay`):** The per-`discoverPeers`
+  local `map[string]struct{}` and its mutex have been removed. Deduplication is now handled
+  server-wide by `markConnected`, keyed on peer address instead of peer ID.
+- **`newRelayHandler` owns a cancellable child context (`internal/relay`):** The handler's
+  `ctx` is no longer `sess.Context()` directly; it is a child created with
+  `context.WithCancel`, giving `Drain` and `AfterFunc` cleanup independent control.
 - **gomoqt upgraded to v0.13.4:** Tracks upstream moq-lite API changes including
   updated `moqt.Dialer` and session lifecycle improvements.
 - **`relay.Server` fields made public:** `MOQServer` and `MOQDialer` are now exported
@@ -43,6 +68,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **G118 excluded (`internal/relay`):** `context.WithCancel` cancel function is stored
+  in `relayHandler.cancel` and called later via `Drain` or `context.AfterFunc`; gosec cannot
+  trace cross-function ownership so the finding is a false positive.
 - **gosec integrated into golangci-lint:** Removed the standalone `securego/gosec`
   GitHub Actions step; gosec now runs as part of `golangci-lint` with SARIF output
   uploaded to GitHub Security. Rule exclusions are centrally managed in `.golangci.yml`

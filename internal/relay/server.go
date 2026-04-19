@@ -26,6 +26,11 @@ type Server struct {
 	webtransportHandler *moqt.WebTransportHandler
 	statusHandler       *statusHandler
 	initOnce            sync.Once
+
+	// connectedMu guards connected, which tracks peer addresses already dialing
+	// or connected to prevent duplicate maintainPeer goroutines.
+	connectedMu sync.Mutex
+	connected   map[string]struct{}
 }
 
 func (s *Server) ServeHealth(w http.ResponseWriter, r *http.Request) {
@@ -70,6 +75,10 @@ func (s *Server) init() {
 			TrackMux: s.TrackMux,
 			Handler:  moqt.HandleFunc(s.Relay),
 			Logger:   s.MOQServer.Logger,
+		}
+
+		if s.connected == nil {
+			s.connected = make(map[string]struct{})
 		}
 	})
 }
@@ -116,8 +125,12 @@ func (s *Server) ConnectPeers(ctx context.Context) {
 
 	// Static peers from config.
 	for _, peer := range s.Config.Peers {
+		if !s.markConnected(peer.Address) {
+			continue
+		}
 		wg.Go(func() {
 			s.maintainPeer(ctx, peer)
+			s.markUnconnected(peer.Address)
 		})
 	}
 
@@ -142,21 +155,16 @@ func (s *Server) ConnectPeers(ctx context.Context) {
 // It builds topology connections according to the node's role (edge/hub/default)
 // and re-checks at interval. Already-connected peers are skipped.
 func (s *Server) discoverPeers(ctx context.Context, wg *sync.WaitGroup, interval time.Duration, client *bootstrap.Client) {
-	var mu sync.Mutex
-	connected := make(map[string]struct{})
-
-	// connect dials each peer not already in connected.
+	// connect dials each peer not already connected (server-wide dedup by address).
 	connect := func(peers []bootstrap.Node) {
-		mu.Lock()
-		defer mu.Unlock()
 		for _, p := range peers {
-			if _, ok := connected[p.ID]; ok {
+			if !s.markConnected(p.Addr) {
 				continue
 			}
-			connected[p.ID] = struct{}{}
 			p := p
 			wg.Go(func() {
 				s.maintainPeer(ctx, Peer{Address: p.Addr})
+				s.markUnconnected(p.Addr)
 			})
 		}
 	}
@@ -219,6 +227,26 @@ func (s *Server) discoverPeers(ctx context.Context, wg *sync.WaitGroup, interval
 			tick()
 		}
 	}
+}
+
+// markConnected records addr as connected and returns true if it was not already present.
+// It is safe for concurrent use.
+func (s *Server) markConnected(addr string) bool {
+	s.connectedMu.Lock()
+	defer s.connectedMu.Unlock()
+	if _, ok := s.connected[addr]; ok {
+		return false
+	}
+	s.connected[addr] = struct{}{}
+	return true
+}
+
+// markUnconnected removes addr from the connected set.
+// It is safe for concurrent use.
+func (s *Server) markUnconnected(addr string) {
+	s.connectedMu.Lock()
+	defer s.connectedMu.Unlock()
+	delete(s.connected, addr)
 }
 
 func (s *Server) maintainPeer(ctx context.Context, peer Peer) {
@@ -289,6 +317,29 @@ func (s *Server) Relay(sess *moqt.Session) {
 		}
 
 		handler := newRelayHandler(ann, sess)
+
+		// Route selection: only replace an existing active handler if the new
+		// route is strictly better. This is evaluated once per new candidate to
+		// preserve group-cache hit rates and playback continuity.
+		if _, existing := s.TrackMux.TrackHandler(ann.BroadcastPath()); existing != nil {
+			if rr, ok := existing.(RouteReporter); ok {
+				if !isBetterRoute(handler.RouteStats(), rr.RouteStats()) {
+					slog.Debug("relay: skipping inferior route",
+						"path", ann.BroadcastPath(),
+					)
+					handler.cancel()
+					continue
+				}
+				// Gracefully drain the displaced handler.
+				if dr, ok := existing.(Drainable); ok {
+					dr.Drain(DrainTimeout)
+				}
+			}
+		}
+
+		// Ensure handler.cancel is called when the session ends to release
+		// the child context from the parent's internal children list.
+		context.AfterFunc(sess.Context(), handler.cancel)
 
 		s.TrackMux.Announce(ann, handler)
 	}
