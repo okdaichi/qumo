@@ -135,10 +135,9 @@ For complete Mage documentation and all available targets, see [magefiles/README
 qumo/
 ├── docker/                     # Docker artifacts & docs
 │   ├── Dockerfile              # Multi-stage container build
-│   ├── docker-compose.yml      # Local build + dev
-│   ├── docker-compose.external.yml  # GHCR-based deployment
-│   ├── docker-compose.simple.yml    # Demo (3 peer-connected relays)
-│   ├── docker-compose.topology.yml  # Full 3-region topology
+│   ├── docker-compose.yml               # Single relay (local build)
+│   ├── docker-compose.external.yml      # Single relay (GHCR prebuilt)
+│   ├── docker-compose.topology.yml      # Full 3-region topology (bootstrap + hub + edge)
 │   └── README.md               # Docker usage guide
 │
 ├── internal/                   # Core implementation
@@ -169,8 +168,7 @@ mage test          # Run tests
 mage check         # Format, vet, and test
 mage lint          # Run golangci-lint
 mage docker:build  # Build Docker image
-mage demo:up       # Start 3-relay peer demo
-mage relay         # Run relay server
+mage relay         # Run relay server locally
 mage smoke         # Run cross-region streaming smoke test
 ```
 

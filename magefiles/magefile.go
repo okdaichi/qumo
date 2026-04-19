@@ -107,11 +107,7 @@ func Help() error {
 	fmt.Println("    mage docker:ps    - List running containers")
 	fmt.Println("    mage smoke      - Run cross-region streaming smoke test")
 	fmt.Println()
-	fmt.Println("  🎮 Demo:")
-	fmt.Println("    mage demo:up      - Start demo environment (3 relays)")
-	fmt.Println("    mage demo:down    - Stop demo environment")
-	fmt.Println("    mage demo:status  - Check demo status")
-	fmt.Println()
+
 	fmt.Println("  �🔧 Utilities:")
 	fmt.Println("    mage cert         - Generate TLS certificates using mkcert")
 	fmt.Println("    mage hash         - Compute/write TLS cert SHA-256")
@@ -962,46 +958,4 @@ func Smoke(pub *string, sub *string) error { // pub: publisher relay URL, sub: s
 	return cmd.Run()
 }
 
-// Demo provides demo environment commands
-type Demo mg.Namespace
 
-// Up starts the demo environment with 3 relays
-func (Demo) Up() error {
-	fmt.Println("🎮 Starting demo environment...")
-	fmt.Println("   3 Relay Servers (Tokyo, London, New York)")
-	fmt.Println("   Peers auto-connect via ANNOUNCE_PLEASE")
-	fmt.Println()
-
-	cmd := exec.Command("docker", "compose", "-f", "docker/docker-compose.simple.yml", "up")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
-}
-
-// Down stops the demo environment
-func (Demo) Down() error {
-	fmt.Println("🛑 Stopping demo environment...")
-
-	cmd := exec.Command("docker", "compose", "-f", "docker/docker-compose.simple.yml", "down")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
-}
-
-// Status shows the status of demo services
-func (Demo) Status() error {
-	fmt.Println("📊 Demo Environment Status:")
-	fmt.Println()
-
-	cmd := exec.Command("docker", "compose", "-f", "docker/docker-compose.simple.yml", "ps")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return err
-	}
-
-	fmt.Println()
-	fmt.Println("💡 Try these commands:")
-	fmt.Println("   curl http://localhost:8080/health")
-	return nil
-}

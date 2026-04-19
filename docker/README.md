@@ -7,7 +7,6 @@ Files
 - `Dockerfile` — image build used by CI (GHCR)
 - `docker-compose.yml` — single relay (local build)
 - `docker-compose.external.yml` — single relay (pre-built image)
-- `docker-compose.simple.yml` — demo: 3 peer-connected relays
 - `docker-compose.topology.yml` — **full 3-region topology** (bootstrap + hub + edge per region)
 
 Quick start (3-region topology)
@@ -24,19 +23,6 @@ curl http://localhost:9001/health
 
 # Stop
 docker compose -f docker/docker-compose.topology.yml down
-```
-
-Quick start (simple demo)
-
-```bash
-# Start demo (3 relays, static peers)
-docker compose -f docker/docker-compose.simple.yml up
-
-# Check relay health
-curl http://localhost:8080/health
-
-# Stop demo
-docker compose -f docker/docker-compose.simple.yml down
 ```
 
 Run pre-built image (GHCR)
