@@ -34,8 +34,12 @@ const (
 // the mesh (no peer connections, no announce relay).
 func RunRTMP(args []string) error {
 	fs := flag.NewFlagSet("rtmp", flag.ExitOnError)
-	configFile := fs.String("config", "config.rtmp.yaml", "path to config file")
+	configFile := fs.String("config", "", "path to config file (required)")
 	fs.Parse(args)
+
+	if *configFile == "" {
+		return fmt.Errorf("rtmp: -config flag is required")
+	}
 
 	cfg, err := loadRTMPConfig(*configFile)
 	if err != nil {

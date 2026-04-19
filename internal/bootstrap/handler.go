@@ -103,7 +103,13 @@ func (h *PeersHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	peers := h.Store.Peers(q)
 
-	slog.Debug("peers requested", "region", q.PreferredRegion, "role", q.Role, "allow_remote", q.AllowRemote, "limit", q.Limit, "count", len(peers))
+	slog.Debug("peers requested",
+		slog.String("region", q.PreferredRegion),
+		slog.String("role", q.Role),
+		slog.Bool("allow_remote", q.AllowRemote),
+		slog.Int("limit", q.Limit),
+		slog.Int("count", len(peers)),
+	)
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string]any{"peers": peers}); err != nil {

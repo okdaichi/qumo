@@ -35,8 +35,12 @@ type config struct {
 
 func RunRelay(args []string) error {
 	fs := flag.NewFlagSet("relay", flag.ExitOnError)
-	var configFile = fs.String("config", "config.relay.yaml", "path to config file")
+	var configFile = fs.String("config", "", "path to config file (required)")
 	fs.Parse(args)
+
+	if *configFile == "" {
+		return fmt.Errorf("relay: -config flag is required")
+	}
 
 	// Load configuration
 	config, err := loadConfig(*configFile)
