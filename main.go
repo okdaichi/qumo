@@ -67,6 +67,5 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  version    Print version information")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Flags:")
-	fmt.Fprintln(os.Stderr, "  -config string   path to config file")
-	fmt.Fprintln(os.Stderr, "                   defaults: config.relay.yaml (relay)")
+	fmt.Fprintln(os.Stderr, "  -config string   path to config file (required for relay/rtmp)")
 }

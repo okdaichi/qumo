@@ -7,10 +7,14 @@ services:
       context: ..
       dockerfile: docker/Dockerfile
     container_name: qumo-relay
-    command: ["relay", "-config", "config.relay.yaml"]
+    command: ["relay"]
     ports:
       - "4433:4433/udp"  # MoQT (QUIC)
       - "8080:4433"      # host 8080 -> container 4433 (HTTP health/metrics)
+    environment:
+      RELAY_ADDR: "0.0.0.0:4433"
+      INSECURE: "true"
+      RELAY_NAME: "relay-1"
     volumes:
       - ../certs:/app/certs:ro
     restart: unless-stopped

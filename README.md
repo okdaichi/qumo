@@ -41,7 +41,7 @@ Download the latest binary from [GitHub Releases](https://github.com/okdaichi/qu
 # Linux/macOS
 curl -L https://github.com/okdaichi/qumo/releases/latest/download/qumo-linux-amd64 -o qumo
 chmod +x qumo
-./qumo relay -config config.relay.yaml
+./qumo relay -config <your-config.yaml>>
 
 # Windows
 # Download qumo-windows-amd64.exe from releases page
@@ -55,13 +55,16 @@ See `docker/README.md` for comprehensive Docker usage, compose examples, and dep
 # Pull pre-built image from GitHub Container Registry
 docker pull ghcr.io/okdaichi/qumo:latest
 
-# Run relay
+# Run relay (config generated from environment variables)
 docker run -d \
   --name qumo-relay \
   -p 4433:4433/udp \
   -p 8080:4433 \
-  -v $(pwd)/certs:/app/certs:ro \
-  ghcr.io/okdaichi/qumo:latest relay -config config.relay.yaml
+  -e INSECURE=true \
+  -e RELAY_NAME=relay-1 \
+  -e REGION=asia \
+  -e ROLE=hub \
+  ghcr.io/okdaichi/qumo:latest relay
 ```
 
 #### Option 4: Build from Source
@@ -96,14 +99,14 @@ qumo -v
 ### relay
 
 Start a media relay server that forwards MoQ streams between publishers and subscribers.
-
-**Start Server:**
-```bash
-qumo relay -config config.relay.yaml
+<your-config.yaml>
 ```
 
 **Configuration:**
-Edit [config.relay.yaml](config.relay.yaml) with your settings.
+See `docker/docker-compose.topology.yml` for a full 3-region example with bootstrap, hub and edge nodes. Configuration is generated from environment variables in Docker — see `docker/docker-entrypoint.sh` for all supported variable
+
+**Configuration:**
+See `docker/docker-compose.topology.yml` for a full 3-region example with bootstrap, hub and edge nodes. Configuration is generated from environment variables in Docker — see `docker/docker-entrypoint.sh` for all supported variables.
 
 **Key Features:**
 - Fan-out media track forwarding
@@ -113,10 +116,10 @@ Edit [config.relay.yaml](config.relay.yaml) with your settings.
 **API Endpoints:**
 - `GET /health` - Health probes
   - `GET /health?probe=ready` - Readiness probe
-  - `GET /health?probe=live` - Liveness probe
+  - `docker/README.md](docker/README.md) for Docker-based environment variables, compose examples, and deployment options
 - `GET /metrics` - Prometheus metrics
 
-See [config.relay.yaml](config.relay.yaml) for all configuration options. For Docker-based environment variables and setup, see [docker/README.md](docker/README.md).
+See [docker/README.md](docker/README.md) for Docker-based environment variables, compose examples, and deployment options.
 
 ## Architecture
 
@@ -187,15 +190,11 @@ qumo/
 │   ├── prometheus.yaml
 │   └── grafana/
 │
-├── solid-deno/                 # Web demo client (SolidJS + Deno) — see solid-deno/README.md
-│
+├── 
 ├── certs/                      # TLS certificate examples
-├── configs/                    # Configuration templates
 ├── benchmarks/                 # Performance benchmarks
 ├── examples/                   # Usage examples
-├── docs/                       # Additional documentation
-│
-├── config.relay.yaml           # Relay configuration template
+├── 
 ├── .github/workflows/          # CI/CD pipelines
 ├── go.mod & go.sum             # Go dependencies
 └── main.go                     # Entry point

@@ -12,16 +12,29 @@ server:
 relay:
   node_id: "${RELAY_NAME:-relay-${HOSTNAME}}"
   region: "${REGION:-}"
+  role: "${ROLE:-}"
+  advertise_addr: "${ADVERTISE_ADDR:-}"
   group_cache_size: ${GROUP_CACHE_SIZE:-100}
   frame_capacity: ${FRAME_CAPACITY:-1500}
 EOF
 
-    # Add peers config if PEERS is set (comma-separated: "moqt://relay-a:4433,moqt://relay-b:4433")
+    # Add static peers if PEERS is set (comma-separated: "moqt://relay-a:4433,moqt://relay-b:4433")
     if [ -n "$PEERS" ]; then
         echo "" >> /tmp/config.relay.yaml
         echo "peers:" >> /tmp/config.relay.yaml
         echo "$PEERS" | tr ',' '\n' | while read -r addr; do
             echo "  - address: \"$addr\"" >> /tmp/config.relay.yaml
+        done
+    fi
+
+    # Add bootstrap servers if BOOTSTRAP_URLS is set (comma-separated)
+    # Format: "http://bootstrap-a:8080,http://bootstrap-b:8080"
+    if [ -n "$BOOTSTRAP_URLS" ]; then
+        echo "" >> /tmp/config.relay.yaml
+        echo "bootstraps:" >> /tmp/config.relay.yaml
+        echo "$BOOTSTRAP_URLS" | tr ',' '\n' | while read -r url; do
+            echo "  - url: \"$url\"" >> /tmp/config.relay.yaml
+            echo "    interval: \"${BOOTSTRAP_INTERVAL:-15s}\"" >> /tmp/config.relay.yaml
         done
     fi
 }
@@ -65,6 +78,18 @@ case "$COMMAND" in
             generate_insecure_certs
             exec /app/qumo "$@"
         fi
+        ;;
+    bootstrap)
+        # Run bootstrap server from env vars (flags override env vars when both are present)
+        LISTEN="${BOOTSTRAP_LISTEN:-:8080}"
+        TTL="${BOOTSTRAP_TTL:-60s}"
+        CLEANUP="${BOOTSTRAP_CLEANUP_INTERVAL:-10s}"
+        MAX="${BOOTSTRAP_MAX_PEERS:-200}"
+        exec /app/qumo bootstrap \
+            --listen "$LISTEN" \
+            --ttl "$TTL" \
+            --cleanup-interval "$CLEANUP" \
+            --max-peers "$MAX"
         ;;
     *)
         exec /app/qumo "$@"

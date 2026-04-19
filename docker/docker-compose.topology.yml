@@ -1,0 +1,211 @@
+# 3-Region Topology Test Environment
+#
+# Topology:
+#   asia     : bootstrap-asia,    relay-hub-asia,     relay-edge-asia
+#   europe   : bootstrap-europe,  relay-hub-europe,   relay-edge-europe
+#   americas : bootstrap-americas relay-hub-americas,  relay-edge-americas
+#
+# Hub strategy  : 2 local peers + 2 same-region hubs + 1 cross-region hub (via bootstrap)
+# Edge strategy : 2 local edges + 1 hub (via bootstrap)
+#
+# Usage:
+#   docker compose -f docker/docker-compose.topology.yml up --build
+#
+# Health endpoints (host ports):
+#   http://localhost:8091   bootstrap-asia
+#   http://localhost:8092   bootstrap-europe
+#   http://localhost:8093   bootstrap-americas
+#   http://localhost:9001   relay-hub-asia      (/health, /status, /metrics)
+#   http://localhost:9002   relay-edge-asia
+#   http://localhost:9003   relay-hub-europe
+#   http://localhost:9004   relay-edge-europe
+#   http://localhost:9005   relay-hub-americas
+#   http://localhost:9006   relay-edge-americas
+
+x-bootstrap-base: &bootstrap-base
+  build:
+    context: ..
+    dockerfile: docker/Dockerfile
+  command: ["bootstrap"]
+  restart: unless-stopped
+  healthcheck:
+    test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8080/peers"]
+    interval: 10s
+    timeout: 3s
+    retries: 3
+    start_period: 5s
+  networks:
+    - qumo-net
+
+x-relay-base: &relay-base
+  build:
+    context: ..
+    dockerfile: docker/Dockerfile
+  command: ["relay", "-config", "/dev/null"]
+  restart: unless-stopped
+  environment:
+    RELAY_ADDR: "0.0.0.0:4433"
+    INSECURE: "true"
+    BOOTSTRAP_INTERVAL: "15s"
+  healthcheck:
+    test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:4433/health"]
+    interval: 15s
+    timeout: 3s
+    retries: 5
+    start_period: 20s
+  networks:
+    - qumo-net
+
+services:
+
+  # ─── Bootstrap servers ──────────────────────────────────────────────────────
+
+  bootstrap-asia:
+    <<: *bootstrap-base
+    container_name: qumo-bootstrap-asia
+    environment:
+      BOOTSTRAP_LISTEN: ":8080"
+      BOOTSTRAP_TTL: "60s"
+      BOOTSTRAP_MAX_PEERS: "200"
+    ports:
+      - "8091:8080"
+
+  bootstrap-europe:
+    <<: *bootstrap-base
+    container_name: qumo-bootstrap-europe
+    environment:
+      BOOTSTRAP_LISTEN: ":8080"
+      BOOTSTRAP_TTL: "60s"
+      BOOTSTRAP_MAX_PEERS: "200"
+    ports:
+      - "8092:8080"
+
+  bootstrap-americas:
+    <<: *bootstrap-base
+    container_name: qumo-bootstrap-americas
+    environment:
+      BOOTSTRAP_LISTEN: ":8080"
+      BOOTSTRAP_TTL: "60s"
+      BOOTSTRAP_MAX_PEERS: "200"
+    ports:
+      - "8093:8080"
+
+  # ─── Asia region ────────────────────────────────────────────────────────────
+
+  relay-hub-asia:
+    <<: *relay-base
+    container_name: qumo-relay-hub-asia
+    depends_on:
+      bootstrap-asia:
+        condition: service_healthy
+    environment:
+      RELAY_ADDR: "0.0.0.0:4433"
+      INSECURE: "true"
+      RELAY_NAME: "relay-hub-asia"
+      REGION: "asia"
+      ROLE: "hub"
+      ADVERTISE_ADDR: "relay-hub-asia:4433"
+      # Register with all 3 bootstraps so cross-region hubs can find each other
+      BOOTSTRAP_URLS: "http://bootstrap-asia:8080,http://bootstrap-europe:8080,http://bootstrap-americas:8080"
+      BOOTSTRAP_INTERVAL: "15s"
+    ports:
+      - "9001:4433"
+
+  relay-edge-asia:
+    <<: *relay-base
+    container_name: qumo-relay-edge-asia
+    depends_on:
+      bootstrap-asia:
+        condition: service_healthy
+    environment:
+      RELAY_ADDR: "0.0.0.0:4433"
+      INSECURE: "true"
+      RELAY_NAME: "relay-edge-asia"
+      REGION: "asia"
+      ROLE: "edge"
+      ADVERTISE_ADDR: "relay-edge-asia:4433"
+      # Edges only register with their region's bootstrap
+      BOOTSTRAP_URLS: "http://bootstrap-asia:8080"
+      BOOTSTRAP_INTERVAL: "15s"
+    ports:
+      - "9002:4433"
+
+  # ─── Europe region ──────────────────────────────────────────────────────────
+
+  relay-hub-europe:
+    <<: *relay-base
+    container_name: qumo-relay-hub-europe
+    depends_on:
+      bootstrap-europe:
+        condition: service_healthy
+    environment:
+      RELAY_ADDR: "0.0.0.0:4433"
+      INSECURE: "true"
+      RELAY_NAME: "relay-hub-europe"
+      REGION: "europe"
+      ROLE: "hub"
+      ADVERTISE_ADDR: "relay-hub-europe:4433"
+      BOOTSTRAP_URLS: "http://bootstrap-europe:8080,http://bootstrap-asia:8080,http://bootstrap-americas:8080"
+      BOOTSTRAP_INTERVAL: "15s"
+    ports:
+      - "9003:4433"
+
+  relay-edge-europe:
+    <<: *relay-base
+    container_name: qumo-relay-edge-europe
+    depends_on:
+      bootstrap-europe:
+        condition: service_healthy
+    environment:
+      RELAY_ADDR: "0.0.0.0:4433"
+      INSECURE: "true"
+      RELAY_NAME: "relay-edge-europe"
+      REGION: "europe"
+      ROLE: "edge"
+      ADVERTISE_ADDR: "relay-edge-europe:4433"
+      BOOTSTRAP_URLS: "http://bootstrap-europe:8080"
+      BOOTSTRAP_INTERVAL: "15s"
+    ports:
+      - "9004:4433"
+
+  # ─── Americas region ─────────────────────────────────────────────────────────
+
+  relay-hub-americas:
+    <<: *relay-base
+    container_name: qumo-relay-hub-americas
+    depends_on:
+      bootstrap-americas:
+        condition: service_healthy
+    environment:
+      RELAY_ADDR: "0.0.0.0:4433"
+      INSECURE: "true"
+      RELAY_NAME: "relay-hub-americas"
+      REGION: "americas"
+      ROLE: "hub"
+      ADVERTISE_ADDR: "relay-hub-americas:4433"
+      BOOTSTRAP_URLS: "http://bootstrap-americas:8080,http://bootstrap-asia:8080,http://bootstrap-europe:8080"
+      BOOTSTRAP_INTERVAL: "15s"
+    ports:
+      - "9005:4433"
+
+  relay-edge-americas:
+    <<: *relay-base
+    container_name: qumo-relay-edge-americas
+    depends_on:
+      bootstrap-americas:
+        condition: service_healthy
+    environment:
+      RELAY_ADDR: "0.0.0.0:4433"
+      INSECURE: "true"
+      RELAY_NAME: "relay-edge-americas"
+      REGION: "americas"
+      ROLE: "edge"
+      ADVERTISE_ADDR: "relay-edge-americas:4433"
+      BOOTSTRAP_URLS: "http://bootstrap-americas:8080"
+      BOOTSTRAP_INTERVAL: "15s"
+    ports:
+      - "9006:4433"
+
+networks:
+  qumo-net:
+    driver: bridge

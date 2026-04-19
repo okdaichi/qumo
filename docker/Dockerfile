@@ -54,9 +54,6 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 # Copy binary from builder
 COPY --from=builder /build/qumo .
 
-# Copy config files (optional - can be generated from env vars)
-COPY config.relay.yaml ./
-
 # Create certs directory
 RUN mkdir -p certs
 
@@ -71,5 +68,5 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 # Use entrypoint script for config generation
 ENTRYPOINT ["docker-entrypoint.sh"]
 
-# Default command (relay)
-CMD ["relay", "-config", "config.relay.yaml"]
+# Default command — entrypoint generates config from env vars
+CMD ["relay"]
