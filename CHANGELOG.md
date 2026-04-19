@@ -7,28 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
+### Added
 
-- **Relay initialization:** `Server.init()` is now concurrency-safe and preserves
-  existing `TrackMux` and `WebTransportServer` settings when present.
-- **Health check handler:** Renamed `ServeHealth`, delegated probe handling to
-  `statusHandler`, and restored readiness probe support.
-- **Connection tracking restored:** Relay session handling now increments and
-  decrements active connection counts for accurate readiness status.
-- **Startup safety:** `HandleWebTransport` and `ConnectPeers` now safely initialize
-  server dependencies before use.
+- **Streaming smoke test (`mage smoke`):** End-to-end smoke test that publishes
+  test frames over MoQT and verifies all frames are received intact by a subscriber.
+  Accepts `-pub` and `-sub` flags to target independent relay endpoints, enabling
+  cross-region mesh validation. Exits with code 1 on frame loss or hash mismatch.
+- **`internal/smoketest` package:** Smoke test implementation moved from `cmd/smoketest`
+  to `internal/smoketest` and invoked via the Mage build system.
+- **`docker-compose.topology.yml` port protocols:** UDP and TCP protocols are now
+  explicitly declared for all relay service ports.
 
 ### Changed
 
-- **CLI routing updated:** `/health` now uses `relay.Server.ServeHealth`.
-- **Test coverage improved:** added readiness probe cases and clarified shutdown
-  behavior in the relay server tests.
+- **gomoqt upgraded to v0.13.4:** Tracks upstream moq-lite API changes including
+  updated `moqt.Dialer` and session lifecycle improvements.
+- **`relay.Server` fields made public:** `MOQServer` and `MOQDialer` are now exported
+  fields, enabling callers to configure the underlying server and dialer directly.
+- **Context propagation fixed:** `Subscribe` and `ReceiveAnnouncement` now use the
+  session-scoped context (`h.ctx` / `sess.Context()`) instead of `context.Background()`,
+  so upstream connections are cancelled when the relay session closes.
+- **`statusHandler` nil-check restored:** `Server.init()` no longer overwrites a
+  caller-supplied `statusHandler`.
+- **TLS configuration hardened:** `InsecureSkipVerify` is now set only on the dialer
+  TLS config when `INSECURE=true`; the server-side TLS config no longer carries it.
+- **`Peer.Address` comment corrected:** Removed unsupported `https://` scheme from
+  documentation; only `moqt://` and bare `host:port` are accepted by `DialQUIC`.
 
-### Removed
+### Fixed
 
-- `config.relay.yaml` — replaced by `relay-config.example.env`
-- `config.rtmp.yaml` — no longer shipped (rtmp still uses `-config` flag)
-- `docker/docker-entrypoint.sh` — binary reads env vars directly
+- **`fs.Parse` error handling:** `RunRTMP` now propagates `flag.Parse` errors instead
+  of silently discarding them (flag set changed to `ContinueOnError`).
+- **Smoke test error handling:** `frame.Write` and `gw.Close` errors are now caught
+  and logged during publishing; early return prevents sending corrupt groups.
+
+### Security
+
+- **gosec integrated into golangci-lint:** Removed the standalone `securego/gosec`
+  GitHub Actions step; gosec now runs as part of `golangci-lint` with SARIF output
+  uploaded to GitHub Security. Rule exclusions are centrally managed in `.golangci.yml`
+  with per-path scope and rationale comments, eliminating inline `#nosec` annotations.
+- **G115 excluded globally:** Integer overflow conversions in RTMP/AMF3/QUIC protocol
+  encoding are intentional truncations mandated by the respective wire formats.
 
 ## [v0.4.0] - 2026-04-15
 
