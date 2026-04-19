@@ -15,16 +15,6 @@
 - 🔒 **TLS Security**: Built-in TLS 1.3 support for encrypted connections
 - 🐳 **Docker-Support**: Env-var zero-config; prebuilt multi-arch images on GHCR (ghcr.io/okdaichi/qumo)
 
-## Quick Start
-
-### Demo Environment (short)
-
-A complete Docker-based demo (3 peer-connected relays) and all Docker-related examples have been consolidated under `docker/`. See `docker/README.md` for quick start, compose files, and GHCR usage.
-
-### For Developers
-
-See [Installation](#installation) and [Development](#development) sections below.
-
 ## Installation
 
 #### Option 1: Install via Go
@@ -33,7 +23,7 @@ See [Installation](#installation) and [Development](#development) sections below
 go install github.com/okdaichi/qumo@latest
 ```
 
-#### Option 2: Download Binary (Recommended)
+#### Option 2: Download Binary
 
 Download the latest binary from [GitHub Releases](https://github.com/okdaichi/qumo/releases):
 
@@ -41,34 +31,16 @@ Download the latest binary from [GitHub Releases](https://github.com/okdaichi/qu
 # Linux/macOS
 curl -L https://github.com/okdaichi/qumo/releases/latest/download/qumo-linux-amd64 -o qumo
 chmod +x qumo
-# Set required env vars (see relay-config.example.env)
 export ADVERTISE_ADDR=localhost:4433
 export INSECURE=true
 ./qumo relay
 
-# Windows
-# Download qumo-windows-amd64.exe from releases page
+# Windows: download qumo-windows-amd64.exe from the releases page
 ```
 
-#### Option 3: Docker (No Build Required)
+#### Option 3: Docker
 
-See `docker/README.md` for comprehensive Docker usage, compose examples, and deployment options. Quick example:
-
-```bash
-# Pull pre-built image from GitHub Container Registry
-docker pull ghcr.io/okdaichi/qumo:latest
-
-# Run relay (config generated from environment variables)
-docker run -d \
-  --name qumo-relay \
-  -p 4433:4433/udp \
-  -p 8080:4433 \
-  -e INSECURE=true \
-  -e RELAY_NAME=relay-1 \
-  -e REGION=asia \
-  -e ROLE=hub \
-  ghcr.io/okdaichi/qumo:latest relay
-```
+See [docker/README.md](docker/README.md) for compose examples, GHCR usage, and deployment options.
 
 #### Option 4: Build from Source
 
@@ -81,50 +53,14 @@ mage build        # builds bin/qumo with version info
 
 ## Usage
 
-qumo provides some subcommands for different deployment scenarios.
-
-### version
-
-Print build-time version information.
-
 ```bash
-qumo version
-# qumo v0.3.0
-#   commit: f5a09bf
-#   built:  2026-02-14T02:08:26Z
-#   go:     go1.26.0
-
-# Also works with:
-qumo --version
-qumo -v
+qumo relay       # Start MoQ relay server (QUIC/MoQT, WebTransport, peer mesh)
+qumo bootstrap   # Start bootstrap discovery server (HTTP peer registry)
+qumo rtmp        # Start RTMP ingest server (bridges RTMP → MoQT)
+qumo version     # Print build-time version info
 ```
 
-### relay
-
-Start a media relay server that forwards MoQ streams between publishers and subscribers.
-
-```bash
-# Configure via environment variables (see relay-config.example.env)
-export ADVERTISE_ADDR=localhost:4433
-export INSECURE=true
-qumo relay
-```
-
-**Configuration:**
-Relay and bootstrap are configured entirely via environment variables. See `relay-config.example.env` and `bootstrap-config.example.env` for all supported variables. For a full 3-region example with bootstrap, hub, and edge nodes, see `docker/docker-compose.topology.yml`.
-
-**Key Features:**
-- Fan-out media track forwarding
-- Prometheus metrics export // WIP
-- Peer-based announce relay via ANNOUNCE_PLEASE (draft-03)
-
-**API Endpoints:**
-- `GET /health` - Health probes
-  - `GET /health?probe=ready` - Readiness probe
-  - `GET /health?probe=live` - Liveness probe
-- `GET /metrics` - Prometheus metrics
-
-See [docker/README.md](docker/README.md) for Docker-based environment variables, compose examples, and deployment options.
+For environment variables and configuration, see `relay-config.example.env` and `bootstrap-config.example.env`. For Docker-based deployment, see [docker/README.md](docker/README.md).
 
 ## Architecture
 
@@ -225,9 +161,7 @@ qumo/
 
 ### Build System (Mage)
 
-Quick usage (see [magefiles/README.md](magefiles/README.md) for complete reference).
-
-- **Mage repository:** https://github.com/magefile/mage — official site: https://magefile.org/
+See [magefiles/README.md](magefiles/README.md) for the complete reference. Common targets:
 
 ```bash
 mage build         # Build binary to bin/qumo
@@ -240,15 +174,3 @@ mage relay         # Run relay server
 mage smoke         # Run cross-region streaming smoke test
 ```
 
-### Building with Version Info
-
-Version metadata is embedded into the binary at build time via `-ldflags`. Use `mage build` (recommended) to produce artifact(s) with version information. For the manual `go build -ldflags` command and examples, see the `Build & Install` section in `magefiles/README.md`.
-
-## Deployment
-
-Deployment examples were previously provided in this repository but have since been removed.
-
-## Troubleshooting
-
-- **TLS errors**: Regenerate certificates (see Quick Start)
-- **Port in use**: Check with `lsof -i :4433` or `netstat -ano`
