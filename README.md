@@ -132,27 +132,51 @@ See [docker/README.md](docker/README.md) for Docker-based environment variables,
 
 ```mermaid
 graph LR
-    Publisher["Publisher<br/>(Browser)"]
-    RelayA["Relay A<br/>(qumo)"]
-    RelayB["Relay B<br/>(qumo)"]
-    Subscriber["Subscriber<br/>(Browser)"]
+    Publisher["Publisher<br/>(Browser/WebTransport)"]
+    Bootstrap["Bootstrap Server<br/>(qumo bootstrap)"]
+    Hub["Hub Relay<br/>(qumo relay)"]
+    EdgeA["Edge Relay A<br/>(qumo relay)"]
+    EdgeB["Edge Relay B<br/>(qumo relay)"]
+    Subscriber["Subscriber<br/>(Browser/WebTransport)"]
 
-    Publisher -->|QUIC/MoQ| RelayA
-    RelayA <-->|"ANNOUNCE_PLEASE<br/>peer connection"| RelayB
-    RelayB -->|QUIC/MoQ| Subscriber
+    Publisher -->|"QUIC/MoQ<br/>WebTransport"| EdgeA
+    EdgeA <-->|"ANNOUNCE_PLEASE<br/>QUIC peer"| Hub
+    Hub <-->|"ANNOUNCE_PLEASE<br/>QUIC peer"| EdgeB
+    EdgeB -->|"QUIC/MoQ<br/>WebTransport"| Subscriber
+
+    EdgeA -->|"POST /register (heartbeat)<br/>GET /peers (discovery)"| Bootstrap
+    Hub -->|"POST /register (heartbeat)<br/>GET /peers (discovery)"| Bootstrap
+    EdgeB -->|"POST /register (heartbeat)<br/>GET /peers (discovery)"| Bootstrap
 ```
 
 ### Peer Discovery Lifecycle
 
 ```mermaid
 graph TD
-    A["Relay A Startup"] -->|"Dial peer address<br/>(moqt:// or https://)"| B["Connect to Relay B"]
-    B --> C["Send ANNOUNCE_PLEASE<br/>prefix='/'"]
-    C --> D["Receive ANNOUNCE<br/>from Relay B"]
-    D --> E["Register on local TrackMux"]
-    E --> F["Subscribers can access<br/>remote content"]
-    B -->|"Connection lost"| G["Retry after 5s"]
-    G --> B
+    Start["Relay Startup"] --> Static{"Static PEERS<br/>configured?"}
+    Static -->|yes| DialStatic["Dial static peer<br/>(maintainPeer — goroutine)"]
+    Static -->|no| BS{"BOOTSTRAP_URLS<br/>configured?"}
+    DialStatic --> BS
+
+    BS -->|yes| Register["POST /register<br/>(heartbeat every interval)"]
+    Register --> Tick["Periodic tick<br/>(every BOOTSTRAP_INTERVAL)"]
+    Tick --> Discover["GET /peers<br/>(role-aware query)"]
+    Discover -->|"edge: local edges + local hub"| DialDynamic
+    Discover -->|"hub: local peers + cross-region hub"| DialDynamic
+    Discover -->|"default: local peers"| DialDynamic
+    Discover --> Tick
+
+    DialDynamic["Dial new peer<br/>(maintainPeer — goroutine,<br/>skip already-connected)"] --> ALPN["QUIC dial<br/>(ALPN: moqt)"]
+    ALPN --> Announce["Send ANNOUNCE_PLEASE<br/>prefix='/'"]
+    Announce --> Receive["Receive ANNOUNCE<br/>from peer"]
+    Receive --> TrackMux["Register on local TrackMux"]
+    TrackMux --> Serve["Subscribers can access<br/>remote content"]
+
+    ALPN -->|"dial failed"| Retry["Wait 5s"]
+    Serve -->|"connection lost"| Retry
+    Retry --> ALPN
+
+    BS -->|no| Idle["Accept incoming<br/>connections only"]
 ```
 
 ## Development
@@ -184,16 +208,12 @@ qumo/
 ├── internal/                   # Core implementation
 │   ├── cli/                    # CLI entrypoints & env-var config
 │   ├── relay/                  # Relay server (handlers, peer connections, caching)
+│   ├── bootstrap/              # Bootstrap server & client (peer discovery via HTTP)
 │   ├── rtmp/                   # RTMP utilities
 │   ├── ingest/                 # RTMP ingest & FLV parsing
 │   └── version/                # Version info
 │
 ├── magefiles/                  # Build automation (Mage tasks)
-│
-├── deploy/                     # Observability stack
-│   ├── otel-collector-config.yaml
-│   ├── prometheus.yaml
-│   └── grafana/
 │
 ├── certs/                      # TLS certificate examples
 ├── benchmarks/                 # Performance benchmarks
@@ -213,9 +233,11 @@ Quick usage (see [magefiles/README.md](magefiles/README.md) for complete referen
 mage build         # Build binary to bin/qumo
 mage test          # Run tests
 mage check         # Format, vet, and test
+mage lint          # Run golangci-lint
 mage docker:build  # Build Docker image
 mage demo:up       # Start 3-relay peer demo
 mage relay         # Run relay server
+mage smoke         # Run cross-region streaming smoke test
 ```
 
 ### Building with Version Info
@@ -224,8 +246,7 @@ Version metadata is embedded into the binary at build time via `-ldflags`. Use `
 
 ## Deployment
 
-For systemd and Kubernetes deployment examples see `deploy/README.md`.  
-> ⚠️ These examples are provided as *experimental/informational* samples and have not been fully validated by the project maintainers — use at your own risk. PRs to improve them are welcome.
+Deployment examples were previously provided in this repository but have since been removed.
 
 ## Troubleshooting
 
