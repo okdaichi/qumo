@@ -65,14 +65,21 @@ func run(ctx context.Context, pubURL, subURL string, numGroups, numFrames, frame
 			}
 			for f := range numFrames {
 				frame := moqt.NewFrame(frameSize)
-				frame.Write(testData[g*numFrames+f])
+				if _, err := frame.Write(testData[g*numFrames+f]); err != nil {
+					log.Printf("publish: frame.Write: %v", err)
+					_ = gw.Close()
+					return
+				}
 				if err := gw.WriteFrame(frame); err != nil {
 					log.Printf("publish: WriteFrame: %v", err)
-					gw.Close()
+					_ = gw.Close()
 					return
 				}
 			}
-			gw.Close()
+			if err := gw.Close(); err != nil {
+				log.Printf("publish: Close group: %v", err)
+				return
+			}
 		}
 		log.Printf("publish: sent %d groups × %d frames ✓", numGroups, numFrames)
 	})
