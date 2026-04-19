@@ -179,7 +179,7 @@ func RunRelay(_ []string) error {
 	log.Printf("\t%-8s: %s\n", "Node ID", sanitizeLog(relayCfg.NodeID))
 	log.Printf("\t%-8s: %s\n", "Region", sanitizeLog(relayCfg.Region))
 	log.Printf("\t%-8s: WebTransport endpoint\n", "/")
-	log.Printf("\t%-8s: liveness/readiness probe\n", "/health")
+	log.Printf("\t%-8s: health probe\n", "/health")
 	log.Printf("\t%-8s: Prometheus metrics\n", "/metrics")
 	for _, p := range relayCfg.Peers {
 		log.Printf("\t%-8s: %s\n", "Peer", sanitizeLog(p.Address))

@@ -54,6 +54,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so upstream connections are cancelled when the relay session closes.
 - **`statusHandler` nil-check restored:** `Server.init()` no longer overwrites a
   caller-supplied `statusHandler`.
+- **Simplified relay health endpoint (`internal/relay`):** `/health` no longer supports
+  probe query parameters or separate liveness/readiness semantics; it now returns a
+  single unified health payload with `live: true` and `ready: true`.
 - **TLS configuration hardened:** `InsecureSkipVerify` is now set only on the dialer
   TLS config when `INSECURE=true`; the server-side TLS config no longer carries it.
 - **`Peer.Address` comment corrected:** Removed unsupported `https://` scheme from
