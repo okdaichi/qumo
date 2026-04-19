@@ -34,7 +34,6 @@ archives:
     files:
       - LICENSE
       - README.md
-      - config.relay.yaml
 
 checksum:
   name_template: "checksums.txt"

@@ -41,7 +41,10 @@ Download the latest binary from [GitHub Releases](https://github.com/okdaichi/qu
 # Linux/macOS
 curl -L https://github.com/okdaichi/qumo/releases/latest/download/qumo-linux-amd64 -o qumo
 chmod +x qumo
-./qumo relay -config config.relay.yaml
+# Set required env vars (see relay-config.example.env)
+export ADVERTISE_ADDR=localhost:4433
+export INSECURE=true
+./qumo relay
 
 # Windows
 # Download qumo-windows-amd64.exe from releases page
@@ -55,13 +58,16 @@ See `docker/README.md` for comprehensive Docker usage, compose examples, and dep
 # Pull pre-built image from GitHub Container Registry
 docker pull ghcr.io/okdaichi/qumo:latest
 
-# Run relay
+# Run relay (config generated from environment variables)
 docker run -d \
   --name qumo-relay \
   -p 4433:4433/udp \
   -p 8080:4433 \
-  -v $(pwd)/certs:/app/certs:ro \
-  ghcr.io/okdaichi/qumo:latest relay -config config.relay.yaml
+  -e INSECURE=true \
+  -e RELAY_NAME=relay-1 \
+  -e REGION=asia \
+  -e ROLE=hub \
+  ghcr.io/okdaichi/qumo:latest relay
 ```
 
 #### Option 4: Build from Source
@@ -97,13 +103,15 @@ qumo -v
 
 Start a media relay server that forwards MoQ streams between publishers and subscribers.
 
-**Start Server:**
 ```bash
-qumo relay -config config.relay.yaml
+# Configure via environment variables (see relay-config.example.env)
+export ADVERTISE_ADDR=localhost:4433
+export INSECURE=true
+qumo relay
 ```
 
 **Configuration:**
-Edit [config.relay.yaml](config.relay.yaml) with your settings.
+Relay and bootstrap are configured entirely via environment variables. See `relay-config.example.env` and `bootstrap-config.example.env` for all supported variables. For a full 3-region example with bootstrap, hub, and edge nodes, see `docker/docker-compose.topology.yml`.
 
 **Key Features:**
 - Fan-out media track forwarding
@@ -116,7 +124,7 @@ Edit [config.relay.yaml](config.relay.yaml) with your settings.
   - `GET /health?probe=live` - Liveness probe
 - `GET /metrics` - Prometheus metrics
 
-See [config.relay.yaml](config.relay.yaml) for all configuration options. For Docker-based environment variables and setup, see [docker/README.md](docker/README.md).
+See [docker/README.md](docker/README.md) for Docker-based environment variables, compose examples, and deployment options.
 
 ## Architecture
 
@@ -167,14 +175,14 @@ For complete Mage documentation and all available targets, see [magefiles/README
 qumo/
 ├── docker/                     # Docker artifacts & docs
 │   ├── Dockerfile              # Multi-stage container build
-│   ├── docker-entrypoint.sh    # Auto-config from env vars
 │   ├── docker-compose.yml      # Local build + dev
 │   ├── docker-compose.external.yml  # GHCR-based deployment
 │   ├── docker-compose.simple.yml    # Demo (3 peer-connected relays)
+│   ├── docker-compose.topology.yml  # Full 3-region topology
 │   └── README.md               # Docker usage guide
 │
 ├── internal/                   # Core implementation
-│   ├── cli/                    # CLI entrypoints & config loading
+│   ├── cli/                    # CLI entrypoints & env-var config
 │   ├── relay/                  # Relay server (handlers, peer connections, caching)
 │   ├── rtmp/                   # RTMP utilities
 │   ├── ingest/                 # RTMP ingest & FLV parsing
@@ -187,15 +195,9 @@ qumo/
 │   ├── prometheus.yaml
 │   └── grafana/
 │
-├── solid-deno/                 # Web demo client (SolidJS + Deno) — see solid-deno/README.md
-│
 ├── certs/                      # TLS certificate examples
-├── configs/                    # Configuration templates
 ├── benchmarks/                 # Performance benchmarks
 ├── examples/                   # Usage examples
-├── docs/                       # Additional documentation
-│
-├── config.relay.yaml           # Relay configuration template
 ├── .github/workflows/          # CI/CD pipelines
 ├── go.mod & go.sum             # Go dependencies
 └── main.go                     # Entry point

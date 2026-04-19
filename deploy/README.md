@@ -48,7 +48,7 @@ export OTEL_ENDPOINT=localhost:4317
 export OTEL_SAMPLING_RATE=1.0
 
 # 起動
-./qumo-relay -config config.relay.yaml
+./qumo-relay -config <your-config.yaml>
 ```
 
 または config.yaml で設定：
@@ -87,7 +87,7 @@ After=network.target
 [Service]
 Type=simple
 User=qumo
-ExecStart=/usr/local/bin/qumo relay -config /etc/qumo/config.relay.yaml
+ExecStart=/usr/local/bin/qumo relay -config /etc/qumo/relay.yaml
 Restart=on-failure
 RestartSec=5
 

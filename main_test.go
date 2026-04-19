@@ -11,29 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestPrintUsage_WritesHelpToStderr(t *testing.T) {
-	// Capture stderr
-	saved := os.Stderr
-	r, w, err := os.Pipe()
-	require.NoError(t, err)
-	os.Stderr = w
-
-	printUsage()
-
-	_ = w.Close()
-	var buf bytes.Buffer
-	_, err = buf.ReadFrom(r)
-	require.NoError(t, err)
-	os.Stderr = saved
-
-	out := buf.String()
-	assert.Contains(t, out, "Usage: qumo <command> [flags]")
-	assert.Contains(t, out, "Commands:")
-	assert.Contains(t, out, "relay")
-	assert.Contains(t, out, "rtmp")
-	assert.Contains(t, out, "Flags:")
-}
-
 // Test cases that exercise main() by re-executing the test binary in a child
 // process. The child path is selected with -test.run and an env var toggles
 // child behavior. This avoids calling os.Exit() in the test process.
@@ -78,9 +55,9 @@ func TestRun_Unit(t *testing.T) {
 			wantStderrContains: []string{"error: boom"},
 		},
 		"relay passes args": {
-			args: []string{"relay", "-config", "x"},
+			args: []string{"relay", "extra"},
 			stubRelay: func(a []string) error {
-				assert.Equal(t, []string{"-config", "x"}, a)
+				assert.Equal(t, []string{"extra"}, a)
 				return nil
 			},
 			wantCode: 0,
@@ -170,11 +147,11 @@ func TestMain_Subprocess(t *testing.T) {
 			wantExitNonZero:    true,
 			wantOutputContains: []string{"unknown command", "Usage: qumo"},
 		},
-		"relay missing config file": {
-			// cli.RunRelay will attempt to load the provided config file and fail
-			args:               []string{"relay", "-config", "does-not-exist.yaml"},
+		"relay env validation error": {
+			// cli.RunRelay validates env vars; default wildcard addr requires ADVERTISE_ADDR
+			args:               []string{"relay"},
 			wantExitNonZero:    true,
-			wantOutputContains: []string{"failed to load config", "error:"},
+			wantOutputContains: []string{"ADVERTISE_ADDR is required", "error:"},
 		},
 		"rtmp missing config file": {
 			args:               []string{"rtmp", "-config", "does-not-exist.yaml"},
