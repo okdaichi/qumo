@@ -144,6 +144,9 @@ func RunRelay(_ []string) error {
 	// sends both, TLS ALPN picks "h3" first → QPACK decompression failure.
 	dialerTLS := tlsConfig.Clone()
 	dialerTLS.NextProtos = []string{moqt.NextProtoMOQ}
+	if os.Getenv("INSECURE") != "" {
+		dialerTLS.InsecureSkipVerify = true //nolint:gosec // INSECURE mode only
+	}
 
 	trackMux := moqt.NewTrackMux(moqt.NewHopID())
 	relayServer := &relay.Server{
@@ -334,10 +337,9 @@ func setupTLS(certFile, keyFile string) (*tls.Config, error) {
 		}
 		slog.Warn("INSECURE mode: using ephemeral self-signed certificate")
 		return &tls.Config{
-			MinVersion:         tls.VersionTLS12,
-			Certificates:       []tls.Certificate{cert},
-			NextProtos:         []string{"h3", moqt.NextProtoMOQ},
-			InsecureSkipVerify: true,
+			MinVersion:   tls.VersionTLS12,
+			Certificates: []tls.Certificate{cert},
+			NextProtos:   []string{"h3", moqt.NextProtoMOQ},
 		}, nil
 	}
 

@@ -52,7 +52,9 @@ func (s *Server) init() {
 			s.TrackMux = moqt.NewTrackMux(0)
 		}
 
-		s.statusHandler = newStatusHandler()
+		if s.statusHandler == nil {
+			s.statusHandler = newStatusHandler()
+		}
 
 		// Wire relay-specific fields into the caller-provided MoQServer.
 		if s.MOQServer.Handler != nil {
@@ -275,9 +277,8 @@ func (s *Server) Relay(sess *moqt.Session) {
 		slog.Warn("failed to accept announcement", "error", err)
 		return
 	}
-
 	for {
-		ann, err := announced.ReceiveAnnouncement(context.Background())
+		ann, err := announced.ReceiveAnnouncement(sess.Context())
 		if err != nil {
 			slog.Warn("relay: announcements loop ended",
 				"remote", sess.RemoteAddr(),

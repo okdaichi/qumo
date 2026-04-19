@@ -105,7 +105,7 @@ func Help() error {
 	fmt.Println("    mage docker:down  - Stop services")
 	fmt.Println("    mage docker:logs  - View service logs")
 	fmt.Println("    mage docker:ps    - List running containers")
-	fmt.Println("    mage docker:smoke - Run cross-region streaming smoke test")
+	fmt.Println("    mage smoke      - Run cross-region streaming smoke test")
 	fmt.Println()
 	fmt.Println("  🎮 Demo:")
 	fmt.Println("    mage demo:up      - Start demo environment (3 relays)")
