@@ -15,11 +15,13 @@ import (
 
 func newTestRelayHandler(ctx context.Context) *relayHandler {
 	ann, _ := moqt.NewAnnouncement(ctx, "/test")
+	ctx, cancel := context.WithCancel(ctx)
 	return &relayHandler{
 		announcement: ann,
 		session:      nil,
 		tracks:       newTrackManager(),
 		ctx:          ctx,
+		cancel:       cancel,
 	}
 }
 
@@ -852,4 +854,90 @@ func TestRelayHandler_SingleflightDedup(t *testing.T) {
 	// Subsequent load should miss
 	_, ok = h.tracks.load(moqt.TrackName("video"))
 	assert.False(t, ok, "Should not find deleted entry")
+}
+
+// ============================================================================
+// RouteStats Tests
+// ============================================================================
+
+// TestRelayHandler_RouteStats_Interface verifies that *relayHandler satisfies
+// the RouteReporter interface and is discoverable via type assertion.
+func TestRelayHandler_RouteStats_Interface(t *testing.T) {
+	ctx := context.Background()
+	h := newTestRelayHandler(ctx)
+
+	var th moqt.TrackHandler = h
+	rr, ok := th.(RouteReporter)
+	require.True(t, ok, "*relayHandler must implement RouteReporter")
+	assert.NotNil(t, rr)
+}
+
+// TestRelayHandler_Hops_LocalAnnouncement confirms that a locally created
+// announcement (no forwarding) reports 0 hops.
+func TestRelayHandler_Hops_LocalAnnouncement(t *testing.T) {
+	ctx := context.Background()
+	h := newTestRelayHandler(ctx)
+
+	assert.Equal(t, 0, h.RouteStats().Hops, "local announcement should have 0 hops")
+}
+
+// TestRelayHandler_RTT_NilSession returns a RouteStats with nil Probe when
+// the session is nil.
+func TestRelayHandler_RTT_NilSession(t *testing.T) {
+	ctx := context.Background()
+	h := newTestRelayHandler(ctx) // session is nil
+
+	assert.Equal(t, 0, h.RouteStats().Hops, "nil session should yield 0 hops without panic")
+	assert.Equal(t, uint64(0), h.RouteStats().Bitrate, "nil session should yield 0 bitrate without panic")
+	assert.Equal(t, uint64(0), h.RouteStats().RTT, "nil session should yield 0 RTT without panic")
+}
+
+// ============================================================================
+// isBetterRoute Tests
+// ============================================================================
+
+func TestIsBetterRoute(t *testing.T) {
+	type testCase struct {
+		candidate RouteStats
+		current   RouteStats
+		want      bool
+	}
+	tests := map[string]testCase{
+		"fewer hops wins regardless of RTT": {
+			candidate: RouteStats{Hops: 1, RTT: 100},
+			current:   RouteStats{Hops: 2, RTT: 10},
+			want:      true,
+		},
+		"more hops loses regardless of RTT": {
+			candidate: RouteStats{Hops: 3, RTT: 1},
+			current:   RouteStats{Hops: 2, RTT: 999},
+			want:      false,
+		},
+		"equal hops: higher bitrate wins over lower RTT": {
+			candidate: RouteStats{Hops: 2, Bitrate: 10_000_000, RTT: 80},
+			current:   RouteStats{Hops: 2, Bitrate: 5_000_000, RTT: 20},
+			want:      true,
+		},
+		"equal hops and bitrate: lower RTT wins": {
+			candidate: RouteStats{Hops: 2, Bitrate: 5_000_000, RTT: 20},
+			current:   RouteStats{Hops: 2, Bitrate: 5_000_000, RTT: 50},
+			want:      true,
+		},
+		"equal hops: higher RTT loses": {
+			candidate: RouteStats{Hops: 2, RTT: 80},
+			current:   RouteStats{Hops: 2, RTT: 50},
+			want:      false,
+		},
+		"equal hops: zero bitrate/RTT keeps existing route": {
+			candidate: RouteStats{Hops: 2},
+			current:   RouteStats{Hops: 2, Bitrate: 5_000_000, RTT: 50},
+			want:      false,
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, tt.want, isBetterRoute(tt.candidate, tt.current))
+		})
+	}
 }

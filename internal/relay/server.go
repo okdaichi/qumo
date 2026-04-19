@@ -308,6 +308,26 @@ func (s *Server) Relay(sess *moqt.Session) {
 
 		handler := newRelayHandler(ann, sess)
 
+		// Route selection: only replace an existing active handler if the new
+		// route is strictly better. This is evaluated once per new candidate to
+		// preserve group-cache hit rates and playback continuity.
+		if _, existing := s.TrackMux.TrackHandler(ann.BroadcastPath()); existing != nil {
+			if rr, ok := existing.(RouteReporter); ok {
+				if !isBetterRoute(handler.RouteStats(), rr.RouteStats()) {
+					slog.Debug("relay: skipping inferior route",
+						"path", ann.BroadcastPath(),
+					)
+					continue
+				}
+			}
+			// Gracefully drain the displaced handler. Existing subscribers can
+			// finish in-flight groups within the grace window before the upstream
+			// subscription is torn down.
+			if dr, ok := existing.(Drainable); ok {
+				dr.Drain(DrainTimeout)
+			}
+		}
+
 		s.TrackMux.Announce(ann, handler)
 	}
 }
