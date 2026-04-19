@@ -75,7 +75,7 @@ Environment variables (bootstrap)
 
 | Variable | Default | Description |
 |---|---|---|
-| `BOOTSTRAP_LISTEN` | `:8080` | Bind address |
+| `BOOTSTRAP_ADDR` | `:8080` | Bind address |
 | `BOOTSTRAP_TTL` | `30s` | Node TTL before expiration |
 | `BOOTSTRAP_MAX_PEERS` | `20` | Max peers returned per query |
 

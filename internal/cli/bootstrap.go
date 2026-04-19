@@ -18,12 +18,12 @@ import (
 //
 // Configuration is read from environment variables:
 //
-//	BOOTSTRAP_LISTEN            - address to listen on (default: ":8080")
+//	BOOTSTRAP_ADDR            - address to listen on (default: ":8080")
 //	BOOTSTRAP_TTL               - node TTL before expiration (default: "30s")
 //	BOOTSTRAP_CLEANUP_INTERVAL  - interval between cleanup sweeps (default: "5s")
 //	BOOTSTRAP_MAX_PEERS         - maximum number of peers to return (default: 20)
 func RunBootstrap(_ []string) error {
-	listen := envOr("BOOTSTRAP_LISTEN", ":8080")
+	listen := envOr("BOOTSTRAP_ADDR", ":8080")
 
 	ttl, err := envDuration("BOOTSTRAP_TTL", 30*time.Second)
 	if err != nil {
