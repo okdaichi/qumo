@@ -11,7 +11,7 @@ func TestStore_Register(t *testing.T) {
 
 	s.Register(Node{ID: "n1", Addr: "1.2.3.4:443", Region: "us-east"})
 
-	peers := s.Peers("", "", 0)
+	peers := s.Peers(PeerQuery{})
 	if len(peers) != 1 {
 		t.Fatalf("expected 1 peer, got %d", len(peers))
 	}
@@ -48,21 +48,6 @@ func TestStore_Register_UpdatesLastSeen(t *testing.T) {
 	}
 }
 
-func TestStore_Peers_ExcludesSelf(t *testing.T) {
-	s := NewStore(30 * time.Second)
-
-	s.Register(Node{ID: "n1", Addr: "1.1.1.1:443"})
-	s.Register(Node{ID: "n2", Addr: "2.2.2.2:443"})
-
-	peers := s.Peers("n1", "", 0)
-	if len(peers) != 1 {
-		t.Fatalf("expected 1 peer, got %d", len(peers))
-	}
-	if peers[0].ID != "n2" {
-		t.Errorf("expected n2, got %s", peers[0].ID)
-	}
-}
-
 func TestStore_Peers_FiltersByRegion(t *testing.T) {
 	s := NewStore(30 * time.Second)
 
@@ -70,7 +55,7 @@ func TestStore_Peers_FiltersByRegion(t *testing.T) {
 	s.Register(Node{ID: "n2", Addr: "2.2.2.2:443", Region: "ap-northeast"})
 	s.Register(Node{ID: "n3", Addr: "3.3.3.3:443", Region: "us-east"})
 
-	peers := s.Peers("", "us-east", 0)
+	peers := s.Peers(PeerQuery{PreferredRegion: "us-east"})
 	if len(peers) != 2 {
 		t.Fatalf("expected 2 peers, got %d", len(peers))
 	}
@@ -81,14 +66,54 @@ func TestStore_Peers_FiltersByRegion(t *testing.T) {
 	}
 }
 
-func TestStore_Peers_RespectsMax(t *testing.T) {
+func TestStore_Peers_AllowRemote(t *testing.T) {
+	s := NewStore(30 * time.Second)
+
+	s.Register(Node{ID: "n1", Addr: "1.1.1.1:443", Region: "us-east"})
+	s.Register(Node{ID: "n2", Addr: "2.2.2.2:443", Region: "ap-northeast"})
+
+	// Without AllowRemote: only preferred region.
+	peers := s.Peers(PeerQuery{PreferredRegion: "us-east", AllowRemote: false})
+	if len(peers) != 1 {
+		t.Fatalf("without AllowRemote: expected 1 peer, got %d", len(peers))
+	}
+
+	// With AllowRemote: preferred region first, then remote.
+	peers = s.Peers(PeerQuery{PreferredRegion: "us-east", AllowRemote: true})
+	if len(peers) != 2 {
+		t.Fatalf("with AllowRemote: expected 2 peers, got %d", len(peers))
+	}
+}
+
+func TestStore_Peers_FiltersByRole(t *testing.T) {
+	s := NewStore(30 * time.Second)
+
+	s.Register(Node{ID: "n1", Addr: "1.1.1.1:443", Role: "edge"})
+	s.Register(Node{ID: "n2", Addr: "2.2.2.2:443", Role: "hub"})
+	s.Register(Node{ID: "n3", Addr: "3.3.3.3:443", Role: "edge"})
+
+	peers := s.Peers(PeerQuery{Role: "hub"})
+	if len(peers) != 1 {
+		t.Fatalf("expected 1 hub, got %d", len(peers))
+	}
+	if peers[0].ID != "n2" {
+		t.Errorf("expected n2 (hub), got %s", peers[0].ID)
+	}
+
+	edges := s.Peers(PeerQuery{Role: "edge"})
+	if len(edges) != 2 {
+		t.Fatalf("expected 2 edges, got %d", len(edges))
+	}
+}
+
+func TestStore_Peers_RespectsLimit(t *testing.T) {
 	s := NewStore(30 * time.Second)
 
 	for i := 0; i < 10; i++ {
 		s.Register(Node{ID: fmt.Sprintf("n%d", i), Addr: fmt.Sprintf("1.1.1.%d:443", i)})
 	}
 
-	peers := s.Peers("", "", 3)
+	peers := s.Peers(PeerQuery{Limit: 3})
 	if len(peers) != 3 {
 		t.Fatalf("expected 3 peers, got %d", len(peers))
 	}
@@ -104,7 +129,7 @@ func TestStore_Peers_ExcludesExpired(t *testing.T) {
 	s.nodes["n1"].LastSeen = time.Now().Add(-200 * time.Millisecond)
 	s.mu.Unlock()
 
-	peers := s.Peers("", "", 0)
+	peers := s.Peers(PeerQuery{})
 	if len(peers) != 0 {
 		t.Fatalf("expected 0 peers (expired), got %d", len(peers))
 	}

@@ -68,14 +68,17 @@ func TestRunBootstrap_ListensAndServes(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	var peers []struct {
-		ID     string `json:"id"`
-		Addr   string `json:"addr"`
-		Region string `json:"region"`
+	var peersResp struct {
+		Peers []struct {
+			ID     string `json:"id"`
+			Addr   string `json:"addr"`
+			Region string `json:"region"`
+		} `json:"peers"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&peers); err != nil {
+	if err := json.NewDecoder(resp.Body).Decode(&peersResp); err != nil {
 		t.Fatalf("failed to decode peers: %v", err)
 	}
+	peers := peersResp.Peers
 	if len(peers) != 1 {
 		t.Fatalf("expected 1 peer, got %d", len(peers))
 	}

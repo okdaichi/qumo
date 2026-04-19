@@ -28,6 +28,7 @@ server:
   cert_file: "certs/cert.pem"
   key_file: "certs/key.pem"
 relay:
+  advertise_addr: "localhost:4433"
   group_cache_size: 150
   frame_capacity: 2000
 `
@@ -90,6 +91,25 @@ relay: {}
 }
 
 // TestLoadConfigInvalidFile tests error handling for invalid file
+func TestLoadConfigWildcardListenRequiresAdvertiseAddr(t *testing.T) {
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "wildcard.yaml")
+
+	configContent := `
+server:
+  address: ":4433"
+  cert_file: "certs/cert.pem"
+  key_file: "certs/key.pem"
+relay: {}
+`
+
+	require.NoError(t, os.WriteFile(configFile, []byte(configContent), 0600))
+
+	_, err := loadConfig(configFile)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "relay.advertise_addr is required")
+}
+
 func TestLoadConfigInvalidFile(t *testing.T) {
 	_, err := loadConfig("/nonexistent/config.yaml")
 	if err == nil {
@@ -144,6 +164,7 @@ func TestLoadConfigPartialData(t *testing.T) {
 server:
   address: "localhost:4433"
 relay:
+  advertise_addr: "localhost:4433"
   frame_capacity: 3000
 `
 
@@ -179,6 +200,7 @@ server:
   cert_file: "/path/to/cert.pem"
   key_file: "/path/to/key.pem"
 relay:
+  advertise_addr: "relay.example.com:4433"
   group_cache_size: 500
   frame_capacity: 5000
 `
@@ -221,6 +243,7 @@ func TestLoadConfigZeroValues(t *testing.T) {
 server:
   address: "localhost:4433"
 relay:
+  advertise_addr: "localhost:4433"
   group_cache_size: 0
   frame_capacity: 0
 `
@@ -293,6 +316,7 @@ server:
 
 # Relay configuration
 relay:
+  advertise_addr: "localhost:4433"
   group_cache_size: 150  # Cache size
   frame_capacity: 2000   # Frame buffer size
 `
@@ -531,4 +555,83 @@ func TestServeComponents_ReturnsErrorOnPanic(t *testing.T) {
 	case <-time.After(500 * time.Millisecond):
 		t.Fatal("serveComponents did not return after panic")
 	}
+}
+
+func TestLoadConfig_WithBootstraps(t *testing.T) {
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.yaml")
+
+	content := `
+server:
+  address: "localhost:4433"
+  cert_file: "certs/cert.pem"
+  key_file: "certs/key.pem"
+relay:
+  node_id: "relay-1"
+  region: "us-east"
+  advertise_addr: "relay-1.example.com:4433"
+bootstraps:
+  - url: "http://bootstrap-1:8080"
+    interval: "10s"
+  - url: "http://bootstrap-2:8080"
+    interval: "15s"
+`
+	require.NoError(t, os.WriteFile(configFile, []byte(content), 0600))
+
+	cfg, err := loadConfig(configFile)
+	require.NoError(t, err)
+
+	assert.Equal(t, "relay-1", cfg.RelayConfig.NodeID)
+	assert.Equal(t, "us-east", cfg.RelayConfig.Region)
+	require.Len(t, cfg.RelayConfig.Bootstraps, 2)
+
+	assert.Equal(t, "http://bootstrap-1:8080", cfg.RelayConfig.Bootstraps[0].URL)
+	assert.Equal(t, 10*time.Second, cfg.RelayConfig.Bootstraps[0].Interval)
+
+	assert.Equal(t, "http://bootstrap-2:8080", cfg.RelayConfig.Bootstraps[1].URL)
+	assert.Equal(t, 15*time.Second, cfg.RelayConfig.Bootstraps[1].Interval)
+}
+
+func TestLoadConfig_BootstrapDefaultInterval(t *testing.T) {
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.yaml")
+
+	content := `
+server:
+  address: "localhost:4433"
+  cert_file: "certs/cert.pem"
+  key_file: "certs/key.pem"
+relay: {}
+bootstraps:
+  - url: "http://bootstrap:8080"
+`
+	require.NoError(t, os.WriteFile(configFile, []byte(content), 0600))
+
+	cfg, err := loadConfig(configFile)
+	require.NoError(t, err)
+
+	require.Len(t, cfg.RelayConfig.Bootstraps, 1)
+	assert.Equal(t, "http://bootstrap:8080", cfg.RelayConfig.Bootstraps[0].URL)
+	assert.Equal(t, 10*time.Second, cfg.RelayConfig.Bootstraps[0].Interval)
+}
+
+func TestLoadConfig_BootstrapInvalidInterval(t *testing.T) {
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.yaml")
+
+	content := `
+server:
+  address: "localhost:4433"
+  cert_file: "certs/cert.pem"
+  key_file: "certs/key.pem"
+relay: {}
+bootstraps:
+  - url: "http://bootstrap:8080"
+    interval: "not-a-duration"
+`
+	require.NoError(t, os.WriteFile(configFile, []byte(content), 0600))
+
+	_, err := loadConfig(configFile)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid bootstrap interval")
 }

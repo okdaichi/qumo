@@ -12,12 +12,14 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"golang.org/x/sync/errgroup"
 
 	"github.com/okdaichi/gomoqt/moqt"
+	"github.com/okdaichi/qumo/internal/bootstrap"
 	"github.com/okdaichi/qumo/internal/relay"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/quic-go/quic-go"
@@ -81,6 +83,7 @@ func RunRelay(args []string) error {
 	}
 
 	log.Printf("\t%-8s: %s\n", "Host", config.Address)
+	log.Printf("\t%-8s: %s\n", "Advertise", config.RelayConfig.AdvertiseAddr)
 	log.Printf("\t%-8s: %s\n", "Node ID", config.RelayConfig.NodeID)
 	log.Printf("\t%-8s: %s\n", "Region", config.RelayConfig.Region)
 	log.Printf("\t%-8s: WebTransport endpoint\n", wtPath)
@@ -88,6 +91,9 @@ func RunRelay(args []string) error {
 	log.Printf("\t%-8s: Prometheus metrics\n", "/metrics")
 	for _, p := range config.RelayConfig.Peers {
 		log.Printf("\t%-8s: %s\n", "Peer", p.Address)
+	}
+	for _, b := range config.RelayConfig.Bootstraps {
+		log.Printf("\t%-8s: %s (interval: %s)\n", "Bootstrap", b.URL, b.Interval)
 	}
 
 	// Start peer connections in background
@@ -204,12 +210,18 @@ func loadConfig(filename string) (*config, error) {
 		Relay struct {
 			NodeID         string `yaml:"node_id"`
 			Region         string `yaml:"region"`
+			Role           string `yaml:"role"`
+			AdvertiseAddr  string `yaml:"advertise_addr"`
 			GroupCacheSize int    `yaml:"group_cache_size"`
 			FrameCapacity  int    `yaml:"frame_capacity"`
 		} `yaml:"relay"`
 		Peers []struct {
 			Address string `yaml:"address"`
 		} `yaml:"peers"`
+		Bootstraps []struct {
+			URL      string `yaml:"url"`
+			Interval string `yaml:"interval"`
+		} `yaml:"bootstraps"`
 	}
 
 	file, err := os.Open(filename)
@@ -232,9 +244,33 @@ func loadConfig(filename string) (*config, error) {
 		ymlConfig.Relay.GroupCacheSize = 100
 	}
 
+	advertiseAddr := ymlConfig.Relay.AdvertiseAddr
+	if advertiseAddr == "" {
+		if isWildcardAddress(ymlConfig.Server.Address) {
+			return nil, fmt.Errorf("relay.advertise_addr is required when server.address is %q", ymlConfig.Server.Address)
+		}
+		advertiseAddr = ymlConfig.Server.Address
+	}
+
 	var peers []relay.Peer
 	for _, p := range ymlConfig.Peers {
 		peers = append(peers, relay.Peer{Address: p.Address})
+	}
+
+	var bootstraps []bootstrap.ClientConfig
+	for _, b := range ymlConfig.Bootstraps {
+		interval := 10 * time.Second // default
+		if b.Interval != "" {
+			parsed, err := time.ParseDuration(b.Interval)
+			if err != nil {
+				return nil, fmt.Errorf("invalid bootstrap interval %q: %w", b.Interval, err)
+			}
+			interval = parsed
+		}
+		bootstraps = append(bootstraps, bootstrap.ClientConfig{
+			URL:      b.URL,
+			Interval: interval,
+		})
 	}
 
 	config := &config{
@@ -244,13 +280,20 @@ func loadConfig(filename string) (*config, error) {
 		RelayConfig: relay.Config{
 			NodeID:         ymlConfig.Relay.NodeID,
 			Region:         ymlConfig.Relay.Region,
+			Role:           ymlConfig.Relay.Role,
+			AdvertiseAddr:  advertiseAddr,
 			FrameCapacity:  ymlConfig.Relay.FrameCapacity,
 			GroupCacheSize: ymlConfig.Relay.GroupCacheSize,
 			Peers:          peers,
+			Bootstraps:     bootstraps,
 		},
 	}
 
 	return config, nil
+}
+
+func isWildcardAddress(addr string) bool {
+	return strings.HasPrefix(addr, ":") || strings.HasPrefix(addr, "0.0.0.0") || strings.HasPrefix(addr, "[::]") || addr == "::"
 }
 
 func setupTLS(certFile, keyFile string) (*tls.Config, error) {

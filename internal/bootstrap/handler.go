@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
 )
 
 // registerRequest is the JSON body for POST /register.
@@ -13,6 +14,7 @@ type registerRequest struct {
 	ID     string `json:"id"`
 	Addr   string `json:"addr"`
 	Region string `json:"region"`
+	Role   string `json:"role"`
 }
 
 // RegisterHandler handles POST /register.
@@ -47,6 +49,7 @@ func (h *RegisterHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		ID:     req.ID,
 		Addr:   addr,
 		Region: req.Region,
+		Role:   req.Role,
 	})
 
 	w.WriteHeader(http.StatusOK)
@@ -85,15 +88,25 @@ func (h *PeersHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	selfID := r.URL.Query().Get("self_id")
-	region := r.URL.Query().Get("region")
+	qs := r.URL.Query()
+	q := PeerQuery{
+		PreferredRegion: qs.Get("region"),
+		Role:            qs.Get("role"),
+		AllowRemote:     qs.Get("allow_remote") == "true",
+		MaxCap:          h.MaxPeers,
+	}
+	if s := qs.Get("limit"); s != "" {
+		if v, err := strconv.Atoi(s); err == nil && v > 0 {
+			q.Limit = v
+		}
+	}
 
-	peers := h.Store.Peers(selfID, region, h.MaxPeers)
+	peers := h.Store.Peers(q)
 
-	slog.Debug("peers requested", "self_id", selfID, "region", region, "count", len(peers))
+	slog.Debug("peers requested", "region", q.PreferredRegion, "role", q.Role, "allow_remote", q.AllowRemote, "limit", q.Limit, "count", len(peers))
 
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(peers); err != nil {
+	if err := json.NewEncoder(w).Encode(map[string]any{"peers": peers}); err != nil {
 		slog.Error("failed to encode peers response", "error", err)
 	}
 }

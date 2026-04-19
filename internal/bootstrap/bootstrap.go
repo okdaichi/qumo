@@ -13,7 +13,29 @@ type Node struct {
 	ID       string    `json:"id"`
 	Addr     string    `json:"addr"`
 	Region   string    `json:"region,omitempty"`
+	Role     string    `json:"role,omitempty"`
 	LastSeen time.Time `json:"-"`
+}
+
+// PeerQuery describes the criteria for selecting candidate peers from the store.
+type PeerQuery struct {
+	// PreferredRegion selects nodes in this region first.
+	// When AllowRemote is true, nodes in other regions are appended as fallback.
+	// When empty, all nodes are candidates regardless of region.
+	PreferredRegion string
+
+	// Role filters nodes by role (e.g. "edge", "hub"). Empty means any role.
+	Role string
+
+	// AllowRemote, when true, appends nodes from other regions after preferred-region nodes.
+	// Ignored when PreferredRegion is empty.
+	AllowRemote bool
+
+	// Limit caps the result to at most this many nodes. 0 means no per-request cap.
+	Limit int
+
+	// MaxCap is a server-side hard cap applied before Limit. 0 means no cap.
+	MaxCap int
 }
 
 // Store holds registered nodes in memory with TTL-based expiration.
@@ -41,35 +63,42 @@ func (s *Store) Register(n Node) {
 	slog.Info("node registered", "id", n.ID, "addr", n.Addr, "region", n.Region)
 }
 
-// Peers returns active (non-expired) nodes, excluding selfID if provided,
-// optionally filtered by region, randomly shuffled, and capped at max.
-// If max <= 0, no cap is applied.
-func (s *Store) Peers(selfID, region string, max int) []Node {
+// Peers returns a filtered, shuffled, and capped list of active nodes using q.
+// Preferred-region nodes are returned first; remote nodes are appended only when
+// q.AllowRemote is true. Result is capped at min(q.Limit, q.MaxCap) where 0 means no cap.
+func (s *Store) Peers(q PeerQuery) []Node {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	cutoff := time.Now().Add(-s.ttl)
-	result := make([]Node, 0)
+	preferred := make([]Node, 0)
+	remote := make([]Node, 0)
 
 	for _, n := range s.nodes {
 		if n.LastSeen.Before(cutoff) {
 			continue
 		}
-		if selfID != "" && n.ID == selfID {
+		if q.Role != "" && n.Role != q.Role {
 			continue
 		}
-		if region != "" && n.Region != region {
-			continue
+		if q.PreferredRegion == "" || n.Region == q.PreferredRegion {
+			preferred = append(preferred, *n)
+		} else if q.AllowRemote {
+			remote = append(remote, *n)
 		}
-		result = append(result, *n)
 	}
 
-	rand.Shuffle(len(result), func(i, j int) {
-		result[i], result[j] = result[j], result[i]
-	})
+	rand.Shuffle(len(preferred), func(i, j int) { preferred[i], preferred[j] = preferred[j], preferred[i] })
+	rand.Shuffle(len(remote), func(i, j int) { remote[i], remote[j] = remote[j], remote[i] })
 
-	if max > 0 && len(result) > max {
-		result = result[:max]
+	result := append(preferred, remote...)
+
+	cap := q.MaxCap
+	if q.Limit > 0 && (cap == 0 || q.Limit < cap) {
+		cap = q.Limit
+	}
+	if cap > 0 && len(result) > cap {
+		result = result[:cap]
 	}
 
 	return result
