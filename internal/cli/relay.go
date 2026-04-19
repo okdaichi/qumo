@@ -15,6 +15,7 @@ import (
 	"log"
 	"log/slog"
 	"math/big"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -39,12 +40,12 @@ import (
 //	RELAY_ADDR          - listen address (default: "0.0.0.0:4433")
 //	CERT_FILE           - TLS certificate file (default: "certs/server.crt")
 //	KEY_FILE            - TLS key file (default: "certs/server.key")
-//	RELAY_NAME          - node ID (default: hostname)
+//	RELAY_NAME          - node ID (default: "relay-" + hostname)
 //	REGION              - geographic region (default: "")
 //	ROLE                - node role: "hub" or "edge" (default: "")
 //	ADVERTISE_ADDR      - address advertised to peers (required when RELAY_ADDR is wildcard)
-//	GROUP_CACHE_SIZE    - max group caches (default: 100)
-//	FRAME_CAPACITY      - frame buffer size in bytes (default: 1500)
+//	GROUP_CACHE_SIZE    - max group caches (default: 100) [TODO: not yet wired to handler]
+//	FRAME_CAPACITY      - frame buffer size in bytes (default: 1500) [TODO: not yet wired to handler]
 //	PEERS               - comma-separated list of peer addresses
 //	BOOTSTRAP_URLS      - comma-separated list of bootstrap server URLs
 //	BOOTSTRAP_INTERVAL  - polling interval for bootstrap servers (default: "15s")
@@ -350,7 +351,7 @@ func generateSelfSignedCert() (tls.Certificate, error) {
 		NotBefore:    time.Now().Add(-time.Minute),
 		NotAfter:     time.Now().Add(365 * 24 * time.Hour),
 		DNSNames:     []string{"localhost"},
-		IPAddresses:  nil,
+		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")},
 	}
 
 	derBytes, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)

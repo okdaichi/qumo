@@ -12,6 +12,7 @@ services:
       - "8080:4433"
     environment:
       - RELAY_ADDR=0.0.0.0:4433
+      - ADVERTISE_ADDR=relay-tokyo:4433
       - INSECURE=true
       - RELAY_NAME=relay-tokyo
       - REGION=asia
@@ -36,6 +37,7 @@ services:
       - "8081:4433"
     environment:
       - RELAY_ADDR=0.0.0.0:4433
+      - ADVERTISE_ADDR=relay-london:4433
       - INSECURE=true
       - RELAY_NAME=relay-london
       - REGION=europe
@@ -60,6 +62,7 @@ services:
       - "8082:4433"
     environment:
       - RELAY_ADDR=0.0.0.0:4433
+      - ADVERTISE_ADDR=relay-newyork:4433
       - INSECURE=true
       - RELAY_NAME=relay-newyork
       - REGION=americas

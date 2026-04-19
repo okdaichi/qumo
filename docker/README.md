@@ -5,7 +5,6 @@ All configuration is driven by **environment variables** — no config YAML file
 
 Files
 - `Dockerfile` — image build used by CI (GHCR)
-- `docker-entrypoint.sh` — entrypoint; generates config from env vars
 - `docker-compose.yml` — single relay (local build)
 - `docker-compose.external.yml` — single relay (pre-built image)
 - `docker-compose.simple.yml` — demo: 3 peer-connected relays
@@ -77,8 +76,8 @@ Environment variables (bootstrap)
 | Variable | Default | Description |
 |---|---|---|
 | `BOOTSTRAP_LISTEN` | `:8080` | Bind address |
-| `BOOTSTRAP_TTL` | `60s` | Node TTL before expiration |
-| `BOOTSTRAP_MAX_PEERS` | `200` | Max peers returned per query |
+| `BOOTSTRAP_TTL` | `30s` | Node TTL before expiration |
+| `BOOTSTRAP_MAX_PEERS` | `20` | Max peers returned per query |
 
 Build locally
 
@@ -88,4 +87,4 @@ docker build -f docker/Dockerfile -t qumo:local .
 
 Notes
 - The container listens on port `4433` for QUIC (UDP) and also serves HTTP health/metrics on the same port (TCP).
-- If you previously used `config.relay.yaml` at the repo root, configuration is now driven entirely by environment variables via the entrypoint.
+- If you previously used `config.relay.yaml` at the repo root, configuration is now driven entirely by environment variables — the binary reads env vars directly.

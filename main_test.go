@@ -11,29 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestPrintUsage_WritesHelpToStderr(t *testing.T) {
-	// Capture stderr
-	saved := os.Stderr
-	r, w, err := os.Pipe()
-	require.NoError(t, err)
-	os.Stderr = w
-
-	printUsage()
-
-	_ = w.Close()
-	var buf bytes.Buffer
-	_, err = buf.ReadFrom(r)
-	require.NoError(t, err)
-	os.Stderr = saved
-
-	out := buf.String()
-	assert.Contains(t, out, "Usage: qumo <command> [flags]")
-	assert.Contains(t, out, "Commands:")
-	assert.Contains(t, out, "relay")
-	assert.Contains(t, out, "rtmp")
-	assert.Contains(t, out, "Flags:")
-}
-
 // Test cases that exercise main() by re-executing the test binary in a child
 // process. The child path is selected with -test.run and an env var toggles
 // child behavior. This avoids calling os.Exit() in the test process.

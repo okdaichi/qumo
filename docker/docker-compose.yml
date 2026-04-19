@@ -13,6 +13,7 @@ services:
       - "8080:4433"      # host 8080 -> container 4433 (HTTP health/metrics)
     environment:
       RELAY_ADDR: "0.0.0.0:4433"
+      ADVERTISE_ADDR: "localhost:4433"
       INSECURE: "true"
       RELAY_NAME: "relay-1"
     volumes:

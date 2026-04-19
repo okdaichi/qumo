@@ -30,6 +30,17 @@ func TestSetupTLSEmptyPaths(t *testing.T) {
 	}
 }
 
+// TestSetupTLS_Insecure verifies that INSECURE=true generates a usable self-signed certificate.
+func TestSetupTLS_Insecure(t *testing.T) {
+	t.Setenv("INSECURE", "true")
+
+	tlsCfg, err := setupTLS("nonexistent.crt", "nonexistent.key")
+	require.NoError(t, err)
+	require.NotNil(t, tlsCfg)
+	assert.Len(t, tlsCfg.Certificates, 1, "expected exactly one certificate")
+	assert.Contains(t, tlsCfg.NextProtos, "h3")
+}
+
 func TestHealthHandler_ProbeLive_GETAndHEAD(t *testing.T) {
 	h := &healthHandler{
 		statusFunc: func() relay.Status {
