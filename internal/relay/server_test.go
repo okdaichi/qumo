@@ -14,11 +14,11 @@ import (
 // newTestServer returns a Server with minimal MoQServer and MoQDialer set.
 func newTestServer(addr string) *Server {
 	return &Server{
-		MoQServer: &moqt.Server{
+		MOQServer: &moqt.Server{
 			Addr:      addr,
 			TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12},
 		},
-		MoQDialer: &moqt.Dialer{},
+		MOQDialer: &moqt.Dialer{},
 	}
 }
 
@@ -49,7 +49,7 @@ func TestServer_Init(t *testing.T) {
 
 	t.Run("ListenAndServe with nil MoQDialer panics", func(t *testing.T) {
 		server := &Server{
-			MoQServer: &moqt.Server{
+			MOQServer: &moqt.Server{
 				Addr:      "localhost:4433",
 				TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12},
 			},
@@ -305,7 +305,7 @@ func TestServer_Address_Formats(t *testing.T) {
 			server := newTestServer(tt.addr)
 			server.init()
 
-			assert.Equal(t, tt.addr, server.MoQServer.Addr, "Address should be preserved")
+			assert.Equal(t, tt.addr, server.MOQServer.Addr, "Address should be preserved")
 		})
 	}
 }

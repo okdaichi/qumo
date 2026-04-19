@@ -12,14 +12,14 @@ import (
 )
 
 type Server struct {
-	// MoQServer is the underlying MoQT server. The caller is responsible for
+	// MOQServer is the underlying MoQT server. The caller is responsible for
 	// setting Addr, TLSConfig (must include all accepted ALPNs, e.g. ["h3", "moqt"]),
 	// QUICConfig, and WebTransportServer. Handler and TrackMux are wired by init().
-	MoQServer *moqt.Server
-	// MoQDialer is used for outbound peer connections. The caller must set
+	MOQServer *moqt.Server
+	// MOQDialer is used for outbound peer connections. The caller must set
 	// TLSConfig with NextProtos: []string{moqt.NextProtoMOQ} only, so that
 	// ALPN negotiation does not accidentally select "h3".
-	MoQDialer *moqt.Dialer
+	MOQDialer *moqt.Dialer
 	Config    *Config
 	TrackMux  *moqt.TrackMux
 
@@ -52,48 +52,52 @@ func (s *Server) init() {
 			s.TrackMux = moqt.NewTrackMux(0)
 		}
 
-		if s.statusHandler == nil {
-			s.statusHandler = newStatusHandler()
-		}
+		s.statusHandler = newStatusHandler()
 
 		// Wire relay-specific fields into the caller-provided MoQServer.
-		s.MoQServer.Handler = moqt.HandleFunc(s.Relay)
-		s.MoQServer.TrackMux = s.TrackMux
+		if s.MOQServer.Handler != nil {
+			slog.Warn("relay.Server: overriding MOQServer.Handler set by caller")
+		}
+		s.MOQServer.Handler = moqt.HandleFunc(s.Relay)
+		if s.MOQServer.TrackMux != nil {
+			slog.Warn("relay.Server: overriding MOQServer.TrackMux set by caller")
+		}
+		s.MOQServer.TrackMux = s.TrackMux
 
 		s.webtransportHandler = &moqt.WebTransportHandler{
 			TrackMux: s.TrackMux,
 			Handler:  moqt.HandleFunc(s.Relay),
-			Logger:   s.MoQServer.Logger,
+			Logger:   s.MOQServer.Logger,
 		}
 	})
 }
 
 // ListenAndServe starts the relay server.
 func (s *Server) ListenAndServe() error {
-	if s.MoQServer == nil {
+	if s.MOQServer == nil {
 		panic("relay.Server: MoQServer is required")
 	}
-	if s.MoQDialer == nil {
+	if s.MOQDialer == nil {
 		panic("relay.Server: MoQDialer is required")
 	}
 
 	s.init()
 
 	// Start server - this will block until server closes
-	return s.MoQServer.ListenAndServe()
+	return s.MOQServer.ListenAndServe()
 }
 
 func (s *Server) Close() error {
-	if s.MoQServer != nil {
-		_ = s.MoQServer.Close()
+	if s.MOQServer != nil {
+		_ = s.MOQServer.Close()
 	}
 
 	return nil
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
-	if s.MoQServer != nil {
-		return s.MoQServer.Shutdown(ctx)
+	if s.MOQServer != nil {
+		return s.MOQServer.Shutdown(ctx)
 	}
 
 	return nil
@@ -221,7 +225,7 @@ func (s *Server) maintainPeer(ctx context.Context, peer Peer) {
 			return
 		}
 
-		sess, err := s.MoQDialer.DialQUIC(ctx, peer.Address, s.TrackMux)
+		sess, err := s.MOQDialer.DialQUIC(ctx, peer.Address, s.TrackMux)
 		if err != nil {
 			slog.Warn("failed to dial peer", "address", peer.Address, "error", err)
 			if !waitRetry(ctx, 5*time.Second) {
@@ -229,8 +233,6 @@ func (s *Server) maintainPeer(ctx context.Context, peer Peer) {
 			}
 			continue
 		}
-
-		slog.Info("peer connected", "address", peer.Address)
 
 		s.Relay(sess)
 
@@ -259,6 +261,7 @@ func waitRetry(ctx context.Context, d time.Duration) bool {
 
 func (s *Server) Relay(sess *moqt.Session) {
 	s.init()
+	defer sess.CloseWithError(moqt.NoError, moqt.NoError.String())
 
 	if s.statusHandler != nil {
 		s.statusHandler.incrementConnections()
@@ -284,14 +287,8 @@ func (s *Server) Relay(sess *moqt.Session) {
 			return
 		}
 
-		slog.Info("relay: received announcement",
-			"broadcast_path", ann.BroadcastPath(),
-			"remote", sess.RemoteAddr())
-
 		handler := newRelayHandler(ann, sess)
 
 		s.TrackMux.Announce(ann, handler)
-		slog.Info("relay: registered on TrackMux",
-			"broadcast_path", ann.BroadcastPath())
 	}
 }

@@ -101,9 +101,6 @@ func (h *relayHandler) subscribe(name moqt.TrackName) *trackDistributor {
 		return nil
 	}
 
-	slog.Info("relay: subscribing upstream",
-		"broadcast_path", announcement.BroadcastPath(),
-		"track", name)
 	src, err := session.Subscribe(context.Background(), announcement.BroadcastPath(), name, nil)
 	if err != nil {
 		slog.Warn("relay: upstream subscribe failed",

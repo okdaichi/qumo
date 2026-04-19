@@ -147,13 +147,13 @@ func RunRelay(_ []string) error {
 
 	trackMux := moqt.NewTrackMux(moqt.NewHopID())
 	relayServer := &relay.Server{
-		MoQServer: &moqt.Server{
+		MOQServer: &moqt.Server{
 			Addr:               addr,
 			TLSConfig:          tlsConfig,
 			QUICConfig:         quicConfig,
 			WebTransportServer: moqt.NewWebTransportServer(httpMux),
 		},
-		MoQDialer: &moqt.Dialer{
+		MOQDialer: &moqt.Dialer{
 			TLSConfig:  dialerTLS,
 			QUICConfig: quicConfig,
 		},
