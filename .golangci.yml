@@ -32,12 +32,12 @@ linters:
       # Log values are passed through sanitizeLog (strips CR/LF) before logging.
       # gosec taint analysis does not recognise custom sanitisers, so this is a false positive.
       - linters: [gosec]
-        path: "internal/*\\.go"
+        path: "internal/.*\\.go"
         text: "G706"
       # InsecureSkipVerify is intentional: smoke-test uses self-signed certs in Docker topology;
       # cli/relay.go sets it only on the dialer when INSECURE env var is explicitly set.
       - linters: [gosec]
-        path: "internal/*\\.go"
+        path: "internal/.*\\.go"
         text: "G402"
       # Test helpers: unhandled errors in test HTTP handlers are not actionable.
       - linters: [gosec]
