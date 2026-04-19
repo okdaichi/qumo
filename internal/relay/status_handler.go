@@ -74,20 +74,82 @@ func (h *statusHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	status := h.getStatus()
+	probe := r.URL.Query().Get("probe")
 
-	// Set status code based on health
-	statusCode := http.StatusOK
-	if status.Status == "unhealthy" {
-		statusCode = http.StatusServiceUnavailable
-	}
+	switch probe {
+	case "live":
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if r.Method == http.MethodHead {
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "alive"})
+		return
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(statusCode)
+	case "ready":
+		status := h.getStatus()
+		activeConns := status.ActiveConnections
 
-	if r.Method == http.MethodHead {
+		ready := true
+		reason := "ready"
+
+		if activeConns < 0 {
+			ready = false
+			reason = "invalid_connection_state"
+		}
+
+		statusCode := http.StatusOK
+		if !ready {
+			statusCode = http.StatusServiceUnavailable
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(statusCode)
+		if r.Method == http.MethodHead {
+			return
+		}
+
+		response := map[string]any{"ready": ready}
+		if !ready {
+			response["reason"] = reason
+		}
+		_ = json.NewEncoder(w).Encode(response)
+		return
+
+	default:
+		// full status
+		status := h.getStatus()
+
+		ready := true
+		reason := "ready"
+		if status.ActiveConnections < 0 {
+			ready = false
+			reason = "invalid_connection_state"
+		}
+
+		response := map[string]any{
+			"status":             status.Status,
+			"timestamp":          status.Timestamp,
+			"uptime":             status.Uptime,
+			"active_connections": status.ActiveConnections,
+			"live":               true,
+			"ready":              ready,
+		}
+		if !ready {
+			response["ready_reason"] = reason
+		}
+
+		statusCode := http.StatusOK
+		if status.Status == "unhealthy" {
+			statusCode = http.StatusServiceUnavailable
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(statusCode)
+		if r.Method == http.MethodHead {
+			return
+		}
+		_ = json.NewEncoder(w).Encode(response)
 		return
 	}
-
-	_ = json.NewEncoder(w).Encode(status)
 }

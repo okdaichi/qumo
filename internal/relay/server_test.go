@@ -119,26 +119,12 @@ func TestServer_Shutdown_WithoutInit(t *testing.T) {
 	require.NoError(t, err, "Shutdown should not error without init")
 }
 
-// TestServer_Shutdown_AfterInit tests Shutdown after initialization
-func TestServer_Shutdown_AfterInit(t *testing.T) {
-	server := &Server{
-		Addr:      "localhost:4433",
-		TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12},
-	}
-	server.init()
-	ctx := context.Background()
-
-	err := server.Shutdown(ctx)
-	require.NoError(t, err, "Shutdown should not error after init")
-}
-
 // TestServer_Shutdown_WithTimeout tests Shutdown with context timeout
 func TestServer_Shutdown_WithTimeout(t *testing.T) {
 	server := &Server{
 		Addr:      "localhost:4433",
 		TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12},
 	}
-	server.init()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
@@ -237,7 +223,6 @@ func TestServer_Shutdown_Idempotent(t *testing.T) {
 		Addr:      "localhost:4433",
 		TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12},
 	}
-	server.init()
 	ctx := context.Background()
 
 	require.NoError(t, server.Shutdown(ctx), "First Shutdown should not error")

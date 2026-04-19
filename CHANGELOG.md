@@ -7,70 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Breaking Changes
+### Fixed
 
-- **YAML configuration removed for relay and bootstrap:** `config.relay.yaml` and
-  `config.rtmp.yaml` deleted from the repository. Relay and bootstrap are now configured
-  entirely via environment variables. The `-config` flag is retained only for `qumo rtmp`.
-- **`docker-entrypoint.sh` removed:** The Docker entrypoint script that generated config
-  from env vars is no longer needed — the Go binary reads environment variables directly.
-
-### Added
-
-- **Bootstrap server (`qumo bootstrap`):** Minimal HTTP-based bootstrap service for MoQ node
-  registration and peer discovery. Nodes register via `POST /register` (with server-side IP
-  correction for NAT/proxy scenarios) and discover peers via `GET /peers` (with self-exclusion,
-  region filtering, random shuffling, and configurable max cap). Includes TTL-based expiration
-  with background cleanup, request body size limiting, and graceful shutdown. Configured via
-  env vars: `BOOTSTRAP_ADDR`, `BOOTSTRAP_TTL`, `BOOTSTRAP_CLEANUP_INTERVAL`,
-  `BOOTSTRAP_MAX_PEERS`.
-- **Environment variable configuration:** Relay (`RunRelay`) and bootstrap (`RunBootstrap`)
-  read all settings from environment variables. See `relay-config.example.env` and
-  `bootstrap-config.example.env` for documented defaults.
-- **`relay-config.example.env`:** Example env file documenting all relay environment variables
-  (`RELAY_ADDR`, `ADVERTISE_ADDR`, `CERT_FILE`, `KEY_FILE`, `RELAY_NAME`, `REGION`, `ROLE`,
-  `GROUP_CACHE_SIZE`, `FRAME_CAPACITY`, `PEERS`, `BOOTSTRAP_URLS`, `BOOTSTRAP_INTERVAL`,
-  `INSECURE`).
-- **`bootstrap-config.example.env`:** Example env file for bootstrap server configuration.
-- **`INSECURE` mode:** When `INSECURE=true`, the relay generates an ephemeral self-signed
-  ECDSA P-256 certificate with `localhost`, `127.0.0.1`, and `::1` SANs — no cert files
-  required for local development.
-- **`docker-compose.topology.yml`:** Full 3-region topology compose file with bootstrap, hub,
-  and edge nodes per region, all configured via environment variables.
-- **Docker build CI (`.github/workflows/docker.yml`):** Separate GitHub Actions workflow that
-  verifies Docker image builds on pushes/PRs touching `docker/**`, `*.go`, `internal/**`,
-  `go.mod`, or `go.sum`.
-- **`ADVERTISE_ADDR` validation:** `RunRelay` requires `ADVERTISE_ADDR` when `RELAY_ADDR` is
-  a wildcard address (`0.0.0.0`, `::`, or port-only).
+- **Relay initialization:** `Server.init()` is now concurrency-safe and preserves
+  existing `TrackMux` and `WebTransportServer` settings when present.
+- **Health check handler:** Renamed `ServeHealth`, delegated probe handling to
+  `statusHandler`, and restored readiness probe support.
+- **Connection tracking restored:** Relay session handling now increments and
+  decrements active connection counts for accurate readiness status.
+- **Startup safety:** `HandleWebTransport` and `ConnectPeers` now safely initialize
+  server dependencies before use.
 
 ### Changed
 
-- **Relay configuration refactored:** Removed `config` struct and `loadConfigFromEnv()` from
-  `relay.go`; all env parsing is inlined directly in `RunRelay()`.
-- **Bootstrap configuration refactored:** `RunBootstrap` reads env vars directly instead of
-  parsing CLI flags.
-- **Docker Compose files updated:** All compose files (`docker-compose.yml`,
-  `docker-compose.external.yml`, `docker-compose.simple.yml`, `docker-compose.topology.yml`)
-  now use `environment:` blocks with `ADVERTISE_ADDR` set; flag-based `command` overrides
-  removed from bootstrap services.
-- **Dockerfile simplified:** `ENTRYPOINT ["/app/qumo"]`, `CMD ["relay"]` — no entrypoint
-  script; binary reads env vars directly.
-- **Documentation updated:** `README.md`, `docker/README.md`, `deploy/README.md`, and
-  `magefiles/magefile.go` updated to reflect env-var configuration — all `-config` references
-  for relay/bootstrap removed.
-- **Ingest: migrate to `msf.Broadcast`:** Track routing and catalog management now delegated to
-  `msf.Broadcast` from gomoqt. Video/audio tracks registered via `RegisterTrack()` with MSF
-  metadata; catalog track auto-served. Removed `catalog.go` (`msfCatalog`/`msfTrack`/
-  `buildCatalogJSON`) and `publishCatalog()` helper.
-- **Ingest: `context.Context` adoption:** `newIngestHandler` accepts parent context; `videoTrack`
-  and `singleTrack` hold `context.Context` instead of `<-chan struct{}`; `trackBuffer.serve`
-  takes `context.Context` as first argument.
-- **Ingest: encapsulation improvements:** Added `serve()` methods to `videoTrack`/`singleTrack`
-  to hide `trackBuffer` internals. Replaced `boolPtr`/`int64Ptr` helpers with Go 1.26
-  `new(literal)` syntax.
-- **API change:** `NewSession()` now returns `(*Session, error)`. `Session.PublishCatalog()`
-  removed; replaced by `Session.RegisterVideo(*AVCConfig) error` and
-  `Session.RegisterAudio(*AACConfig) error`.
+- **CLI routing updated:** `/health` now uses `relay.Server.ServeHealth`.
+- **Test coverage improved:** added readiness probe cases and clarified shutdown
+  behavior in the relay server tests.
 
 ### Removed
 
