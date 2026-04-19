@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-func TestRunBootstrap_ListensAndServes(t *testing.T) {
+func TestRunBOOTSTRAP_ADDRsAndServes(t *testing.T) {
 	// Find a free port.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -20,7 +20,7 @@ func TestRunBootstrap_ListensAndServes(t *testing.T) {
 	addr := ln.Addr().String()
 	ln.Close()
 
-	t.Setenv("BOOTSTRAP_LISTEN", addr)
+	t.Setenv("BOOTSTRAP_ADDR", addr)
 	t.Setenv("BOOTSTRAP_TTL", "5s")
 
 	ctx, cancel := context.WithCancel(context.Background())

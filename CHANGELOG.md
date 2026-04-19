@@ -22,7 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   correction for NAT/proxy scenarios) and discover peers via `GET /peers` (with self-exclusion,
   region filtering, random shuffling, and configurable max cap). Includes TTL-based expiration
   with background cleanup, request body size limiting, and graceful shutdown. Configured via
-  env vars: `BOOTSTRAP_LISTEN`, `BOOTSTRAP_TTL`, `BOOTSTRAP_CLEANUP_INTERVAL`,
+  env vars: `BOOTSTRAP_ADDR`, `BOOTSTRAP_TTL`, `BOOTSTRAP_CLEANUP_INTERVAL`,
   `BOOTSTRAP_MAX_PEERS`.
 - **Environment variable configuration:** Relay (`RunRelay`) and bootstrap (`RunBootstrap`)
   read all settings from environment variables. See `relay-config.example.env` and

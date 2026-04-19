@@ -29,7 +29,7 @@ x-bootstrap-base: &bootstrap-base
   command: ["bootstrap"]
   restart: unless-stopped
   environment:
-    BOOTSTRAP_LISTEN: ":8080"
+    BOOTSTRAP_ADDR: ":8080"
     BOOTSTRAP_TTL: "60s"
     BOOTSTRAP_MAX_PEERS: "200"
   healthcheck:
