@@ -78,9 +78,9 @@ func TestRun_Unit(t *testing.T) {
 			wantStderrContains: []string{"error: boom"},
 		},
 		"relay passes args": {
-			args: []string{"relay", "-config", "x"},
+			args: []string{"relay", "extra"},
 			stubRelay: func(a []string) error {
-				assert.Equal(t, []string{"-config", "x"}, a)
+				assert.Equal(t, []string{"extra"}, a)
 				return nil
 			},
 			wantCode: 0,
@@ -170,11 +170,11 @@ func TestMain_Subprocess(t *testing.T) {
 			wantExitNonZero:    true,
 			wantOutputContains: []string{"unknown command", "Usage: qumo"},
 		},
-		"relay missing config file": {
-			// cli.RunRelay will attempt to load the provided config file and fail
-			args:               []string{"relay", "-config", "does-not-exist.yaml"},
+		"relay env validation error": {
+			// cli.RunRelay validates env vars; default wildcard addr requires ADVERTISE_ADDR
+			args:               []string{"relay"},
 			wantExitNonZero:    true,
-			wantOutputContains: []string{"failed to load config", "error:"},
+			wantOutputContains: []string{"ADVERTISE_ADDR is required", "error:"},
 		},
 		"rtmp missing config file": {
 			args:               []string{"rtmp", "-config", "does-not-exist.yaml"},

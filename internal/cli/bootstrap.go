@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -16,38 +15,51 @@ import (
 )
 
 // RunBootstrap starts the MoQ bootstrap server for node registration and peer discovery.
-func RunBootstrap(args []string) error {
-	fs := flag.NewFlagSet("bootstrap", flag.ExitOnError)
-	listen := fs.String("listen", ":8080", "address to listen on")
-	ttl := fs.Duration("ttl", 30*time.Second, "node TTL before expiration")
-	cleanupInterval := fs.Duration("cleanup-interval", 5*time.Second, "interval between cleanup sweeps")
-	maxPeers := fs.Int("max-peers", 20, "maximum number of peers to return")
-	if err := fs.Parse(args); err != nil {
-		return fmt.Errorf("failed to parse flags: %w", err)
+//
+// Configuration is read from environment variables:
+//
+//	BOOTSTRAP_LISTEN            - address to listen on (default: ":8080")
+//	BOOTSTRAP_TTL               - node TTL before expiration (default: "30s")
+//	BOOTSTRAP_CLEANUP_INTERVAL  - interval between cleanup sweeps (default: "5s")
+//	BOOTSTRAP_MAX_PEERS         - maximum number of peers to return (default: 20)
+func RunBootstrap(_ []string) error {
+	listen := envOr("BOOTSTRAP_LISTEN", ":8080")
+
+	ttl, err := envDuration("BOOTSTRAP_TTL", 30*time.Second)
+	if err != nil {
+		return fmt.Errorf("invalid BOOTSTRAP_TTL: %w", err)
+	}
+	cleanupInterval, err := envDuration("BOOTSTRAP_CLEANUP_INTERVAL", 5*time.Second)
+	if err != nil {
+		return fmt.Errorf("invalid BOOTSTRAP_CLEANUP_INTERVAL: %w", err)
+	}
+	maxPeers, err := envInt("BOOTSTRAP_MAX_PEERS", 20)
+	if err != nil {
+		return fmt.Errorf("invalid BOOTSTRAP_MAX_PEERS: %w", err)
 	}
 
-	store := bootstrap.NewStore(*ttl)
+	store := bootstrap.NewStore(ttl)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	store.StartCleaner(ctx, *cleanupInterval)
+	store.StartCleaner(ctx, cleanupInterval)
 
 	mux := http.NewServeMux()
 	mux.Handle("/register", &bootstrap.RegisterHandler{Store: store})
-	mux.Handle("/peers", &bootstrap.PeersHandler{Store: store, MaxPeers: *maxPeers})
+	mux.Handle("/peers", &bootstrap.PeersHandler{Store: store, MaxPeers: maxPeers})
 
 	srv := &http.Server{
-		Addr:              *listen,
+		Addr:              listen,
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
 	slog.Info("bootstrap server starting",
-		"listen", *listen,
-		"ttl", *ttl,
-		"cleanup_interval", *cleanupInterval,
-		"max_peers", *maxPeers,
+		"listen", listen,
+		"ttl", ttl,
+		"cleanup_interval", cleanupInterval,
+		"max_peers", maxPeers,
 	)
 
 	// Run server in a goroutine; block on ctx cancellation.

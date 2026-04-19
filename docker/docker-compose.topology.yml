@@ -41,7 +41,7 @@ x-relay-base: &relay-base
   build:
     context: ..
     dockerfile: docker/Dockerfile
-  command: ["relay", "-config", "/dev/null"]
+  command: ["relay"]
   restart: unless-stopped
   environment:
     RELAY_ADDR: "0.0.0.0:4433"
@@ -63,30 +63,21 @@ services:
   bootstrap-asia:
     <<: *bootstrap-base
     container_name: qumo-bootstrap-asia
-    environment:
-      BOOTSTRAP_LISTEN: ":8080"
-      BOOTSTRAP_TTL: "60s"
-      BOOTSTRAP_MAX_PEERS: "200"
+    command: ["bootstrap", "--listen", ":8080", "--ttl", "60s", "--max-peers", "200"]
     ports:
       - "8091:8080"
 
   bootstrap-europe:
     <<: *bootstrap-base
     container_name: qumo-bootstrap-europe
-    environment:
-      BOOTSTRAP_LISTEN: ":8080"
-      BOOTSTRAP_TTL: "60s"
-      BOOTSTRAP_MAX_PEERS: "200"
+    command: ["bootstrap", "--listen", ":8080", "--ttl", "60s", "--max-peers", "200"]
     ports:
       - "8092:8080"
 
   bootstrap-americas:
     <<: *bootstrap-base
     container_name: qumo-bootstrap-americas
-    environment:
-      BOOTSTRAP_LISTEN: ":8080"
-      BOOTSTRAP_TTL: "60s"
-      BOOTSTRAP_MAX_PEERS: "200"
+    command: ["bootstrap", "--listen", ":8080", "--ttl", "60s", "--max-peers", "200"]
     ports:
       - "8093:8080"
 

@@ -20,13 +20,16 @@ func TestRunBootstrap_ListensAndServes(t *testing.T) {
 	addr := ln.Addr().String()
 	ln.Close()
 
+	t.Setenv("BOOTSTRAP_LISTEN", addr)
+	t.Setenv("BOOTSTRAP_TTL", "5s")
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	errCh := make(chan error, 1)
 	go func() {
-		// RunBootstrap blocks; we run it with our chosen port.
-		errCh <- RunBootstrap([]string{"--listen", addr, "--ttl", "5s"})
+		// RunBootstrap blocks; reads config from env vars.
+		errCh <- RunBootstrap(nil)
 	}()
 
 	// Wait for server to start.

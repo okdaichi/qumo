@@ -43,13 +43,9 @@ LABEL org.opencontainers.image.title="qumo" \
       org.opencontainers.image.licenses="MIT"
 
 # Install runtime dependencies
-RUN apk --no-cache add ca-certificates tzdata wget openssl
+RUN apk --no-cache add ca-certificates tzdata wget
 
 WORKDIR /app
-
-# Copy entrypoint script
-COPY docker/docker-entrypoint.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # Copy binary from builder
 COPY --from=builder /build/qumo .
@@ -65,8 +61,7 @@ EXPOSE 4433/udp 4433
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD wget --no-verbose --tries=1 --spider http://localhost:4433/health || exit 1
 
-# Use entrypoint script for config generation
-ENTRYPOINT ["docker-entrypoint.sh"]
+ENTRYPOINT ["/app/qumo"]
 
 # Default command — entrypoint generates config from env vars
 CMD ["relay"]

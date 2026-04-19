@@ -6,7 +6,7 @@ services:
   relay-tokyo:
     image: ghcr.io/okdaichi/qumo:latest
     container_name: qumo-relay-tokyo
-    command: ["relay", "-config", "/tmp/config.relay.yaml"]
+    command: ["relay"]
     ports:
       - "4433:4433/udp"
       - "8080:4433"
@@ -30,7 +30,7 @@ services:
   relay-london:
     image: ghcr.io/okdaichi/qumo:latest
     container_name: qumo-relay-london
-    command: ["relay", "-config", "/tmp/config.relay.yaml"]
+    command: ["relay"]
     ports:
       - "4434:4433/udp"
       - "8081:4433"
@@ -54,7 +54,7 @@ services:
   relay-newyork:
     image: ghcr.io/okdaichi/qumo:latest
     container_name: qumo-relay-newyork
-    command: ["relay", "-config", "/tmp/config.relay.yaml"]
+    command: ["relay"]
     ports:
       - "4435:4433/udp"
       - "8082:4433"
