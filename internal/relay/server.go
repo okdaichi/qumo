@@ -72,6 +72,7 @@ func (s *Server) init() {
 			TLSConfig:          s.TLSConfig,
 			QUICConfig:         s.QUICConfig,
 			Handler:            moqt.HandleFunc(s.Relay),
+			TrackMux:           s.TrackMux,
 			WebTransportServer: s.WebTransportServer,
 			Logger:             s.Logger,
 		}
@@ -250,6 +251,10 @@ func (s *Server) maintainPeer(ctx context.Context, peer Peer) {
 
 		s.Relay(sess)
 
+		<-sess.Context().Done()
+
+		slog.Info("peer disconnected", "address", peer.Address)
+
 		if !waitRetry(ctx, 5*time.Second) {
 			return
 		}
@@ -271,15 +276,13 @@ func waitRetry(ctx context.Context, d time.Duration) bool {
 
 func (s *Server) Relay(sess *moqt.Session) {
 	s.init()
-	defer sess.CloseWithError(moqt.NoError, moqt.NoError.String())
 
 	if s.statusHandler != nil {
 		s.statusHandler.incrementConnections()
 		defer s.statusHandler.decrementConnections()
 	}
 
-	slog.Info("session established", "remote", sess.RemoteAddr())
-	defer slog.Info("session closed", "remote", sess.RemoteAddr())
+	slog.Info("relay: new session", "remote", sess.RemoteAddr())
 
 	announced, err := sess.AcceptAnnounce("/")
 	if err != nil {
@@ -288,8 +291,15 @@ func (s *Server) Relay(sess *moqt.Session) {
 	}
 
 	for ann := range announced.Announcements(context.Background()) {
+		slog.Info("relay: received announcement",
+			"broadcast_path", ann.BroadcastPath(),
+			"remote", sess.RemoteAddr())
+
 		handler := newRelayHandler(ann, sess)
 
 		s.TrackMux.Announce(ann, handler)
+		slog.Info("relay: registered on TrackMux",
+			"broadcast_path", ann.BroadcastPath())
 	}
+	slog.Info("relay: announcements loop ended", "remote", sess.RemoteAddr())
 }

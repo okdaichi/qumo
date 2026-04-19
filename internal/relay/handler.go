@@ -85,19 +85,31 @@ func (h *relayHandler) subscribe(name moqt.TrackName) *trackDistributor {
 
 	session := h.session
 	if session == nil {
+		slog.Warn("relay: subscribe failed: session is nil", "track", name)
 		return nil
 	}
 
 	announcement := h.announcement
 	if announcement == nil {
+		slog.Warn("relay: subscribe failed: announcement is nil", "track", name)
 		return nil
 	}
 	if !announcement.IsActive() {
+		slog.Warn("relay: subscribe failed: announcement inactive",
+			"track", name,
+			"broadcast_path", announcement.BroadcastPath())
 		return nil
 	}
 
+	slog.Info("relay: subscribing upstream",
+		"broadcast_path", announcement.BroadcastPath(),
+		"track", name)
 	src, err := session.Subscribe(context.Background(), announcement.BroadcastPath(), name, nil)
 	if err != nil {
+		slog.Warn("relay: upstream subscribe failed",
+			"broadcast_path", announcement.BroadcastPath(),
+			"track", name,
+			"error", err)
 		return nil
 	}
 

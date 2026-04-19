@@ -937,11 +937,9 @@ func (Docker) Restart() error {
 }
 
 // Smoke runs a cross-region streaming smoke test against the topology.
-// Publishes text frames to one relay and subscribes from another.
-// Requires the topology to be running:
-//
-//	docker compose -f docker/docker-compose.topology.yml up --build
-func (Docker) Smoke(pub *string, sub *string) error { // pub: publisher relay URL, sub: subscriber relay URL
+// Smoke runs a streaming smoke test that publishes to one relay and subscribes from another.
+// Defaults: pub=moqt://localhost:9002, sub=moqt://localhost:9006.
+func Smoke(pub *string, sub *string) error { // pub: publisher relay URL, sub: subscriber relay URL
 	pubURL := "moqt://localhost:9002"
 	if pub != nil {
 		pubURL = *pub
@@ -951,7 +949,7 @@ func (Docker) Smoke(pub *string, sub *string) error { // pub: publisher relay UR
 		subURL = *sub
 	}
 
-	fmt.Println("🔬 Running cross-region streaming smoke test...")
+	fmt.Println("🔬 Running streaming smoke test...")
 	fmt.Printf("   Publish:   %s\n", pubURL)
 	fmt.Printf("   Subscribe: %s\n", subURL)
 	fmt.Println()
