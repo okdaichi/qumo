@@ -27,6 +27,9 @@ var _ Drainable = (*relayHandler)(nil)
 
 // RouteStats holds routing quality metrics for a relayed broadcast path.
 type RouteStats struct {
+	// Alive reports whether the upstream session is still connected.
+	// A false value means the handler is dead and must be replaced unconditionally.
+	Alive bool
 	// Hops is the number of relay hops the announcement has traversed.
 	// Fewer hops generally implies lower latency.
 	Hops int
@@ -75,11 +78,20 @@ type relayHandler struct {
 }
 
 // isBetterRoute reports whether candidate is a strictly better route than
-// current. Fewer hops wins outright; equal hops are broken first by bitrate
+// current. A live route always beats a dead one. Among routes with the same
+// liveness, fewer hops wins outright; equal hops are broken first by bitrate
 // (higher available bandwidth is better for streaming), then by RTT (lower
 // latency is better). When a metric cannot be determined (nil probe or 0
 // value), the current route is preferred.
 func isBetterRoute(candidate, current RouteStats) bool {
+	// A live route always beats a dead one.
+	if candidate.Alive != current.Alive {
+		return candidate.Alive
+	}
+	// Both dead: no benefit in switching.
+	if !candidate.Alive {
+		return false
+	}
 	if candidate.Hops < current.Hops {
 		return true
 	}
@@ -124,7 +136,8 @@ func (h *relayHandler) Drain(timeout time.Duration) {
 // The probe is performed once per call; results are not cached.
 func (h *relayHandler) RouteStats() RouteStats {
 	rs := RouteStats{
-		Hops: len(h.announcement.HopIDs()),
+		Alive: h.ctx.Err() == nil && h.announcement.IsActive(),
+		Hops:  len(h.announcement.HopIDs()),
 	}
 	if h.session != nil {
 		if result, err := h.session.Probe(0); err == nil {

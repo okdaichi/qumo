@@ -319,12 +319,10 @@ func (s *Server) Relay(sess *moqt.Session) {
 					)
 					continue
 				}
-			}
-			// Gracefully drain the displaced handler. Existing subscribers can
-			// finish in-flight groups within the grace window before the upstream
-			// subscription is torn down.
-			if dr, ok := existing.(Drainable); ok {
-				dr.Drain(DrainTimeout)
+				// Gracefully drain the displaced handler.
+				if dr, ok := existing.(Drainable); ok {
+					dr.Drain(DrainTimeout)
+				}
 			}
 		}
 
