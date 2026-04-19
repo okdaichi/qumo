@@ -279,7 +279,7 @@ func TestServer_Mux_Initialization(t *testing.T) {
 
 // TestServer_Mux_CustomTrackMux tests providing custom TrackMux
 func TestServer_Mux_CustomTrackMux(t *testing.T) {
-	customMux := moqt.NewTrackMux()
+	customMux := moqt.NewTrackMux(0)
 	server := &Server{
 		Addr:      "localhost:4433",
 		TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12},

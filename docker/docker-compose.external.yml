@@ -1,16 +1,20 @@
 version: '3.8'
 
 services:
-  # Relay Server
+  # Relay Server (pre-built image)
   relay:
     image: ghcr.io/okdaichi/qumo:latest
     container_name: qumo-relay
-    command: ["relay", "-config", "config.relay.yaml"]
+    command: ["relay"]
     ports:
       - "4433:4433/udp"  # MoQT (QUIC)
       - "8080:4433"      # host 8080 -> container 4433 (HTTP health/metrics)
+    environment:
+      RELAY_ADDR: "0.0.0.0:4433"
+      ADVERTISE_ADDR: "relay:4433"
+      INSECURE: "true"
+      RELAY_NAME: "relay-1"
     volumes:
-      - ../config.relay.yaml:/app/config.relay.yaml:ro
       - ../certs:/app/certs:ro
     restart: unless-stopped
     healthcheck:

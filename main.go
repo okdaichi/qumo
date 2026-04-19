@@ -10,8 +10,9 @@ import (
 
 var (
 	// overridable command handlers for easier unit-testing
-	runRelay = cli.RunRelay
-	runRTMP  = cli.RunRTMP
+	runRelay     = cli.RunRelay
+	runRTMP      = cli.RunRTMP
+	runBootstrap = cli.RunBootstrap
 )
 
 func main() {
@@ -41,6 +42,8 @@ func run(args []string) int {
 		err = runRelay(cmdArgs)
 	case "rtmp":
 		err = runRTMP(cmdArgs)
+	case "bootstrap":
+		err = runBootstrap(cmdArgs)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n", cmd)
 		printUsage()
@@ -55,14 +58,16 @@ func run(args []string) int {
 }
 
 func printUsage() {
-	fmt.Fprintf(os.Stderr, "Usage: qumo <command> [flags]  (%s)\n", version.Short())
+	fmt.Fprintf(os.Stderr, "Usage: qumo <command>  (%s)\n", version.Short())
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Commands:")
-	fmt.Fprintln(os.Stderr, "  relay    Start the MoQ relay server")
-	fmt.Fprintln(os.Stderr, "  rtmp     Start the RTMP ingest server")
-	fmt.Fprintln(os.Stderr, "  version  Print version information")
+	fmt.Fprintln(os.Stderr, "  relay      Start the MoQ relay server")
+	fmt.Fprintln(os.Stderr, "  rtmp       Start the RTMP ingest server")
+	fmt.Fprintln(os.Stderr, "  bootstrap  Start the bootstrap discovery server")
+	fmt.Fprintln(os.Stderr, "  version    Print version information")
 	fmt.Fprintln(os.Stderr, "")
-	fmt.Fprintln(os.Stderr, "Flags:")
-	fmt.Fprintln(os.Stderr, "  -config string   path to config file")
-	fmt.Fprintln(os.Stderr, "                   defaults: config.relay.yaml (relay)")
+	fmt.Fprintln(os.Stderr, "Configuration:")
+	fmt.Fprintln(os.Stderr, "  relay/bootstrap are configured via environment variables.")
+	fmt.Fprintln(os.Stderr, "  See relay-config.example.env and bootstrap-config.example.env for details.")
+	fmt.Fprintln(os.Stderr, "  rtmp requires -config flag: qumo rtmp -config <path>")
 }

@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -15,233 +13,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// TestLoadConfig tests the configuration loading
-func TestLoadConfig(t *testing.T) {
-	// Create a temporary config file
-	tmpDir := t.TempDir()
-	configFile := filepath.Join(tmpDir, "test-config.yaml")
-
-	validConfig := `
-server:
-  address: "localhost:4433"
-  cert_file: "certs/cert.pem"
-  key_file: "certs/key.pem"
-relay:
-  group_cache_size: 150
-  frame_capacity: 2000
-`
-
-	if err := os.WriteFile(configFile, []byte(validConfig), 0600); err != nil {
-		t.Fatalf("Failed to create test config: %v", err)
-	}
-
-	cfg, err := loadConfig(configFile)
-	if err != nil {
-		t.Fatalf("loadConfig() error: %v", err)
-	}
-
-	if cfg.Address != "localhost:4433" {
-		t.Errorf("Expected address 'localhost:4433', got '%s'", cfg.Address)
-	}
-	if cfg.CertFile != "certs/cert.pem" {
-		t.Errorf("Expected cert_file 'certs/cert.pem', got '%s'", cfg.CertFile)
-	}
-	if cfg.KeyFile != "certs/key.pem" {
-		t.Errorf("Expected key_file 'certs/key.pem', got '%s'", cfg.KeyFile)
-	}
-	if cfg.RelayConfig.GroupCacheSize != 150 {
-		t.Errorf("Expected GroupCacheSize 150, got %d", cfg.RelayConfig.GroupCacheSize)
-	}
-	if cfg.RelayConfig.FrameCapacity != 2000 {
-		t.Errorf("Expected FrameCapacity 2000, got %d", cfg.RelayConfig.FrameCapacity)
-	}
-}
-
-// TestLoadConfigDefaults tests default values
-func TestLoadConfigDefaults(t *testing.T) {
-	tmpDir := t.TempDir()
-	configFile := filepath.Join(tmpDir, "test-config.yaml")
-
-	// Config without relay settings to test defaults
-	minimalConfig := `
-server:
-  address: "localhost:4433"
-  cert_file: "certs/cert.pem"
-  key_file: "certs/key.pem"
-relay: {}
-`
-
-	if err := os.WriteFile(configFile, []byte(minimalConfig), 0600); err != nil {
-		t.Fatalf("Failed to create test config: %v", err)
-	}
-
-	cfg, err := loadConfig(configFile)
-	if err != nil {
-		t.Fatalf("loadConfig() error: %v", err)
-	}
-
-	if cfg.RelayConfig.FrameCapacity != 1500 {
-		t.Errorf("Expected default FrameCapacity 1500, got %d", cfg.RelayConfig.FrameCapacity)
-	}
-	if cfg.RelayConfig.GroupCacheSize != 100 {
-		t.Errorf("Expected default GroupCacheSize 100, got %d", cfg.RelayConfig.GroupCacheSize)
-	}
-}
-
-// TestLoadConfigInvalidFile tests error handling for invalid file
-func TestLoadConfigInvalidFile(t *testing.T) {
-	_, err := loadConfig("/nonexistent/config.yaml")
-	if err == nil {
-		t.Error("Expected error for nonexistent file, got nil")
-	}
-}
-
-// TestLoadConfigInvalidYAML tests error handling for invalid YAML
-func TestLoadConfigInvalidYAML(t *testing.T) {
-	tmpDir := t.TempDir()
-	configFile := filepath.Join(tmpDir, "invalid.yaml")
-
-	invalidYAML := `
-server:
-  address: localhost:4433
-  cert_file: "certs/cert.pem
-  # Missing closing quote above
-`
-
-	if err := os.WriteFile(configFile, []byte(invalidYAML), 0600); err != nil {
-		t.Fatalf("Failed to create test config: %v", err)
-	}
-
-	_, err := loadConfig(configFile)
-	if err == nil {
-		t.Error("Expected error for invalid YAML, got nil")
-	}
-}
-
-// TestLoadConfigEmptyFile tests error handling for empty file
-func TestLoadConfigEmptyFile(t *testing.T) {
-	tmpDir := t.TempDir()
-	configFile := filepath.Join(tmpDir, "empty.yaml")
-
-	if err := os.WriteFile(configFile, []byte(""), 0600); err != nil {
-		t.Fatalf("Failed to create test config: %v", err)
-	}
-
-	_, err := loadConfig(configFile)
-	// Empty file should return an error
-	if err == nil {
-		t.Error("Expected error for empty config file, got nil")
-	}
-}
-
-// TestLoadConfigPartialData tests handling of partially filled config
-func TestLoadConfigPartialData(t *testing.T) {
-	tmpDir := t.TempDir()
-	configFile := filepath.Join(tmpDir, "partial.yaml")
-
-	partialConfig := `
-server:
-  address: "localhost:4433"
-relay:
-  frame_capacity: 3000
-`
-
-	if err := os.WriteFile(configFile, []byte(partialConfig), 0600); err != nil {
-		t.Fatalf("Failed to create test config: %v", err)
-	}
-
-	cfg, err := loadConfig(configFile)
-	if err != nil {
-		t.Fatalf("loadConfig() error: %v", err)
-	}
-
-	if cfg.Address != "localhost:4433" {
-		t.Errorf("Expected address 'localhost:4433', got '%s'", cfg.Address)
-	}
-	if cfg.RelayConfig.FrameCapacity != 3000 {
-		t.Errorf("Expected FrameCapacity 3000, got %d", cfg.RelayConfig.FrameCapacity)
-	}
-	// Should use default for unspecified GroupCacheSize
-	if cfg.RelayConfig.GroupCacheSize != 100 {
-		t.Errorf("Expected default GroupCacheSize 100, got %d", cfg.RelayConfig.GroupCacheSize)
-	}
-}
-
-// TestLoadConfigStructMapping tests proper mapping to config struct
-func TestLoadConfigStructMapping(t *testing.T) {
-	tmpDir := t.TempDir()
-	configFile := filepath.Join(tmpDir, "mapping.yaml")
-
-	configContent := `
-server:
-  address: "0.0.0.0:8443"
-  cert_file: "/path/to/cert.pem"
-  key_file: "/path/to/key.pem"
-relay:
-  group_cache_size: 500
-  frame_capacity: 5000
-`
-
-	if err := os.WriteFile(configFile, []byte(configContent), 0600); err != nil {
-		t.Fatalf("Failed to create test config: %v", err)
-	}
-
-	cfg, err := loadConfig(configFile)
-	if err != nil {
-		t.Fatalf("loadConfig() error: %v", err)
-	}
-
-	// Verify all fields are properly mapped
-	if cfg.Address != "0.0.0.0:8443" {
-		t.Errorf("Address not properly mapped")
-	}
-	if cfg.CertFile != "/path/to/cert.pem" {
-		t.Errorf("CertFile not properly mapped")
-	}
-	if cfg.KeyFile != "/path/to/key.pem" {
-		t.Errorf("KeyFile not properly mapped")
-	}
-
-	// Verify RelayConfig is properly populated
-	if cfg.RelayConfig.GroupCacheSize != 500 {
-		t.Errorf("RelayConfig.GroupCacheSize not properly mapped")
-	}
-	if cfg.RelayConfig.FrameCapacity != 5000 {
-		t.Errorf("RelayConfig.FrameCapacity not properly mapped")
-	}
-}
-
-// TestLoadConfigZeroValues tests handling of explicit zero values
-func TestLoadConfigZeroValues(t *testing.T) {
-	tmpDir := t.TempDir()
-	configFile := filepath.Join(tmpDir, "zero.yaml")
-
-	zeroConfig := `
-server:
-  address: "localhost:4433"
-relay:
-  group_cache_size: 0
-  frame_capacity: 0
-`
-
-	if err := os.WriteFile(configFile, []byte(zeroConfig), 0600); err != nil {
-		t.Fatalf("Failed to create test config: %v", err)
-	}
-
-	cfg, err := loadConfig(configFile)
-	if err != nil {
-		t.Fatalf("loadConfig() error: %v", err)
-	}
-
-	// Zero values should be replaced with defaults
-	if cfg.RelayConfig.FrameCapacity != 1500 {
-		t.Errorf("Expected default FrameCapacity 1500 for zero value, got %d", cfg.RelayConfig.FrameCapacity)
-	}
-	if cfg.RelayConfig.GroupCacheSize != 100 {
-		t.Errorf("Expected default GroupCacheSize 100 for zero value, got %d", cfg.RelayConfig.GroupCacheSize)
-	}
-}
 
 // TestSetupTLS tests TLS configuration setup (basic validation only)
 func TestSetupTLSInvalidFiles(t *testing.T) {
@@ -259,59 +30,15 @@ func TestSetupTLSEmptyPaths(t *testing.T) {
 	}
 }
 
-// TestConfigType tests the config type structure
-func TestConfigType(t *testing.T) {
-	cfg := &config{
-		Address:  "localhost:4433",
-		CertFile: "cert.pem",
-		KeyFile:  "key.pem",
-		RelayConfig: relay.Config{
-			FrameCapacity:  1500,
-			GroupCacheSize: 100,
-		},
-	}
+// TestSetupTLS_Insecure verifies that INSECURE=true generates a usable self-signed certificate.
+func TestSetupTLS_Insecure(t *testing.T) {
+	t.Setenv("INSECURE", "true")
 
-	if cfg.Address == "" {
-		t.Error("Address should not be empty")
-	}
-	if cfg.RelayConfig.FrameCapacity != 1500 {
-		t.Error("FrameCapacity not properly set")
-	}
-}
-
-// TestLoadConfigWithComments tests that YAML comments are properly ignored
-func TestLoadConfigWithComments(t *testing.T) {
-	tmpDir := t.TempDir()
-	configFile := filepath.Join(tmpDir, "commented.yaml")
-
-	commentedConfig := `
-# Server configuration
-server:
-  address: "localhost:4433"  # Listen address
-  cert_file: "certs/cert.pem"  # TLS certificate
-  key_file: "certs/key.pem"    # TLS key
-
-# Relay configuration
-relay:
-  group_cache_size: 150  # Cache size
-  frame_capacity: 2000   # Frame buffer size
-`
-
-	if err := os.WriteFile(configFile, []byte(commentedConfig), 0600); err != nil {
-		t.Fatalf("Failed to create test config: %v", err)
-	}
-
-	cfg, err := loadConfig(configFile)
-	if err != nil {
-		t.Fatalf("loadConfig() error: %v", err)
-	}
-
-	if cfg.Address != "localhost:4433" {
-		t.Errorf("Comments affected parsing")
-	}
-	if cfg.RelayConfig.GroupCacheSize != 150 {
-		t.Errorf("Comments affected numeric parsing")
-	}
+	tlsCfg, err := setupTLS("nonexistent.crt", "nonexistent.key")
+	require.NoError(t, err)
+	require.NotNil(t, tlsCfg)
+	assert.Len(t, tlsCfg.Certificates, 1, "expected exactly one certificate")
+	assert.Contains(t, tlsCfg.NextProtos, "h3")
 }
 
 func TestHealthHandler_ProbeLive_GETAndHEAD(t *testing.T) {
@@ -531,4 +258,36 @@ func TestServeComponents_ReturnsErrorOnPanic(t *testing.T) {
 	case <-time.After(500 * time.Millisecond):
 		t.Fatal("serveComponents did not return after panic")
 	}
+}
+
+func TestRunRelay_WildcardRequiresAdvertiseAddr(t *testing.T) {
+	t.Setenv("RELAY_ADDR", "0.0.0.0:4433")
+	t.Setenv("ADVERTISE_ADDR", "")
+
+	err := RunRelay(nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ADVERTISE_ADDR is required")
+}
+
+func TestRunRelay_InvalidGroupCacheSize(t *testing.T) {
+	t.Setenv("RELAY_ADDR", "localhost:4433")
+	t.Setenv("ADVERTISE_ADDR", "localhost:4433")
+	t.Setenv("GROUP_CACHE_SIZE", "not-a-number")
+
+	err := RunRelay(nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "GROUP_CACHE_SIZE")
+}
+
+func TestRunRelay_InvalidBootstrapInterval(t *testing.T) {
+	t.Setenv("RELAY_ADDR", "localhost:4433")
+	t.Setenv("ADVERTISE_ADDR", "localhost:4433")
+	t.Setenv("GROUP_CACHE_SIZE", "")
+	t.Setenv("FRAME_CAPACITY", "")
+	t.Setenv("BOOTSTRAP_URLS", "http://bs:8080")
+	t.Setenv("BOOTSTRAP_INTERVAL", "bad-duration")
+
+	err := RunRelay(nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "BOOTSTRAP_INTERVAL")
 }

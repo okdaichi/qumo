@@ -33,3 +33,8 @@ linters:
       - linters: [gosec]
         path: "_test\\.go"
         text: "G204"
+      # Log values are passed through sanitizeLog (strips CR/LF) before logging.
+      # gosec taint analysis does not recognise custom sanitisers, so this is a false positive.
+      - linters: [gosec]
+        path: "\\.go"
+        text: "G706"

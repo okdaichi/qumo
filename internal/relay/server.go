@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/okdaichi/gomoqt/moqt"
+	"github.com/okdaichi/qumo/internal/bootstrap"
 	"github.com/quic-go/quic-go"
 )
 
@@ -110,14 +111,10 @@ func (s *Server) RouteWebTransport(path string, mux *http.ServeMux) {
 // ConnectPeers dials configured peer relays and discovers their announcements
 // via ANNOUNCE_PLEASE. Received announcements are registered on the local
 // TrackMux so that subscribers can transparently access remote content.
+// It also starts bootstrap clients for each configured bootstrap server.
 // It blocks until ctx is cancelled.
 func (s *Server) ConnectPeers(ctx context.Context) {
 	s.init()
-
-	peers := s.Config.Peers
-	if len(peers) == 0 {
-		return
-	}
 
 	dialer := &moqt.Dialer{
 		TLSConfig:  s.TLSConfig,
@@ -125,15 +122,112 @@ func (s *Server) ConnectPeers(ctx context.Context) {
 	}
 
 	var wg sync.WaitGroup
-	for _, peer := range peers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+
+	// Static peers from config.
+	for _, peer := range s.Config.Peers {
+		wg.Go(func() {
 			s.maintainPeer(ctx, dialer, peer)
-		}()
+		})
+	}
+
+	// Dynamic peers from bootstrap servers.
+	for _, bsCfg := range s.Config.Bootstraps {
+		bsCfg := bsCfg
+		wg.Go(func() {
+			client := bootstrap.NewClient(bsCfg, s.Config.NodeID, s.Config.AdvertiseAddr, s.Config.Region, s.Config.Role)
+			// Heartbeat goroutine.
+			wg.Go(func() {
+				client.Run(ctx)
+			})
+			// Topology-aware peer discovery goroutine.
+			s.discoverPeers(ctx, &wg, bsCfg.Interval, client, dialer)
+		})
 	}
 
 	wg.Wait()
+}
+
+// discoverPeers runs the role-aware peer discovery loop for a single bootstrap client.
+// It builds topology connections according to the node's role (edge/hub/default)
+// and re-checks at interval. Already-connected peers are skipped.
+func (s *Server) discoverPeers(ctx context.Context, wg *sync.WaitGroup, interval time.Duration, client *bootstrap.Client, dialer *moqt.Dialer) {
+	var mu sync.Mutex
+	connected := make(map[string]struct{})
+
+	// connect dials each peer not already in connected.
+	connect := func(peers []bootstrap.Node) {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, p := range peers {
+			if _, ok := connected[p.ID]; ok {
+				continue
+			}
+			connected[p.ID] = struct{}{}
+			p := p
+			wg.Go(func() {
+				s.maintainPeer(ctx, dialer, Peer{Address: p.Addr})
+			})
+		}
+	}
+
+	// connectFirst dials only the first peer from the slice.
+	connectFirst := func(peers []bootstrap.Node) {
+		if len(peers) > 0 {
+			connect(peers[:1])
+		}
+	}
+
+	tick := func() {
+		region := s.Config.Region
+		switch s.Config.Role {
+		case "edge":
+			// 2 local edges + 1 hub.
+			if peers, err := client.FetchPeers(ctx, bootstrap.PeerQuery{PreferredRegion: region, Role: "edge", Limit: 2}); err == nil {
+				connect(peers)
+			}
+			if peers, err := client.FetchPeers(ctx, bootstrap.PeerQuery{PreferredRegion: region, Role: "hub", Limit: 2}); err == nil {
+				connectFirst(peers)
+			}
+
+		case "hub":
+			// 2 local peers + 2 same-region hubs + 1 cross-region hub.
+			if peers, err := client.FetchPeers(ctx, bootstrap.PeerQuery{PreferredRegion: region, Limit: 2}); err == nil {
+				connect(peers)
+			}
+			if peers, err := client.FetchPeers(ctx, bootstrap.PeerQuery{PreferredRegion: region, Role: "hub", Limit: 2}); err == nil {
+				connect(peers)
+			}
+			// Cross-region: fetch hubs from any region, then client-side filter to other regions.
+			if all, err := client.FetchPeers(ctx, bootstrap.PeerQuery{Role: "hub", AllowRemote: true, Limit: 5}); err == nil {
+				var remote []bootstrap.Node
+				for _, p := range all {
+					if p.Region != region {
+						remote = append(remote, p)
+					}
+				}
+				connectFirst(remote)
+			}
+
+		default:
+			// Flat discovery: any peers in the preferred region.
+			if peers, err := client.FetchPeers(ctx, bootstrap.PeerQuery{PreferredRegion: region, Limit: 5}); err == nil {
+				connect(peers)
+			}
+		}
+	}
+
+	tick()
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			tick()
+		}
+	}
 }
 
 // maintainPeer keeps a connection to a peer alive, reconnecting on failure.
