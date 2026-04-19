@@ -40,8 +40,8 @@ func TestStatusHandler_GetStatus(t *testing.T) {
 	h := newStatusHandler()
 	status := h.getStatus()
 
-	assert.Equal(t, status.ActiveConnections, 0, "expected activeConnections to be 0, got %d", status.ActiveConnections)
-	assert.NotEqual(t, "", status.Uptime, "expected uptime to be non-empty")
+	assert.Equal(t, int32(0), status.ActiveConnections)
+	assert.NotEmpty(t, status.Uptime)
 }
 
 func TestStatusHandler_ServeHTTP(t *testing.T) {
