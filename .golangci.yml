@@ -33,3 +33,8 @@ linters:
       - linters: [gosec]
         path: "_test\\.go"
         text: "G204"
+      # Debug-level log: PreferredRegion and Role are query params sanitized (CR/LF stripped)
+      # before being passed to slog; gosec taint analysis does not track ReplaceAll as sanitising.
+      - linters: [gosec]
+        path: "internal/bootstrap/handler\\.go"
+        text: "G706"
