@@ -327,6 +327,7 @@ func (s *Server) Relay(sess *moqt.Session) {
 					slog.Debug("relay: skipping inferior route",
 						"path", ann.BroadcastPath(),
 					)
+					handler.cancel()
 					continue
 				}
 				// Gracefully drain the displaced handler.

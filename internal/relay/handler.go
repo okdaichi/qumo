@@ -44,7 +44,8 @@ type RouteStats struct {
 // in-flight streams can complete before the upstream subscription is torn down.
 type Drainable interface {
 	// Drain schedules cancellation of the handler's context after timeout.
-	// It is safe to call multiple times; only the first cancellation takes effect.
+	// It is idempotent: only the first call schedules a timer; subsequent calls
+	// are no-ops. The handler's context is cancelled once when the timer fires.
 	Drain(timeout time.Duration)
 }
 
@@ -73,8 +74,9 @@ type relayHandler struct {
 	tracks  *trackManager
 	flights singleflight.Group
 
-	ctx    context.Context
-	cancel context.CancelFunc
+	ctx       context.Context
+	cancel    context.CancelFunc
+	drainOnce sync.Once
 }
 
 // isBetterRoute reports whether candidate is a strictly better route than
@@ -128,8 +130,12 @@ func newRelayHandler(ann *moqt.Announcement, sess *moqt.Session) *relayHandler {
 // Drain schedules cancellation of this handler's context after timeout.
 // New subscribers will find no active handler; existing in-flight groups
 // are allowed to finish within the grace window.
+// It is idempotent: only the first call schedules a timer; subsequent calls
+// are no-ops and do not create additional goroutines.
 func (h *relayHandler) Drain(timeout time.Duration) {
-	time.AfterFunc(timeout, h.cancel)
+	h.drainOnce.Do(func() {
+		time.AfterFunc(timeout, h.cancel)
+	})
 }
 
 // RouteStats probes the upstream session and returns combined routing metrics.
