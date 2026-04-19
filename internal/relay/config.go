@@ -35,6 +35,9 @@ type Config struct {
 
 // Peer represents a remote relay to connect to for announce discovery.
 type Peer struct {
-	// Address is the dial address (e.g. "moqt://relay-tokyo:4433" or "https://relay-tokyo:4433").
+	// Address is the dial address used to connect to a remote relay.
+	// It can be a full URL such as "moqt://relay-tokyo:4433" or "https://relay-tokyo:4433",
+	// or a raw host:port string such as "relay-tokyo:4433".
+	// Raw host:port addresses default to the moqt:// scheme.
 	Address string
 }

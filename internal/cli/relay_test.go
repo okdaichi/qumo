@@ -35,6 +35,7 @@ func TestSetupTLS_Insecure(t *testing.T) {
 	require.NotNil(t, tlsCfg)
 	assert.Len(t, tlsCfg.Certificates, 1, "expected exactly one certificate")
 	assert.Contains(t, tlsCfg.NextProtos, "h3")
+	assert.True(t, tlsCfg.InsecureSkipVerify, "expected insecure TLS config to skip verification")
 }
 
 // --- serveComponents tests ---
