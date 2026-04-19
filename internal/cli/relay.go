@@ -33,12 +33,6 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-func safeLogValue(value string) string {
-	value = strings.ReplaceAll(value, "\r", "")
-	value = strings.ReplaceAll(value, "\n", "")
-	return value
-}
-
 // RunRelay starts the MoQ relay server.
 //
 // Configuration is read from environment variables:
@@ -157,18 +151,25 @@ func RunRelay(_ []string) error {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	log.Printf("\t%-8s: %s\n", "Host", safeLogValue(addr))
-	log.Printf("\t%-8s: %s\n", "Advertise", safeLogValue(relayCfg.AdvertiseAddr))
-	log.Printf("\t%-8s: %s\n", "Node ID", safeLogValue(relayCfg.NodeID))
-	log.Printf("\t%-8s: %s\n", "Region", safeLogValue(relayCfg.Region))
+	hostLog := strings.ReplaceAll(strings.ReplaceAll(addr, "\r", ""), "\n", "")
+	advertiseLog := strings.ReplaceAll(strings.ReplaceAll(relayCfg.AdvertiseAddr, "\r", ""), "\n", "")
+	nodeIDLog := strings.ReplaceAll(strings.ReplaceAll(relayCfg.NodeID, "\r", ""), "\n", "")
+	regionLog := strings.ReplaceAll(strings.ReplaceAll(relayCfg.Region, "\r", ""), "\n", "")
+
+	log.Printf("\t%-8s: %s\n", "Host", hostLog)
+	log.Printf("\t%-8s: %s\n", "Advertise", advertiseLog)
+	log.Printf("\t%-8s: %s\n", "Node ID", nodeIDLog)
+	log.Printf("\t%-8s: %s\n", "Region", regionLog)
 	log.Printf("\t%-8s: WebTransport endpoint\n", wtPath)
 	log.Printf("\t%-8s: liveness/readiness probe\n", "/health")
 	log.Printf("\t%-8s: Prometheus metrics\n", "/metrics")
 	for _, p := range relayCfg.Peers {
-		log.Printf("\t%-8s: %s\n", "Peer", safeLogValue(p.Address))
+		peerLog := strings.ReplaceAll(strings.ReplaceAll(p.Address, "\r", ""), "\n", "")
+		log.Printf("\t%-8s: %s\n", "Peer", peerLog)
 	}
 	for _, b := range relayCfg.Bootstraps {
-		log.Printf("\t%-8s: %s (interval: %s)\n", "Bootstrap", safeLogValue(b.URL), b.Interval)
+		bootstrapURL := strings.ReplaceAll(strings.ReplaceAll(b.URL, "\r", ""), "\n", "")
+		log.Printf("\t%-8s: %s (interval: %s)\n", "Bootstrap", bootstrapURL, b.Interval)
 	}
 
 	// Start peer connections in background

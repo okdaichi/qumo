@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 )
 
 // registerRequest is the JSON body for POST /register.
@@ -102,10 +103,12 @@ func (h *PeersHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	peers := h.Store.Peers(q)
+	region := strings.ReplaceAll(strings.ReplaceAll(q.PreferredRegion, "\r", ""), "\n", "")
+	role := strings.ReplaceAll(strings.ReplaceAll(q.Role, "\r", ""), "\n", "")
 
 	slog.Debug("peers requested",
-		slog.String("region", q.PreferredRegion),
-		slog.String("role", q.Role),
+		slog.String("region", region),
+		slog.String("role", role),
 		slog.Bool("allow_remote", q.AllowRemote),
 		slog.Int("limit", q.Limit),
 		slog.Int("count", len(peers)),
