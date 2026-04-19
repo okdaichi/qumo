@@ -222,4 +222,3 @@ func TestPeersHandler_Limit(t *testing.T) {
 		t.Fatalf("expected 2 peers (limit), got %d", len(peers))
 	}
 }
-
