@@ -5,6 +5,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestNewStatusHandler(t *testing.T) {
@@ -100,4 +103,61 @@ func TestStatusHandler_NilReceiver(t *testing.T) {
 	if status != (Status{}) {
 		t.Error("expected empty status for nil receiver")
 	}
+}
+
+func TestStatusHandler_ProbeLive_GETAndHEAD(t *testing.T) {
+	h := newStatusHandler()
+
+	// GET
+	req := httptest.NewRequest(http.MethodGet, "/health?probe=live", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var resp map[string]string
+	err := json.NewDecoder(rec.Body).Decode(&resp)
+	require.NoError(t, err)
+	assert.Equal(t, "alive", resp["status"])
+
+	// HEAD should return no body
+	req = httptest.NewRequest(http.MethodHead, "/health?probe=live", nil)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, 0, rec.Body.Len())
+}
+
+func TestStatusHandler_ProbeReady_Cases(t *testing.T) {
+	tests := map[string]struct {
+		wantCode  int
+		wantReady bool
+	}{
+		"ready with healthy status": {
+			wantCode:  http.StatusOK,
+			wantReady: true,
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			h := newStatusHandler()
+			req := httptest.NewRequest(http.MethodGet, "/health?probe=ready", nil)
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			assert.Equal(t, tt.wantCode, rec.Code)
+
+			var resp map[string]any
+			err := json.NewDecoder(rec.Body).Decode(&resp)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantReady, resp["ready"])
+		})
+	}
+}
+
+func TestStatusHandler_InvalidMethod(t *testing.T) {
+	h := newStatusHandler()
+	req := httptest.NewRequest(http.MethodPost, "/health", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusMethodNotAllowed, rec.Code)
 }

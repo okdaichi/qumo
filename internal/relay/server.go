@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -14,34 +15,138 @@ import (
 )
 
 type Server struct {
-	Addr       string
-	TLSConfig  *tls.Config
-	QUICConfig *quic.Config
-	Config     *Config
+	Addr               string
+	TLSConfig          *tls.Config
+	QUICConfig         *quic.Config
+	Config             *Config
+	TrackMux           *moqt.TrackMux
+	Logger             *slog.Logger
+	WebTransportServer moqt.WebTransportServer
 
-	TrackMux *moqt.TrackMux
+	moqServer *moqt.Server
 
-	server *moqt.Server
+	moqDialer *moqt.Dialer
 
-	initOnce sync.Once
+	webtransportHandler *moqt.WebTransportHandler
 
 	statusHandler *statusHandler
 }
 
-func (s *Server) init() {
-	s.initOnce.Do(func() {
-		if s.TrackMux == nil {
-			s.TrackMux = moqt.DefaultMux
+func (s *Server) ServeHelth(w http.ResponseWriter, r *http.Request) {
+	// single handler that supports probes via query param: ?probe=live|ready
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	probe := r.URL.Query().Get("probe")
+
+	switch probe {
+	case "live":
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if r.Method == http.MethodHead {
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "alive"})
+		return
+
+	case "ready":
+		status := s.statusHandler.getStatus()
+		activeConns := status.ActiveConnections
+
+		ready := true
+		reason := "ready"
+
+		if activeConns < 0 {
+			ready = false
+			reason = "invalid_connection_state"
 		}
 
-		s.statusHandler = newStatusHandler()
-	})
+		statusCode := http.StatusOK
+		if !ready {
+			statusCode = http.StatusServiceUnavailable
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(statusCode)
+		if r.Method == http.MethodHead {
+			return
+		}
+
+		response := map[string]any{"ready": ready}
+		if !ready {
+			response["reason"] = reason
+		}
+		_ = json.NewEncoder(w).Encode(response)
+		return
+
+	default:
+		// full status
+		status := s.statusHandler.getStatus()
+
+		ready := true
+		reason := "ready"
+		if status.ActiveConnections < 0 {
+			ready = false
+			reason = "invalid_connection_state"
+		}
+
+		response := map[string]any{
+			"status":             status.Status,
+			"timestamp":          status.Timestamp,
+			"uptime":             status.Uptime,
+			"active_connections": status.ActiveConnections,
+			"live":               true,
+			"ready":              ready,
+		}
+		if !ready {
+			response["ready_reason"] = reason
+		}
+
+		statusCode := http.StatusOK
+		if status.Status == "unhealthy" {
+			statusCode = http.StatusServiceUnavailable
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(statusCode)
+		if r.Method == http.MethodHead {
+			return
+		}
+		_ = json.NewEncoder(w).Encode(response)
+		return
+	}
 }
 
-func (s *Server) Status() Status {
-	s.init()
+func (s *Server) HandleWebTransport(w http.ResponseWriter, r *http.Request) {
+	s.webtransportHandler.ServeHTTP(w, r)
+}
 
-	return s.statusHandler.getStatus()
+func (s *Server) init() {
+	if s.TrackMux == nil {
+		s.TrackMux = moqt.DefaultMux
+	}
+
+	s.moqServer = &moqt.Server{
+		Addr:               s.Addr,
+		TLSConfig:          s.TLSConfig,
+		QUICConfig:         s.QUICConfig,
+		Handler:            moqt.HandleFunc(s.Relay),
+		WebTransportServer: moqt.NewWebTransportServer(nil),
+		Logger:             s.Logger,
+	}
+
+	s.moqDialer = &moqt.Dialer{
+		TLSConfig:  s.TLSConfig,
+		QUICConfig: s.QUICConfig,
+	}
+
+	s.webtransportHandler = &moqt.WebTransportHandler{
+		TrackMux: s.TrackMux,
+		Handler:  moqt.HandleFunc(s.Relay),
+		Logger:   s.Logger,
+	}
 }
 
 // ListenAndServe starts the relay server.
@@ -52,60 +157,24 @@ func (s *Server) ListenAndServe() error {
 
 	s.init()
 
-	s.server = &moqt.Server{
-		Addr:       s.Addr,
-		TLSConfig:  s.TLSConfig,
-		QUICConfig: s.QUICConfig,
-		Handler: moqt.HandleFunc(func(sess *moqt.Session) {
-			defer sess.CloseWithError(moqt.NoError, moqt.NoError.String())
-
-			err := s.relay(sess)
-			if err != nil {
-				slog.Warn("relay session ended", "err", err)
-				return
-			}
-		}),
-	}
-
 	// Start server - this will block until server closes
-	return s.server.ListenAndServe()
+	return s.moqServer.ListenAndServe()
 }
 
 func (s *Server) Close() error {
-	s.init()
-
-	if s.server != nil {
-		_ = s.server.Close()
+	if s.moqServer != nil {
+		_ = s.moqServer.Close()
 	}
 
 	return nil
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
-	s.init()
-
-	if s.server != nil {
-		return s.server.Shutdown(ctx)
+	if s.moqServer != nil {
+		return s.moqServer.Shutdown(ctx)
 	}
 
 	return nil
-}
-
-// RouteWebTransport registers the WebTransport MoQ endpoint at path on mux.
-// Browser and HTTP/3 clients connect via this handler; sessions are handled
-// identically to native QUIC connections.
-func (s *Server) RouteWebTransport(path string, mux *http.ServeMux) {
-	s.init()
-	mux.Handle(path, &moqt.WebTransportHandler{
-		TrackMux:             s.TrackMux,
-		ApplicationProtocols: []string{moqt.NextProtoMOQ},
-		Handler: moqt.HandleFunc(func(sess *moqt.Session) {
-			defer sess.CloseWithError(moqt.NoError, moqt.NoError.String())
-			if err := s.relay(sess); err != nil {
-				slog.Warn("relay session ended", "err", err)
-			}
-		}),
-	})
 }
 
 // ConnectPeers dials configured peer relays and discovers their announcements
@@ -114,19 +183,12 @@ func (s *Server) RouteWebTransport(path string, mux *http.ServeMux) {
 // It also starts bootstrap clients for each configured bootstrap server.
 // It blocks until ctx is cancelled.
 func (s *Server) ConnectPeers(ctx context.Context) {
-	s.init()
-
-	dialer := &moqt.Dialer{
-		TLSConfig:  s.TLSConfig,
-		QUICConfig: s.QUICConfig,
-	}
-
 	var wg sync.WaitGroup
 
 	// Static peers from config.
 	for _, peer := range s.Config.Peers {
 		wg.Go(func() {
-			s.maintainPeer(ctx, dialer, peer)
+			s.maintainPeer(ctx, peer)
 		})
 	}
 
@@ -140,7 +202,7 @@ func (s *Server) ConnectPeers(ctx context.Context) {
 				client.Run(ctx)
 			})
 			// Topology-aware peer discovery goroutine.
-			s.discoverPeers(ctx, &wg, bsCfg.Interval, client, dialer)
+			s.discoverPeers(ctx, &wg, bsCfg.Interval, client)
 		})
 	}
 
@@ -150,7 +212,7 @@ func (s *Server) ConnectPeers(ctx context.Context) {
 // discoverPeers runs the role-aware peer discovery loop for a single bootstrap client.
 // It builds topology connections according to the node's role (edge/hub/default)
 // and re-checks at interval. Already-connected peers are skipped.
-func (s *Server) discoverPeers(ctx context.Context, wg *sync.WaitGroup, interval time.Duration, client *bootstrap.Client, dialer *moqt.Dialer) {
+func (s *Server) discoverPeers(ctx context.Context, wg *sync.WaitGroup, interval time.Duration, client *bootstrap.Client) {
 	var mu sync.Mutex
 	connected := make(map[string]struct{})
 
@@ -165,7 +227,7 @@ func (s *Server) discoverPeers(ctx context.Context, wg *sync.WaitGroup, interval
 			connected[p.ID] = struct{}{}
 			p := p
 			wg.Go(func() {
-				s.maintainPeer(ctx, dialer, Peer{Address: p.Addr})
+				s.maintainPeer(ctx, Peer{Address: p.Addr})
 			})
 		}
 	}
@@ -231,7 +293,7 @@ func (s *Server) discoverPeers(ctx context.Context, wg *sync.WaitGroup, interval
 }
 
 // maintainPeer keeps a connection to a peer alive, reconnecting on failure.
-func (s *Server) maintainPeer(ctx context.Context, dialer *moqt.Dialer, peer Peer) {
+func (s *Server) maintainPeer(ctx context.Context, peer Peer) {
 	for {
 		if ctx.Err() != nil {
 			return
@@ -239,7 +301,7 @@ func (s *Server) maintainPeer(ctx context.Context, dialer *moqt.Dialer, peer Pee
 
 		slog.Info("connecting to peer", "address", peer.Address)
 
-		sess, err := dialer.Dial(ctx, peer.Address, s.TrackMux)
+		sess, err := s.moqDialer.Dial(ctx, peer.Address, s.TrackMux)
 		if err != nil {
 			slog.Warn("failed to dial peer", "address", peer.Address, "error", err)
 			if !waitRetry(ctx, 5*time.Second) {
@@ -250,11 +312,7 @@ func (s *Server) maintainPeer(ctx context.Context, dialer *moqt.Dialer, peer Pee
 
 		slog.Info("peer connected", "address", peer.Address)
 
-		err = s.relay(sess)
-		if err != nil {
-			slog.Warn("peer session ended", "address", peer.Address, "error", err)
-		}
-		_ = sess.CloseWithError(moqt.NoError, moqt.NoError.String())
+		s.Relay(sess)
 
 		if !waitRetry(ctx, 5*time.Second) {
 			return
@@ -275,18 +333,16 @@ func waitRetry(ctx context.Context, d time.Duration) bool {
 	}
 }
 
-func (s *Server) relay(sess *moqt.Session) error {
+func (s *Server) Relay(sess *moqt.Session) {
+	defer sess.CloseWithError(moqt.NoError, moqt.NoError.String())
+
 	slog.Info("session established", "remote", sess.RemoteAddr())
 	defer slog.Info("session closed", "remote", sess.RemoteAddr())
 
-	if s.statusHandler != nil {
-		s.statusHandler.incrementConnections()
-		defer s.statusHandler.decrementConnections()
-	}
-
 	announced, err := sess.AcceptAnnounce("/")
 	if err != nil {
-		return err
+		slog.Warn("failed to accept announcement", "error", err)
+		return
 	}
 
 	for ann := range announced.Announcements(context.Background()) {
@@ -294,6 +350,4 @@ func (s *Server) relay(sess *moqt.Session) error {
 
 		s.TrackMux.Announce(ann, handler)
 	}
-
-	return nil
 }

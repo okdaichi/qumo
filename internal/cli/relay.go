@@ -8,7 +8,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -96,7 +95,7 @@ func RunRelay(_ []string) error {
 		if parseErr != nil {
 			return fmt.Errorf("invalid BOOTSTRAP_INTERVAL %q: %w", intervalStr, parseErr)
 		}
-		for _, u := range strings.Split(raw, ",") {
+		for u := range strings.SplitSeq(raw, ",") {
 			u = strings.TrimSpace(u)
 			if u != "" {
 				bootstraps = append(bootstraps, bootstrap.ClientConfig{
@@ -129,6 +128,8 @@ func RunRelay(_ []string) error {
 	defer cancel()
 
 	// Create relay relayServer
+	httpMux := http.NewServeMux()
+
 	trackMux := moqt.NewTrackMux(moqt.NewHopID())
 	relayServer := &relay.Server{
 		Addr:      addr,
@@ -138,16 +139,13 @@ func RunRelay(_ []string) error {
 			EnableDatagrams:                  true,
 			EnableStreamResetPartialDelivery: true,
 		},
-		Config:   &relayCfg,
-		TrackMux: trackMux,
+		Config:             &relayCfg,
+		TrackMux:           trackMux,
+		WebTransportServer: moqt.NewWebTransportServer(httpMux),
 	}
 
-	httpMux := http.NewServeMux()
-	wtPath := "/"
-	relayServer.RouteWebTransport(wtPath, httpMux)
-	httpMux.Handle("/health", &healthHandler{
-		statusFunc: relayServer.Status,
-	})
+	httpMux.HandleFunc("/", relayServer.HandleWebTransport)
+	httpMux.HandleFunc("/health", relayServer.ServeHelth)
 	httpMux.Handle("/metrics", promhttp.Handler())
 
 	httpServer := &http.Server{
@@ -160,7 +158,7 @@ func RunRelay(_ []string) error {
 	log.Printf("\t%-8s: %s\n", "Advertise", sanitizeLog(relayCfg.AdvertiseAddr))
 	log.Printf("\t%-8s: %s\n", "Node ID", sanitizeLog(relayCfg.NodeID))
 	log.Printf("\t%-8s: %s\n", "Region", sanitizeLog(relayCfg.Region))
-	log.Printf("\t%-8s: WebTransport endpoint\n", wtPath)
+	log.Printf("\t%-8s: WebTransport endpoint\n", "/")
 	log.Printf("\t%-8s: liveness/readiness probe\n", "/health")
 	log.Printf("\t%-8s: Prometheus metrics\n", "/metrics")
 	for _, p := range relayCfg.Peers {
@@ -372,95 +370,4 @@ func generateSelfSignedCert() (tls.Certificate, error) {
 	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
 
 	return tls.X509KeyPair(certPEM, keyPEM)
-}
-
-type healthHandler struct {
-	statusFunc func() relay.Status
-}
-
-func (h *healthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// single handler that supports probes via query param: ?probe=live|ready
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
-
-	probe := r.URL.Query().Get("probe")
-
-	switch probe {
-	case "live":
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		if r.Method == http.MethodHead {
-			return
-		}
-		_ = json.NewEncoder(w).Encode(map[string]string{"status": "alive"})
-		return
-
-	case "ready":
-		status := h.statusFunc()
-		activeConns := status.ActiveConnections
-
-		ready := true
-		reason := "ready"
-
-		if activeConns < 0 {
-			ready = false
-			reason = "invalid_connection_state"
-		}
-
-		statusCode := http.StatusOK
-		if !ready {
-			statusCode = http.StatusServiceUnavailable
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(statusCode)
-		if r.Method == http.MethodHead {
-			return
-		}
-
-		response := map[string]any{"ready": ready}
-		if !ready {
-			response["reason"] = reason
-		}
-		_ = json.NewEncoder(w).Encode(response)
-		return
-
-	default:
-		// full status
-		status := h.statusFunc()
-
-		ready := true
-		reason := "ready"
-		if status.ActiveConnections < 0 {
-			ready = false
-			reason = "invalid_connection_state"
-		}
-
-		response := map[string]any{
-			"status":             status.Status,
-			"timestamp":          status.Timestamp,
-			"uptime":             status.Uptime,
-			"active_connections": status.ActiveConnections,
-			"live":               true,
-			"ready":              ready,
-		}
-		if !ready {
-			response["ready_reason"] = reason
-		}
-
-		statusCode := http.StatusOK
-		if status.Status == "unhealthy" {
-			statusCode = http.StatusServiceUnavailable
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(statusCode)
-		if r.Method == http.MethodHead {
-			return
-		}
-		_ = json.NewEncoder(w).Encode(response)
-		return
-	}
 }

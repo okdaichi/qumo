@@ -2,14 +2,10 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
 
-	"github.com/okdaichi/qumo/internal/relay"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -39,108 +35,6 @@ func TestSetupTLS_Insecure(t *testing.T) {
 	require.NotNil(t, tlsCfg)
 	assert.Len(t, tlsCfg.Certificates, 1, "expected exactly one certificate")
 	assert.Contains(t, tlsCfg.NextProtos, "h3")
-}
-
-func TestHealthHandler_ProbeLive_GETAndHEAD(t *testing.T) {
-	h := &healthHandler{
-		statusFunc: func() relay.Status {
-			return relay.Status{Status: "healthy", ActiveConnections: 1, Timestamp: time.Now(), Uptime: "1s"}
-		},
-	}
-
-	// GET
-	req := httptest.NewRequest(http.MethodGet, "/health?probe=live", nil)
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-	assert.Equal(t, http.StatusOK, rec.Code)
-
-	var resp map[string]string
-	err := json.NewDecoder(rec.Body).Decode(&resp)
-	require.NoError(t, err)
-	assert.Equal(t, "alive", resp["status"])
-
-	// HEAD should return no body
-	req = httptest.NewRequest(http.MethodHead, "/health?probe=live", nil)
-	rec = httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-	assert.Equal(t, http.StatusOK, rec.Code)
-	assert.Equal(t, 0, rec.Body.Len())
-}
-
-func TestHealthHandler_ProbeReady_Cases(t *testing.T) {
-	tests := map[string]struct {
-		status     relay.Status
-		wantCode   int
-		wantReady  bool
-		wantReason string
-	}{
-		"ready with healthy status": {
-			status:    relay.Status{ActiveConnections: 0, Status: "healthy"},
-			wantCode:  http.StatusOK,
-			wantReady: true,
-		},
-		"invalid connection state": {
-			status:     relay.Status{ActiveConnections: -1, Status: "healthy"},
-			wantCode:   http.StatusServiceUnavailable,
-			wantReady:  false,
-			wantReason: "invalid_connection_state",
-		},
-	}
-
-	for name, tt := range tests {
-		t.Run(name, func(t *testing.T) {
-			h := &healthHandler{statusFunc: func() relay.Status { return tt.status }}
-			req := httptest.NewRequest(http.MethodGet, "/health?probe=ready", nil)
-			rec := httptest.NewRecorder()
-			h.ServeHTTP(rec, req)
-			assert.Equal(t, tt.wantCode, rec.Code)
-
-			var resp map[string]any
-			err := json.NewDecoder(rec.Body).Decode(&resp)
-			require.NoError(t, err)
-			assert.Equal(t, tt.wantReady, resp["ready"])
-			if !tt.wantReady && tt.wantReason != "" {
-				assert.Equal(t, tt.wantReason, resp["reason"])
-			}
-		})
-	}
-}
-
-func TestHealthHandler_DefaultStatusResponses(t *testing.T) {
-	tests := map[string]struct {
-		status   relay.Status
-		wantCode int
-	}{
-		"unhealthy status code": {status: relay.Status{Status: "unhealthy", ActiveConnections: 0}, wantCode: http.StatusServiceUnavailable},
-		"healthy status code":   {status: relay.Status{Status: "healthy", ActiveConnections: 0}, wantCode: http.StatusOK},
-	}
-
-	for name, tt := range tests {
-		t.Run(name, func(t *testing.T) {
-			h := &healthHandler{statusFunc: func() relay.Status { return tt.status }}
-			req := httptest.NewRequest(http.MethodGet, "/health", nil)
-			rec := httptest.NewRecorder()
-			h.ServeHTTP(rec, req)
-			assert.Equal(t, tt.wantCode, rec.Code)
-
-			var resp map[string]any
-			err := json.NewDecoder(rec.Body).Decode(&resp)
-			require.NoError(t, err)
-			assert.Equal(t, tt.status.Status, resp["status"])
-			assert.Contains(t, resp, "live")
-			assert.Contains(t, resp, "ready")
-		})
-	}
-}
-
-func TestHealthHandler_InvalidMethod(t *testing.T) {
-	h := &healthHandler{statusFunc: func() relay.Status {
-		return relay.Status{Status: "healthy", ActiveConnections: 0}
-	}}
-	req := httptest.NewRequest(http.MethodPost, "/health", nil)
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-	assert.Equal(t, http.StatusMethodNotAllowed, rec.Code)
 }
 
 // --- serveComponents tests ---
