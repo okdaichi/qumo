@@ -105,6 +105,7 @@ func Help() error {
 	fmt.Println("    mage docker:down  - Stop services")
 	fmt.Println("    mage docker:logs  - View service logs")
 	fmt.Println("    mage docker:ps    - List running containers")
+	fmt.Println("    mage smoke      - Run cross-region streaming smoke test")
 	fmt.Println()
 	fmt.Println("  🎮 Demo:")
 	fmt.Println("    mage demo:up      - Start demo environment (3 relays)")
@@ -930,6 +931,32 @@ func (Docker) Restart() error {
 	fmt.Println("🔄 Restarting services...")
 
 	cmd := exec.Command("docker", "compose", "restart")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+// Smoke runs a cross-region streaming smoke test against the topology.
+// Smoke runs a streaming smoke test that publishes to one relay and subscribes from another.
+// Defaults: pub=moqt://localhost:9002, sub=moqt://localhost:9006.
+func Smoke(pub *string, sub *string) error { // pub: publisher relay URL, sub: subscriber relay URL
+	pubURL := "moqt://localhost:9002"
+	if pub != nil {
+		pubURL = *pub
+	}
+	subURL := "moqt://localhost:9006"
+	if sub != nil {
+		subURL = *sub
+	}
+
+	fmt.Println("💨 Running streaming smoke test...")
+	fmt.Printf("   Publish:   %s\n", pubURL)
+	fmt.Printf("   Subscribe: %s\n", subURL)
+	fmt.Println()
+
+	cmd := exec.Command("go", "run", "./internal/smoketest",
+		"-pub", pubURL,
+		"-sub", subURL)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()

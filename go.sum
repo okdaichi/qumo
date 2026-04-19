@@ -18,8 +18,10 @@ github.com/kylelemons/godebug v1.1.0 h1:RPNrshWIDI6G2gRW9EHilWtl7Z6Sb1BR0xunSBf0
 github.com/kylelemons/godebug v1.1.0/go.mod h1:9/0rRGxNHcop5bhtWyNeEfOS8JIWk580+fNqagV/RAw=
 github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 h1:C3w9PqII01/Oq1c1nUAm88MOHcQC9l5mIlSMApZMrHA=
 github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822/go.mod h1:+n7T8mK8HuQTcFwEeznm/DIxMOiR9yIdICNftLE1DvQ=
-github.com/okdaichi/gomoqt v0.13.1 h1:JDdSOdZaYWj6xf2xoX+eEFiFyaFYHaHrnayIsS+8i1I=
-github.com/okdaichi/gomoqt v0.13.1/go.mod h1:a3IyfM6v/saxXItcKlzGayq68b35efWlln2JVF5+JSI=
+github.com/okdaichi/gomoqt v0.13.3 h1:lKBRs6gCDtasp+YA0cDko8hZgWejv5cn1phx6t3FmjE=
+github.com/okdaichi/gomoqt v0.13.3/go.mod h1:a3IyfM6v/saxXItcKlzGayq68b35efWlln2JVF5+JSI=
+github.com/okdaichi/gomoqt v0.13.4 h1:fNRGqCvDn2aWmAE+XnxXSh3VeYniJqhjhOyI4t88ciA=
+github.com/okdaichi/gomoqt v0.13.4/go.mod h1:a3IyfM6v/saxXItcKlzGayq68b35efWlln2JVF5+JSI=
 github.com/okdaichi/webtransport-go v0.10.2-okdaichi.1 h1:6dbSuHazZrzVyMGuB1Kku///8uFI0DVWOCmnjlESvd4=
 github.com/okdaichi/webtransport-go v0.10.2-okdaichi.1/go.mod h1:emdguOY+ZIe1gAIY7YLs5yQHyx9/9a9rWdgQ58o7udM=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=

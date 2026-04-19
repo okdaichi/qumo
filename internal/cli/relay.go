@@ -130,18 +130,38 @@ func RunRelay(_ []string) error {
 	// Create relay relayServer
 	httpMux := http.NewServeMux()
 
+	quicConfig := &quic.Config{
+		Allow0RTT:                        true,
+		EnableDatagrams:                  true,
+		EnableStreamResetPartialDelivery: true,
+		KeepAlivePeriod:                  10 * time.Second,
+		MaxIdleTimeout:                   60 * time.Second,
+	}
+
+	// Dialer TLS: advertise only moqt ALPN for native QUIC peer connections.
+	// The server TLS config advertises ["h3", "moqt"] to support both
+	// WebTransport (browsers) and native QUIC (peer relays). If the dialer
+	// sends both, TLS ALPN picks "h3" first → QPACK decompression failure.
+	dialerTLS := tlsConfig.Clone()
+	dialerTLS.NextProtos = []string{moqt.NextProtoMOQ}
+	if os.Getenv("INSECURE") != "" {
+		dialerTLS.InsecureSkipVerify = true //nolint:gosec // INSECURE mode only
+	}
+
 	trackMux := moqt.NewTrackMux(moqt.NewHopID())
 	relayServer := &relay.Server{
-		Addr:      addr,
-		TLSConfig: tlsConfig,
-		QUICConfig: &quic.Config{
-			Allow0RTT:                        true,
-			EnableDatagrams:                  true,
-			EnableStreamResetPartialDelivery: true,
+		MOQServer: &moqt.Server{
+			Addr:               addr,
+			TLSConfig:          tlsConfig,
+			QUICConfig:         quicConfig,
+			WebTransportServer: moqt.NewWebTransportServer(httpMux),
 		},
-		Config:             &relayCfg,
-		TrackMux:           trackMux,
-		WebTransportServer: moqt.NewWebTransportServer(httpMux),
+		MOQDialer: &moqt.Dialer{
+			TLSConfig:  dialerTLS,
+			QUICConfig: quicConfig,
+		},
+		Config:   &relayCfg,
+		TrackMux: trackMux,
 	}
 
 	httpMux.HandleFunc("/", relayServer.HandleWebTransport)
