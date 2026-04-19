@@ -74,7 +74,7 @@ func run(ctx context.Context, pubURL, subURL string, numGroups, numFrames, frame
 			}
 			gw.Close()
 		}
-		log.Printf("publish: sent %d groups × %d frames", numGroups, numFrames)
+		log.Printf("publish: sent %d groups × %d frames ✓", numGroups, numFrames)
 	})
 
 	pubDialer := &moqt.Dialer{TLSConfig: tlsConf}
@@ -136,14 +136,16 @@ func run(ctx context.Context, pubURL, subURL string, numGroups, numFrames, frame
 
 	recvHash := fmt.Sprintf("%x", h.Sum(nil))
 
-	log.Printf("subscribe: received %d groups, %d frames", groupCount, frameCount)
+	log.Printf("subscribe: received %d groups, %d frames ✓", groupCount, frameCount)
 
 	if recvHash != sentHash {
-		log.Printf("FAIL: hash mismatch sent=%s recv=%s", sentHash, recvHash)
+		fmt.Println("")
+		fmt.Printf("❌ FAIL: connectivity check failed — hash mismatch\n   sent=%s\n   recv=%s\n", sentHash, recvHash)
 		return 1
 	}
 
-	fmt.Printf("PASS: %d groups × %d frames streamed %s → %s\n",
+	fmt.Println("")
+	fmt.Printf("📡 PASS: %d groups × %d frames streamed end-to-end\n   %s → %s\n",
 		numGroups, numFrames, pubURL, subURL)
 	return 0
 }

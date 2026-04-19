@@ -949,7 +949,7 @@ func Smoke(pub *string, sub *string) error { // pub: publisher relay URL, sub: s
 		subURL = *sub
 	}
 
-	fmt.Println("🔬 Running streaming smoke test...")
+	fmt.Println("💨 Running streaming smoke test...")
 	fmt.Printf("   Publish:   %s\n", pubURL)
 	fmt.Printf("   Subscribe: %s\n", subURL)
 	fmt.Println()
