@@ -77,6 +77,11 @@ func correctAddr(r *http.Request, clientAddr string) string {
 	return net.JoinHostPort(remoteIP, port)
 }
 
+// sanitizeLog strips CR and LF from s to prevent log injection.
+func sanitizeLog(s string) string {
+	return strings.NewReplacer("\r", "", "\n", "").Replace(s)
+}
+
 // PeersHandler handles GET /peers.
 type PeersHandler struct {
 	Store    *Store
@@ -103,12 +108,10 @@ func (h *PeersHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	peers := h.Store.Peers(q)
-	region := strings.ReplaceAll(strings.ReplaceAll(q.PreferredRegion, "\r", ""), "\n", "")
-	role := strings.ReplaceAll(strings.ReplaceAll(q.Role, "\r", ""), "\n", "")
 
 	slog.Debug("peers requested",
-		slog.String("region", region),
-		slog.String("role", role),
+		slog.String("region", sanitizeLog(q.PreferredRegion)),
+		slog.String("role", sanitizeLog(q.Role)),
 		slog.Bool("allow_remote", q.AllowRemote),
 		slog.Int("limit", q.Limit),
 		slog.Int("count", len(peers)),
