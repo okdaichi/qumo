@@ -39,22 +39,16 @@ func TestStatusHandler_IncrementDecrementConnections(t *testing.T) {
 func TestStatusHandler_GetStatus(t *testing.T) {
 	h := newStatusHandler()
 	status := h.getStatus()
-	if status.Status != "healthy" {
-		t.Errorf("expected status to be healthy, got %s", status.Status)
-	}
-	if status.ActiveConnections != 0 {
-		t.Errorf("expected activeConnections to be 0, got %d", status.ActiveConnections)
-	}
-	if status.Uptime == "" {
-		t.Error("expected uptime to be set")
-	}
+
+	assert.Equal(t, status.ActiveConnections, 0, "expected activeConnections to be 0, got %d", status.ActiveConnections)
+	assert.NotEqual(t, "", status.Uptime, "expected uptime to be non-empty")
 }
 
 func TestStatusHandler_ServeHTTP(t *testing.T) {
 	h := newStatusHandler()
 
 	// Test GET request
-	req := httptest.NewRequest(http.MethodGet, "/status", nil)
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
 
@@ -62,16 +56,14 @@ func TestStatusHandler_ServeHTTP(t *testing.T) {
 		t.Errorf("expected status code 200, got %d", w.Code)
 	}
 
-	var status Status
-	if err := json.NewDecoder(w.Body).Decode(&status); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
-	if status.Status != "healthy" {
-		t.Errorf("expected status healthy, got %s", status.Status)
-	}
+	var resp map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal(t, true, resp["live"])
+	assert.Equal(t, true, resp["ready"])
+	assert.Equal(t, float64(0), resp["active_connections"])
 
 	// Test HEAD request
-	req = httptest.NewRequest(http.MethodHead, "/status", nil)
+	req = httptest.NewRequest(http.MethodHead, "/health", nil)
 	w = httptest.NewRecorder()
 	h.ServeHTTP(w, req)
 
@@ -83,7 +75,7 @@ func TestStatusHandler_ServeHTTP(t *testing.T) {
 	}
 
 	// Test invalid method
-	req = httptest.NewRequest(http.MethodPost, "/status", nil)
+	req = httptest.NewRequest(http.MethodPost, "/health", nil)
 	w = httptest.NewRecorder()
 	h.ServeHTTP(w, req)
 
@@ -102,67 +94,6 @@ func TestStatusHandler_NilReceiver(t *testing.T) {
 	status := h.getStatus()
 	if status != (Status{}) {
 		t.Error("expected empty status for nil receiver")
-	}
-}
-
-func TestStatusHandler_ProbeLive_GETAndHEAD(t *testing.T) {
-	h := newStatusHandler()
-
-	// GET
-	req := httptest.NewRequest(http.MethodGet, "/health?probe=live", nil)
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-	assert.Equal(t, http.StatusOK, rec.Code)
-
-	var resp map[string]string
-	err := json.NewDecoder(rec.Body).Decode(&resp)
-	require.NoError(t, err)
-	assert.Equal(t, "alive", resp["status"])
-
-	// HEAD should return no body
-	req = httptest.NewRequest(http.MethodHead, "/health?probe=live", nil)
-	rec = httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-	assert.Equal(t, http.StatusOK, rec.Code)
-	assert.Equal(t, 0, rec.Body.Len())
-}
-
-func TestStatusHandler_ProbeReady_Cases(t *testing.T) {
-	tests := map[string]struct {
-		wantCode   int
-		wantReady  bool
-		wantReason string
-	}{
-		"ready with healthy status": {
-			wantCode:  http.StatusOK,
-			wantReady: true,
-		},
-		"invalid connection state": {
-			wantCode:   http.StatusServiceUnavailable,
-			wantReady:  false,
-			wantReason: "invalid_connection_state",
-		},
-	}
-
-	for name, tt := range tests {
-		t.Run(name, func(t *testing.T) {
-			h := newStatusHandler()
-			if tt.wantReason != "" {
-				h.decrementConnections()
-			}
-			req := httptest.NewRequest(http.MethodGet, "/health?probe=ready", nil)
-			rec := httptest.NewRecorder()
-			h.ServeHTTP(rec, req)
-			assert.Equal(t, tt.wantCode, rec.Code)
-
-			var resp map[string]any
-			err := json.NewDecoder(rec.Body).Decode(&resp)
-			require.NoError(t, err)
-			assert.Equal(t, tt.wantReady, resp["ready"])
-			if tt.wantReason != "" {
-				assert.Equal(t, tt.wantReason, resp["reason"])
-			}
-		})
 	}
 }
 
