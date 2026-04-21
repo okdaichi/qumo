@@ -39,6 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Repository ownership transferred:** Project ownership moved from `okdaichi` personal account to the `qumo-dev` organization.
 - **`discoverPeers` deduplication unified (`internal/relay`):** The per-`discoverPeers`
   local `map[string]struct{}` and its mutex have been removed. Deduplication is now handled
   server-wide by `markConnected`, keyed on peer address instead of peer ID.
