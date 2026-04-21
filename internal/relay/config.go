@@ -1,6 +1,6 @@
 package relay
 
-import "github.com/okdaichi/qumo/internal/bootstrap"
+import "github.com/qumo-dev/qumo/internal/bootstrap"
 
 type Config struct {
 	// NodeID is the unique identifier for this relay node.

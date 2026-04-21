@@ -11,7 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/okdaichi/qumo/internal/rtmp/amf0"
+	"github.com/qumo-dev/qumo/internal/rtmp/amf0"
 )
 
 const (

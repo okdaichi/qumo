@@ -29,7 +29,7 @@ Run pre-built image (GHCR)
 
 ```bash
 # Pull image
-docker pull ghcr.io/okdaichi/qumo:latest
+docker pull ghcr.io/qumo-dev/qumo:latest
 
 # Run relay (config generated from env vars)
 docker run -d \
@@ -40,7 +40,7 @@ docker run -d \
   -e RELAY_NAME=relay-1 \
   -e REGION=asia \
   -e ROLE=hub \
-  ghcr.io/okdaichi/qumo:latest relay
+  ghcr.io/qumo-dev/qumo:latest relay
 ```
 
 Environment variables (relay)

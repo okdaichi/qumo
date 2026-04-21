@@ -1,7 +1,7 @@
 # qumo
 
-[![CI](https://github.com/okdaichi/qumo/actions/workflows/ci.yml/badge.svg)](https://github.com/okdaichi/qumo/actions/workflows/ci.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/okdaichi/qumo)](https://goreportcard.com/report/github.com/okdaichi/qumo)
+[![CI](https://github.com/qumo-dev/qumo/actions/workflows/ci.yml/badge.svg)](https://github.com/qumo-dev/qumo/actions/workflows/ci.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/qumo-dev/qumo)](https://goreportcard.com/report/github.com/qumo-dev/qumo)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
 **qumo** is a high-performance Media over QUIC (MoQ) relay server with intelligent topology management, enabling distributed media streaming over the QUIC transport protocol.
@@ -13,23 +13,23 @@
 - 🔗 **Peer-Based Topology**: Relays connect to each other via ANNOUNCE_PLEASE for decentralized content discovery
 - 📊 **Observability**: Prometheus metrics, health probes, and status APIs
 - 🔒 **TLS Security**: Built-in TLS 1.3 support for encrypted connections
-- 🐳 **Docker-Support**: Env-var zero-config; prebuilt multi-arch images on GHCR (ghcr.io/okdaichi/qumo)
+- 🐳 **Docker-Support**: Env-var zero-config; prebuilt multi-arch images on GHCR (ghcr.io/qumo-dev/qumo)
 
 ## Installation
 
 #### Option 1: Install via Go
 
 ```bash
-go install github.com/okdaichi/qumo@latest
+go install github.com/qumo-dev/qumo@latest
 ```
 
 #### Option 2: Download Binary
 
-Download the latest binary from [GitHub Releases](https://github.com/okdaichi/qumo/releases):
+Download the latest binary from [GitHub Releases](https://github.com/qumo-dev/qumo/releases):
 
 ```bash
 # Linux/macOS
-curl -L https://github.com/okdaichi/qumo/releases/latest/download/qumo-linux-amd64 -o qumo
+curl -L https://github.com/qumo-dev/qumo/releases/latest/download/qumo-linux-amd64 -o qumo
 chmod +x qumo
 export ADVERTISE_ADDR=localhost:4433
 export INSECURE=true
@@ -45,7 +45,7 @@ See [docker/README.md](docker/README.md) for compose examples, GHCR usage, and d
 #### Option 4: Build from Source
 
 ```bash
-git clone https://github.com/okdaichi/qumo.git
+git clone https://github.com/qumo-dev/qumo.git
 cd qumo
 mage build        # builds bin/qumo with version info
 # or: go build -o qumo .

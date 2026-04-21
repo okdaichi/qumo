@@ -1,4 +1,4 @@
-module github.com/okdaichi/qumo
+module github.com/qumo-dev/qumo
 
 go 1.26.0
 

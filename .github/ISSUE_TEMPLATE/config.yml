@@ -1,17 +1,17 @@
 blank_issues_enabled: false
 contact_links:
   - name: "💬 Questions"
-    url: https://github.com/okdaichi/qumo/discussions
+    url: https://github.com/qumo-dev/qumo/discussions
     about: "Use Discussions for implementation and usage questions"
 
   - name: "📚 Documentation"
-    url: https://github.com/okdaichi/qumo/blob/main/README.md
+    url: https://github.com/qumo-dev/qumo/blob/main/README.md
     about: "Project documentation"
 
   - name: "🔐 Security Report"
-    url: https://github.com/okdaichi/qumo/security/advisories
+    url: https://github.com/qumo-dev/qumo/security/advisories
     about: "Report security vulnerabilities directly"
 
   - name: "🤝 Contributing"
-    url: https://github.com/okdaichi/qumo/blob/main/CONTRIBUTING.md
+    url: https://github.com/qumo-dev/qumo/blob/main/CONTRIBUTING.md
     about: "Please read our contributing guidelines"

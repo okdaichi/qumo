@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/okdaichi/gomoqt/moqt"
-	"github.com/okdaichi/qumo/internal/ingest"
+	"github.com/qumo-dev/qumo/internal/ingest"
 	"gopkg.in/yaml.v3"
 )
 
