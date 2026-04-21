@@ -6,7 +6,7 @@ import (
 	"sync"
 
 	"github.com/okdaichi/gomoqt/moqt"
-	"github.com/okdaichi/qumo/internal/rtmp"
+	"github.com/qumo-dev/qumo/internal/rtmp"
 )
 
 // RTMPConfig holds configuration for an [RTMPServer].

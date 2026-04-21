@@ -32,9 +32,9 @@ Manual build with version info (useful if you don't run `mage`):
 
 ```bash
 go build -ldflags "-s -w \
-  -X github.com/okdaichi/qumo/internal/version.version=$(git describe --tags --always) \
-  -X github.com/okdaichi/qumo/internal/version.commit=$(git rev-parse --short HEAD) \
-  -X github.com/okdaichi/qumo/internal/version.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  -X github.com/qumo-dev/qumo/internal/version.version=$(git describe --tags --always) \
+  -X github.com/qumo-dev/qumo/internal/version.commit=$(git rev-parse --short HEAD) \
+  -X github.com/qumo-dev/qumo/internal/version.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   -o qumo .
 ```
 

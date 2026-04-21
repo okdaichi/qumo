@@ -3,7 +3,7 @@ version: '3.8'
 services:
   # Relay Server (pre-built image)
   relay:
-    image: ghcr.io/okdaichi/qumo:latest
+    image: ghcr.io/qumo-dev/qumo:latest
     container_name: qumo-relay
     command: ["relay"]
     ports:

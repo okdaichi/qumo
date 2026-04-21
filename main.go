@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/okdaichi/qumo/internal/cli"
-	"github.com/okdaichi/qumo/internal/version"
+	"github.com/qumo-dev/qumo/internal/cli"
+	"github.com/qumo-dev/qumo/internal/version"
 )
 
 var (

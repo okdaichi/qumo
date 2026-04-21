@@ -20,9 +20,9 @@ COPY . .
 # Build the binary with version info
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo \
     -ldflags "-s -w \
-      -X github.com/okdaichi/qumo/internal/version.version=${VERSION} \
-      -X github.com/okdaichi/qumo/internal/version.commit=${COMMIT} \
-      -X github.com/okdaichi/qumo/internal/version.date=${BUILD_DATE}" \
+      -X github.com/qumo-dev/qumo/internal/version.version=${VERSION} \
+      -X github.com/qumo-dev/qumo/internal/version.commit=${COMMIT} \
+      -X github.com/qumo-dev/qumo/internal/version.date=${BUILD_DATE}" \
     -o qumo .
 
 # Runtime stage
@@ -35,8 +35,8 @@ ARG BUILD_DATE=unknown
 # OCI image labels
 LABEL org.opencontainers.image.title="qumo" \
       org.opencontainers.image.description="MoQT Relay" \
-      org.opencontainers.image.url="https://github.com/okdaichi/qumo" \
-      org.opencontainers.image.source="https://github.com/okdaichi/qumo" \
+      org.opencontainers.image.url="https://github.com/qumo-dev/qumo" \
+      org.opencontainers.image.source="https://github.com/qumo-dev/qumo" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.created="${BUILD_DATE}" \
       org.opencontainers.image.revision="${COMMIT}" \

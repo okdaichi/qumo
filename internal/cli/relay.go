@@ -26,8 +26,8 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/okdaichi/gomoqt/moqt"
-	"github.com/okdaichi/qumo/internal/bootstrap"
-	"github.com/okdaichi/qumo/internal/relay"
+	"github.com/qumo-dev/qumo/internal/bootstrap"
+	"github.com/qumo-dev/qumo/internal/relay"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/quic-go/quic-go"
 )

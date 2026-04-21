@@ -1,6 +1,6 @@
 // Package version holds build-time version metadata injected via ldflags.
 //
-//	go build -ldflags "-X github.com/okdaichi/qumo/internal/version.version=v0.1.0"
+//	go build -ldflags "-X github.com/qumo-dev/qumo/internal/version.version=v0.1.0"
 package version
 
 import (

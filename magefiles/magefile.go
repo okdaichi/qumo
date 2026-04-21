@@ -30,7 +30,7 @@ import (
 	"github.com/magefile/mage/sh"
 )
 
-const versionPkg = "github.com/okdaichi/qumo/internal/version"
+const versionPkg = "github.com/qumo-dev/qumo/internal/version"
 
 // Default target to run when none is specified
 var Default = Help
@@ -835,7 +835,7 @@ type Docker mg.Namespace
 func (Docker) Pull() error {
 	fmt.Println("🐳 Pulling latest qumo image from GitHub Container Registry...")
 
-	cmd := exec.Command("docker", "pull", "ghcr.io/okdaichi/qumo:latest")
+	cmd := exec.Command("docker", "pull", "ghcr.io/qumo-dev/qumo:latest")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -843,7 +843,7 @@ func (Docker) Pull() error {
 	}
 
 	fmt.Println("✅ Image pulled successfully!")
-	fmt.Println("   Tag: ghcr.io/okdaichi/qumo:latest")
+	fmt.Println("   Tag: ghcr.io/qumo-dev/qumo:latest")
 	return nil
 }
 
@@ -957,5 +957,3 @@ func Smoke(pub *string, sub *string) error { // pub: publisher relay URL, sub: s
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
 }
-
-

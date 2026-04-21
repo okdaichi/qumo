@@ -20,9 +20,9 @@ builds:
       - arm64
     ldflags:
       - -s -w
-      - -X github.com/okdaichi/qumo/internal/version.version={{.Version}}
-      - -X github.com/okdaichi/qumo/internal/version.commit={{.ShortCommit}}
-      - -X github.com/okdaichi/qumo/internal/version.date={{.Date}}
+      - -X github.com/qumo-dev/qumo/internal/version.version={{.Version}}
+      - -X github.com/qumo-dev/qumo/internal/version.commit={{.ShortCommit}}
+      - -X github.com/qumo-dev/qumo/internal/version.date={{.Date}}
 
 archives:
   - id: default
@@ -49,7 +49,7 @@ changelog:
 
 release:
   github:
-    owner: okdaichi
+    owner: qumo-dev
     name: qumo
   draft: false
   prerelease: auto

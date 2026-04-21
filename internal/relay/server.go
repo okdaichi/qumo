@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/okdaichi/gomoqt/moqt"
-	"github.com/okdaichi/qumo/internal/bootstrap"
+	"github.com/qumo-dev/qumo/internal/bootstrap"
 )
 
 type Server struct {

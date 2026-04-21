@@ -1,4 +1,4 @@
-module github.com/okdaichi/qumo/magefiles
+module github.com/qumo-dev/qumo/magefiles
 
 go 1.26
 

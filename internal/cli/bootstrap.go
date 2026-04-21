@@ -11,7 +11,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/okdaichi/qumo/internal/bootstrap"
+	"github.com/qumo-dev/qumo/internal/bootstrap"
 )
 
 // RunBootstrap starts the MoQ bootstrap server for node registration and peer discovery.

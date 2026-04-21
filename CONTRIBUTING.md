@@ -24,7 +24,7 @@ This project adheres to a Code of Conduct that all contributors are expected to 
    ```
 3. Add the upstream repository:
    ```bash
-   git remote add upstream https://github.com/okdaichi/qumo.git
+   git remote add upstream https://github.com/qumo-dev/qumo.git
    ```
 4. Install dependencies:
    ```bash
