@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/okdaichi/gomoqt/moqt"
+	"github.com/qumo-dev/qumo/internal/bootstrap"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -262,6 +263,25 @@ func TestServer_MarkUnconnected(t *testing.T) {
 
 	server.markUnconnected(addr)
 	assert.True(t, server.markConnected(addr), "should be connectable again after markUnconnected")
+}
+
+func TestFilterPeersByAddr(t *testing.T) {
+	peers := []bootstrap.Node{
+		{Addr: "moqt://relay-a:4433"},
+		{Addr: "moqt://relay-b:4433"},
+		{Addr: "moqt://relay-c:4433"},
+	}
+
+	exclude := map[string]struct{}{
+		"moqt://relay-b:4433": {},
+		"moqt://relay-d:4433": {},
+	}
+
+	filtered := filterPeersByAddr(peers, exclude)
+
+	assert.Len(t, filtered, 2)
+	assert.Equal(t, "moqt://relay-a:4433", filtered[0].Addr)
+	assert.Equal(t, "moqt://relay-c:4433", filtered[1].Addr)
 }
 
 // TestServer_MarkConnected_Concurrent tests that markConnected is safe for concurrent use
