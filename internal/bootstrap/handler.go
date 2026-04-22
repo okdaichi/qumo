@@ -21,11 +21,10 @@ type registerRequest struct {
 
 // RegisterHandler handles POST /register.
 // It extracts the remote IP from the connection and combines it with the
-// port supplied by the client, so that NAT/proxy scenarios don't break.
+// port supplied by the client, so that NAT/LB scenarios don't break.
 type RegisterHandler struct {
-	Store      *Store
-	AuthToken  string
-	TrustProxy bool // when true, X-Forwarded-For is trusted for IP correction (set only behind a known reverse proxy)
+	Store     *Store
+	AuthToken string
 }
 
 func (h *RegisterHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -52,8 +51,8 @@ func (h *RegisterHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Server-side IP correction: trust the server-observed IP, use
-	// the client-supplied port. This prevents NAT/LB/proxy issues.
-	addr := correctAddr(r, req.Addr, h.TrustProxy)
+	// the client-supplied port. This prevents NAT/LB issues.
+	addr := correctAddr(r, req.Addr)
 
 	h.Store.Register(Node{
 		ID:     req.ID,
@@ -67,20 +66,12 @@ func (h *RegisterHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // correctAddr extracts the remote IP from the request and combines it with
 // the port from clientAddr. If extraction fails, clientAddr is returned as-is.
-// X-Forwarded-For is only trusted when trustProxy is true; otherwise r.RemoteAddr
-// is always used to prevent IP spoofing by clients in direct-access deployments.
-func correctAddr(r *http.Request, clientAddr string, trustProxy bool) string {
-	var remoteIP string
-	if trustProxy {
-		remoteIP = r.Header.Get("X-Forwarded-For")
+func correctAddr(r *http.Request, clientAddr string) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return clientAddr
 	}
-	if remoteIP == "" {
-		host, _, err := net.SplitHostPort(r.RemoteAddr)
-		if err != nil {
-			return clientAddr
-		}
-		remoteIP = host
-	}
+	remoteIP := host
 
 	_, port, err := net.SplitHostPort(clientAddr)
 	if err != nil {

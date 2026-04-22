@@ -90,9 +90,8 @@ func RunBootstrap(_ []string) error {
 
 	mux := http.NewServeMux()
 	mux.Handle("/register", &bootstrap.RegisterHandler{
-		Store:      store,
-		AuthToken:  authToken,
-		TrustProxy: os.Getenv("TRUST_PROXY") == "true",
+		Store:     store,
+		AuthToken: authToken,
 	})
 	mux.Handle("/peers", &bootstrap.PeersHandler{Store: store, MaxPeers: maxPeers, AuthToken: authToken})
 
