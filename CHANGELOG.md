@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Bootstrap API authentication (`internal/bootstrap`, `internal/cli`):** The `/register`
+  and `/peers` endpoints now support optional bearer token authentication. Set
+  `BOOTSTRAP_AUTH_TOKEN` on both the bootstrap server and relay nodes to require an
+  `Authorization: Bearer <token>` header. When the variable is empty, authentication is
+  skipped and existing behaviour is preserved (backward compatible).
+
 - **`RouteStats` struct and `RouteReporter` interface (`internal/relay`):** Routing quality
   metrics (`Alive`, `Hops`, `Bitrate`, `RTT`) are now exposed per handler. `Alive` is
   derived from both the handler's child context and `Announcement.IsActive()`.

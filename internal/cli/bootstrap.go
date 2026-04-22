@@ -33,6 +33,8 @@ func RunBootstrap(_ []string) error {
 	if err != nil {
 		return fmt.Errorf("invalid BOOTSTRAP_CLEANUP_INTERVAL: %w", err)
 	}
+	authToken := os.Getenv("BOOTSTRAP_AUTH_TOKEN")
+
 	maxPeers, err := envInt("BOOTSTRAP_MAX_PEERS", 20)
 	if err != nil {
 		return fmt.Errorf("invalid BOOTSTRAP_MAX_PEERS: %w", err)
@@ -46,8 +48,8 @@ func RunBootstrap(_ []string) error {
 	store.StartCleaner(ctx, cleanupInterval)
 
 	mux := http.NewServeMux()
-	mux.Handle("/register", &bootstrap.RegisterHandler{Store: store})
-	mux.Handle("/peers", &bootstrap.PeersHandler{Store: store, MaxPeers: maxPeers})
+	mux.Handle("/register", &bootstrap.RegisterHandler{Store: store, AuthToken: authToken})
+	mux.Handle("/peers", &bootstrap.PeersHandler{Store: store, MaxPeers: maxPeers, AuthToken: authToken})
 
 	srv := &http.Server{
 		Addr:              listen,

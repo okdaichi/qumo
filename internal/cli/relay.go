@@ -26,10 +26,10 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/okdaichi/gomoqt/moqt"
-	"github.com/qumo-dev/qumo/internal/bootstrap"
-	"github.com/qumo-dev/qumo/internal/relay"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/quic-go/quic-go"
+	"github.com/qumo-dev/qumo/internal/bootstrap"
+	"github.com/qumo-dev/qumo/internal/relay"
 )
 
 // sanitizeLog strips CR and LF from s to prevent log injection.
@@ -95,12 +95,14 @@ func RunRelay(_ []string) error {
 		if parseErr != nil {
 			return fmt.Errorf("invalid BOOTSTRAP_INTERVAL %q: %w", intervalStr, parseErr)
 		}
+		authToken := os.Getenv("BOOTSTRAP_AUTH_TOKEN")
 		for u := range strings.SplitSeq(raw, ",") {
 			u = strings.TrimSpace(u)
 			if u != "" {
 				bootstraps = append(bootstraps, bootstrap.ClientConfig{
-					URL:      u,
-					Interval: interval,
+					URL:       u,
+					Interval:  interval,
+					AuthToken: authToken,
 				})
 			}
 		}

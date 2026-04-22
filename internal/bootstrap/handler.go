@@ -22,10 +22,17 @@ type registerRequest struct {
 // It extracts the remote IP from the connection and combines it with the
 // port supplied by the client, so that NAT/proxy scenarios don't break.
 type RegisterHandler struct {
-	Store *Store
+	Store     *Store
+	AuthToken string
 }
 
 func (h *RegisterHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if !validateAuthHeader(r, h.AuthToken) {
+		w.Header().Set("WWW-Authenticate", `Bearer realm="qumo"`)
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -82,13 +89,33 @@ func sanitizeLog(s string) string {
 	return strings.NewReplacer("\r", "", "\n", "").Replace(s)
 }
 
+func validateAuthHeader(r *http.Request, expectedToken string) bool {
+	if expectedToken == "" {
+		return true
+	}
+
+	auth := r.Header.Get("Authorization")
+	const prefix = "Bearer "
+	if !strings.HasPrefix(auth, prefix) {
+		return false
+	}
+	return auth[len(prefix):] == expectedToken
+}
+
 // PeersHandler handles GET /peers.
 type PeersHandler struct {
-	Store    *Store
-	MaxPeers int
+	Store     *Store
+	MaxPeers  int
+	AuthToken string
 }
 
 func (h *PeersHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if !validateAuthHeader(r, h.AuthToken) {
+		w.Header().Set("WWW-Authenticate", `Bearer realm="qumo"`)
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return

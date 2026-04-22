@@ -52,6 +52,37 @@ func TestClient_Register(t *testing.T) {
 	}
 }
 
+func TestClient_RegisterAuthHeader(t *testing.T) {
+	var gotAuth string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/register" {
+			gotAuth = r.Header.Get("Authorization")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	c := NewClient(ClientConfig{
+		URL:       srv.URL,
+		Interval:  time.Hour,
+		AuthToken: "secret",
+	}, "relay-1", "1.2.3.4:4433", "us-east", "edge")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := c.register(ctx); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	if gotAuth != "Bearer secret" {
+		t.Fatalf("Authorization = %q, want Bearer secret", gotAuth)
+	}
+}
+
 func TestClient_FetchPeers(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/peers" {
@@ -91,6 +122,39 @@ func TestClient_FetchPeers(t *testing.T) {
 	}
 	if peers[0].ID != "relay-2" || peers[1].ID != "relay-3" {
 		t.Errorf("unexpected peers: %+v", peers)
+	}
+}
+
+func TestClient_FetchPeersAuthHeader(t *testing.T) {
+	var gotAuth string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/peers" {
+			gotAuth = r.Header.Get("Authorization")
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"peers": []Node{}})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	c := NewClient(ClientConfig{
+		URL:       srv.URL,
+		Interval:  time.Hour,
+		AuthToken: "secret",
+	}, "relay-1", "1.2.3.4:4433", "us-east", "edge")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := c.FetchPeers(ctx, PeerQuery{PreferredRegion: "us-east"})
+	if err != nil {
+		t.Fatalf("FetchPeers: %v", err)
+	}
+
+	if gotAuth != "Bearer secret" {
+		t.Fatalf("Authorization = %q, want Bearer secret", gotAuth)
 	}
 }
 

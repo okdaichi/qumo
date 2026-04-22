@@ -20,6 +20,9 @@ type ClientConfig struct {
 
 	// Interval is how often to re-register (heartbeat) and refresh the peer list.
 	Interval time.Duration
+
+	// AuthToken is the bearer token sent to the bootstrap server when set.
+	AuthToken string
 }
 
 // Client manages registration and peer discovery for a single bootstrap server.
@@ -88,6 +91,9 @@ func (c *Client) register(ctx context.Context) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if c.cfg.AuthToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.cfg.AuthToken)
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -129,6 +135,9 @@ func (c *Client) FetchPeers(ctx context.Context, q PeerQuery) ([]Node, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
+	}
+	if c.cfg.AuthToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.cfg.AuthToken)
 	}
 
 	resp, err := c.httpClient.Do(req)
