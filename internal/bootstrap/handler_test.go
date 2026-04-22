@@ -51,7 +51,7 @@ func TestRegisterHandler_Success(t *testing.T) {
 
 func TestRegisterHandler_XForwardedFor(t *testing.T) {
 	store := NewStore(30 * time.Second)
-	h := &RegisterHandler{Store: store}
+	h := &RegisterHandler{Store: store, TrustProxy: true}
 
 	body := `{"id":"n1","addr":"0.0.0.0:443","region":"us-east"}`
 	req := httptest.NewRequest(http.MethodPost, "/register", strings.NewReader(body))

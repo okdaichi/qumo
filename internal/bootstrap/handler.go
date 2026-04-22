@@ -1,6 +1,7 @@
 package bootstrap
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -22,8 +23,9 @@ type registerRequest struct {
 // It extracts the remote IP from the connection and combines it with the
 // port supplied by the client, so that NAT/proxy scenarios don't break.
 type RegisterHandler struct {
-	Store     *Store
-	AuthToken string
+	Store      *Store
+	AuthToken  string
+	TrustProxy bool // when true, X-Forwarded-For is trusted for IP correction (set only behind a known reverse proxy)
 }
 
 func (h *RegisterHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -51,7 +53,7 @@ func (h *RegisterHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Server-side IP correction: trust the server-observed IP, use
 	// the client-supplied port. This prevents NAT/LB/proxy issues.
-	addr := correctAddr(r, req.Addr)
+	addr := correctAddr(r, req.Addr, h.TrustProxy)
 
 	h.Store.Register(Node{
 		ID:     req.ID,
@@ -65,9 +67,13 @@ func (h *RegisterHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // correctAddr extracts the remote IP from the request and combines it with
 // the port from clientAddr. If extraction fails, clientAddr is returned as-is.
-func correctAddr(r *http.Request, clientAddr string) string {
-	// Prefer X-Forwarded-For if set (reverse proxy scenario).
-	remoteIP := r.Header.Get("X-Forwarded-For")
+// X-Forwarded-For is only trusted when trustProxy is true; otherwise r.RemoteAddr
+// is always used to prevent IP spoofing by clients in direct-access deployments.
+func correctAddr(r *http.Request, clientAddr string, trustProxy bool) string {
+	var remoteIP string
+	if trustProxy {
+		remoteIP = r.Header.Get("X-Forwarded-For")
+	}
 	if remoteIP == "" {
 		host, _, err := net.SplitHostPort(r.RemoteAddr)
 		if err != nil {
@@ -99,7 +105,9 @@ func validateAuthHeader(r *http.Request, expectedToken string) bool {
 	if !strings.HasPrefix(auth, prefix) {
 		return false
 	}
-	return auth[len(prefix):] == expectedToken
+	// Use constant-time comparison to prevent timing attacks.
+	token := auth[len(prefix):]
+	return subtle.ConstantTimeCompare([]byte(token), []byte(expectedToken)) == 1
 }
 
 // PeersHandler handles GET /peers.

@@ -14,6 +14,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `BOOTSTRAP_AUTH_TOKEN` on both the bootstrap server and relay nodes to require an
   `Authorization: Bearer <token>` header. When the variable is empty, authentication is
   skipped and existing behaviour is preserved (backward compatible).
+- **mTLS support (`internal/bootstrap`, `internal/cli`):** Mutual TLS can now be enabled
+  across the entire relay mesh by setting `CA_FILE` (PEM CA certificate).
+  - *Relay server*: when `CA_FILE` is set, incoming QUIC/MoQT peer connections must present
+    a client certificate signed by the CA (`tls.RequireAndVerifyClientCert`).
+  - *Relay dialer*: trusts only the CA pool and presents this node's `CERT_FILE` cert as a
+    client certificate when dialing peer relays.
+  - *Bootstrap server*: set `BOOTSTRAP_CERT_FILE` + `BOOTSTRAP_KEY_FILE` to enable HTTPS;
+    additionally setting `CA_FILE` enables mTLS client verification on the bootstrap server.
+  - *Bootstrap client*: `ClientConfig` gains a `TLSConfig *tls.Config` field; when `CA_FILE`
+    is set on the relay, bootstrap HTTP clients automatically present the relay client cert
+    and verify the bootstrap server against the CA pool.
+  All changes are opt-in; leaving `CA_FILE` unset preserves existing behaviour.
 
 - **`RouteStats` struct and `RouteReporter` interface (`internal/relay`):** Routing quality
   metrics (`Alive`, `Hops`, `Bitrate`, `RTT`) are now exposed per handler. `Alive` is

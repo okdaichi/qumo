@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -23,6 +24,11 @@ type ClientConfig struct {
 
 	// AuthToken is the bearer token sent to the bootstrap server when set.
 	AuthToken string
+
+	// TLSConfig is the TLS configuration for the HTTP client.
+	// When non-nil the client connects over HTTPS and, if Certificates are
+	// set, presents a client certificate (mTLS).
+	TLSConfig *tls.Config
 }
 
 // Client manages registration and peer discovery for a single bootstrap server.
@@ -40,6 +46,12 @@ type Client struct {
 
 // NewClient creates a new bootstrap client.
 func NewClient(cfg ClientConfig, nodeID, addr, region, role string) *Client {
+	// Clone the default transport so connection pooling and other defaults
+	// are preserved; override TLS config when mTLS is requested.
+	transport := http.DefaultTransport.(*http.Transport).Clone() //nolint:forcetypeassert
+	if cfg.TLSConfig != nil {
+		transport.TLSClientConfig = cfg.TLSConfig
+	}
 	return &Client{
 		cfg:    cfg,
 		nodeID: nodeID,
@@ -47,7 +59,8 @@ func NewClient(cfg ClientConfig, nodeID, addr, region, role string) *Client {
 		region: region,
 		role:   role,
 		httpClient: &http.Client{
-			Timeout: 10 * time.Second,
+			Timeout:   10 * time.Second,
+			Transport: transport,
 		},
 	}
 }
