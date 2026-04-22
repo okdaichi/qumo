@@ -151,6 +151,18 @@ func (s *Server) ConnectPeers(ctx context.Context) {
 	wg.Wait()
 }
 
+// filterPeersByAddr removes peers whose addresses are present in the exclude map.
+func filterPeersByAddr(peers []bootstrap.Node, exclude map[string]struct{}) []bootstrap.Node {
+	filtered := make([]bootstrap.Node, 0, len(peers))
+	for _, p := range peers {
+		if _, ok := exclude[p.Addr]; ok {
+			continue
+		}
+		filtered = append(filtered, p)
+	}
+	return filtered
+}
+
 // discoverPeers runs the role-aware peer discovery loop for a single bootstrap client.
 // It builds topology connections according to the node's role (edge/hub/default)
 // and re-checks at interval. Already-connected peers are skipped.
@@ -190,11 +202,18 @@ func (s *Server) discoverPeers(ctx context.Context, wg *sync.WaitGroup, interval
 
 		case "hub":
 			// 2 local peers + 2 same-region hubs + 1 cross-region hub.
+			// Avoid wasting the same-region hub limit on nodes already selected as local peers.
+			var localPeers []bootstrap.Node
 			if peers, err := client.FetchPeers(ctx, bootstrap.PeerQuery{PreferredRegion: region, Limit: 2}); err == nil {
 				connect(peers)
+				localPeers = peers
 			}
 			if peers, err := client.FetchPeers(ctx, bootstrap.PeerQuery{PreferredRegion: region, Role: "hub", Limit: 2}); err == nil {
-				connect(peers)
+				exclude := make(map[string]struct{}, len(localPeers))
+				for _, p := range localPeers {
+					exclude[p.Addr] = struct{}{}
+				}
+				connect(filterPeersByAddr(peers, exclude))
 			}
 			// Cross-region: fetch hubs from any region, then client-side filter to other regions.
 			if all, err := client.FetchPeers(ctx, bootstrap.PeerQuery{Role: "hub", AllowRemote: true, Limit: 5}); err == nil {
