@@ -15,32 +15,11 @@ func TestNewStatusHandler(t *testing.T) {
 	if h == nil {
 		t.Fatal("newStatusHandler returned nil")
 	}
-	if h.activeConnections.Load() != 0 {
-		t.Errorf("expected activeConnections to be 0, got %d", h.activeConnections.Load())
-	}
-}
-
-func TestStatusHandler_IncrementDecrementConnections(t *testing.T) {
-	h := newStatusHandler()
-	h.incrementConnections()
-	if h.activeConnections.Load() != 1 {
-		t.Errorf("expected activeConnections to be 1, got %d", h.activeConnections.Load())
-	}
-	h.incrementConnections()
-	if h.activeConnections.Load() != 2 {
-		t.Errorf("expected activeConnections to be 2, got %d", h.activeConnections.Load())
-	}
-	h.decrementConnections()
-	if h.activeConnections.Load() != 1 {
-		t.Errorf("expected activeConnections to be 1, got %d", h.activeConnections.Load())
-	}
 }
 
 func TestStatusHandler_GetStatus(t *testing.T) {
 	h := newStatusHandler()
 	status := h.getStatus()
-
-	assert.Equal(t, int32(0), status.ActiveConnections)
 	assert.NotEmpty(t, status.Uptime)
 }
 
@@ -60,7 +39,8 @@ func TestStatusHandler_ServeHTTP(t *testing.T) {
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
 	assert.Equal(t, true, resp["live"])
 	assert.Equal(t, true, resp["ready"])
-	assert.Equal(t, float64(0), resp["active_connections"])
+	_, hasActiveConns := resp["active_connections"]
+	assert.False(t, hasActiveConns, "active_connections should not appear in /health response")
 
 	// Test HEAD request
 	req = httptest.NewRequest(http.MethodHead, "/health", nil)
@@ -86,11 +66,6 @@ func TestStatusHandler_ServeHTTP(t *testing.T) {
 
 func TestStatusHandler_NilReceiver(t *testing.T) {
 	var h *statusHandler
-
-	// These should not panic
-	h.incrementConnections()
-	h.decrementConnections()
-
 	status := h.getStatus()
 	if status != (Status{}) {
 		t.Error("expected empty status for nil receiver")

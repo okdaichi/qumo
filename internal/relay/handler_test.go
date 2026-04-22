@@ -958,7 +958,8 @@ func TestIsBetterRoute(t *testing.T) {
 
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
-			assert.Equal(t, tt.want, isBetterRoute(tt.candidate, tt.current))
+			got, _ := isBetterRoute(tt.candidate, tt.current)
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }

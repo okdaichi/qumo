@@ -79,36 +79,67 @@ type relayHandler struct {
 	drainOnce sync.Once
 }
 
+// rejectionReason is the cause returned by isBetterRoute when a route
+// candidate is not better than the existing route. Values map directly to
+// the "reason" label on the qumo_relay_route_rejections_total metric.
+type rejectionReason string
+
+const (
+	// rejectionDeadCandidate: candidate is not alive (session ended or announcement retracted).
+	rejectionDeadCandidate rejectionReason = "dead_candidate"
+	// rejectionInferiorHops: candidate has more hops than the current route.
+	rejectionInferiorHops rejectionReason = "inferior_hops"
+	// rejectionInferiorBitrate: candidate has lower measured bitrate.
+	rejectionInferiorBitrate rejectionReason = "inferior_bitrate"
+	// rejectionInferiorRTT: candidate has higher or equal RTT.
+	rejectionInferiorRTT rejectionReason = "inferior_rtt"
+	// rejectionEqualOrUnknown: RTT is unknown (0) for one or both routes, so
+	// no improvement can be confirmed.
+	rejectionEqualOrUnknown rejectionReason = "equal_or_unknown"
+)
+
 // isBetterRoute reports whether candidate is a strictly better route than
 // current. A live route always beats a dead one. Among routes with the same
 // liveness, fewer hops wins outright; equal hops are broken first by bitrate
 // (higher available bandwidth is better for streaming), then by RTT (lower
 // latency is better). When a metric cannot be determined (nil probe or 0
 // value), the current route is preferred.
-func isBetterRoute(candidate, current RouteStats) bool {
+//
+// The second return value is the rejection reason when the function returns
+// false. It is empty when the function returns true.
+func isBetterRoute(candidate, current RouteStats) (bool, rejectionReason) {
 	// A live route always beats a dead one.
 	if candidate.Alive != current.Alive {
-		return candidate.Alive
+		if candidate.Alive {
+			return true, ""
+		}
+		return false, rejectionDeadCandidate
 	}
 	// Both dead: no benefit in switching.
 	if !candidate.Alive {
-		return false
+		return false, rejectionDeadCandidate
 	}
 	if candidate.Hops < current.Hops {
-		return true
+		return true, ""
 	}
 	if candidate.Hops > current.Hops {
-		return false
+		return false, rejectionInferiorHops
 	}
 	// Higher available bandwidth wins first.
 	if candidate.Bitrate != current.Bitrate {
-		return candidate.Bitrate > current.Bitrate
+		if candidate.Bitrate > current.Bitrate {
+			return true, ""
+		}
+		return false, rejectionInferiorBitrate
 	}
 	// Bandwidth equal or unknown: prefer lower RTT.
 	if candidate.RTT == 0 || current.RTT == 0 {
-		return false
+		return false, rejectionEqualOrUnknown
 	}
-	return candidate.RTT < current.RTT
+	if candidate.RTT < current.RTT {
+		return true, ""
+	}
+	return false, rejectionInferiorRTT
 }
 
 func newRelayHandler(ann *moqt.Announcement, sess *moqt.Session) *relayHandler {
