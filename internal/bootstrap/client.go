@@ -26,8 +26,8 @@ type ClientConfig struct {
 	AuthToken string
 
 	// TLSConfig is the TLS configuration for the HTTP client.
-	// When non-nil the client connects over HTTPS and, if Certificates are
-	// set, presents a client certificate (mTLS).
+	// When non-nil it configures TLS settings used for HTTPS requests,
+	// including optional client certificates for mTLS.
 	TLSConfig *tls.Config
 }
 

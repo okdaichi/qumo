@@ -28,6 +28,7 @@ import (
 //	BOOTSTRAP_KEY_FILE          - TLS private key for HTTPS (required with BOOTSTRAP_CERT_FILE)
 //	CA_FILE                     - PEM CA cert; enables mTLS client verification when set
 //	                               (requires BOOTSTRAP_CERT_FILE / BOOTSTRAP_KEY_FILE)
+//	MTLS_REQUIRED               - "true" to require a client certificate on every HTTPS request
 func RunBootstrap(_ []string) error {
 	listen := envOr("BOOTSTRAP_ADDR", ":8080")
 

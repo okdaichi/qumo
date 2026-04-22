@@ -96,8 +96,12 @@ func validateAuthHeader(r *http.Request, expectedToken string) bool {
 	if !strings.HasPrefix(auth, prefix) {
 		return false
 	}
-	// Use constant-time comparison to prevent timing attacks.
+	// Use constant-time comparison to prevent timing attacks. Enforce equal
+	// lengths first so length information is not leaked.
 	token := auth[len(prefix):]
+	if len(token) != len(expectedToken) {
+		return false
+	}
 	return subtle.ConstantTimeCompare([]byte(token), []byte(expectedToken)) == 1
 }
 

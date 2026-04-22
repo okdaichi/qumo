@@ -193,7 +193,7 @@ func RunRelay(_ []string) error {
 	if caPool != nil {
 		dialerTLS.RootCAs = caPool
 	}
-	if os.Getenv("INSECURE") != "" {
+	if os.Getenv("INSECURE") == "true" {
 		dialerTLS.InsecureSkipVerify = true //nolint:gosec // INSECURE mode only
 	}
 
