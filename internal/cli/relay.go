@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -378,9 +379,17 @@ func envDuration(key string, defaultVal time.Duration) (time.Duration, error) {
 
 // loadCACertPool reads a PEM-encoded CA certificate file into an x509.CertPool.
 // Returns (nil, nil) when caFile is empty — callers treat nil as "mTLS disabled".
+// CA_FILE must be a relative path with no path traversal components.
 func loadCACertPool(caFile string) (*x509.CertPool, error) {
 	if caFile == "" {
 		return nil, nil
+	}
+	if filepath.IsAbs(caFile) {
+		return nil, fmt.Errorf("CA_FILE must be a relative path")
+	}
+	caFile = filepath.Clean(caFile)
+	if caFile == ".." || strings.HasPrefix(caFile, ".."+string(filepath.Separator)) || strings.Contains(caFile, string(filepath.Separator)+".."+string(filepath.Separator)) {
+		return nil, fmt.Errorf("CA_FILE must not contain path traversal")
 	}
 	pemData, err := os.ReadFile(caFile)
 	if err != nil {
