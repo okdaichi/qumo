@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -20,6 +21,14 @@ type ClientConfig struct {
 
 	// Interval is how often to re-register (heartbeat) and refresh the peer list.
 	Interval time.Duration
+
+	// AuthToken is the bearer token sent to the bootstrap server when set.
+	AuthToken string
+
+	// TLSConfig is the TLS configuration for the HTTP client.
+	// When non-nil it configures TLS settings used for HTTPS requests,
+	// including optional client certificates for mTLS.
+	TLSConfig *tls.Config
 }
 
 // Client manages registration and peer discovery for a single bootstrap server.
@@ -37,6 +46,12 @@ type Client struct {
 
 // NewClient creates a new bootstrap client.
 func NewClient(cfg ClientConfig, nodeID, addr, region, role string) *Client {
+	// Clone the default transport so connection pooling and other defaults
+	// are preserved; override TLS config when mTLS is requested.
+	transport := http.DefaultTransport.(*http.Transport).Clone() //nolint:forcetypeassert
+	if cfg.TLSConfig != nil {
+		transport.TLSClientConfig = cfg.TLSConfig
+	}
 	return &Client{
 		cfg:    cfg,
 		nodeID: nodeID,
@@ -44,7 +59,8 @@ func NewClient(cfg ClientConfig, nodeID, addr, region, role string) *Client {
 		region: region,
 		role:   role,
 		httpClient: &http.Client{
-			Timeout: 10 * time.Second,
+			Timeout:   10 * time.Second,
+			Transport: transport,
 		},
 	}
 }
@@ -88,6 +104,9 @@ func (c *Client) register(ctx context.Context) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if c.cfg.AuthToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.cfg.AuthToken)
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -129,6 +148,9 @@ func (c *Client) FetchPeers(ctx context.Context, q PeerQuery) ([]Node, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
+	}
+	if c.cfg.AuthToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.cfg.AuthToken)
 	}
 
 	resp, err := c.httpClient.Do(req)

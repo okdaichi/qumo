@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -26,10 +27,10 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/okdaichi/gomoqt/moqt"
-	"github.com/qumo-dev/qumo/internal/bootstrap"
-	"github.com/qumo-dev/qumo/internal/relay"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/quic-go/quic-go"
+	"github.com/qumo-dev/qumo/internal/bootstrap"
+	"github.com/qumo-dev/qumo/internal/relay"
 )
 
 // sanitizeLog strips CR and LF from s to prevent log injection.
@@ -44,6 +45,12 @@ func sanitizeLog(s string) string {
 //	RELAY_ADDR          - listen address (default: "0.0.0.0:4433")
 //	CERT_FILE           - TLS certificate file (default: "certs/server.crt")
 //	KEY_FILE            - TLS key file (default: "certs/server.key")
+//	CA_FILE             - PEM CA certificate; enables mTLS when set:
+//	                        relay server verifies peer certs (but allows clients without one),
+//	                        dialer presents this node's cert to remote relays,
+//	                        bootstrap HTTP clients use it as root CA and present client cert.
+//	MTLS_REQUIRED       - "true" to require a client cert on every connection
+//	                        (default: false — cert verified if presented, browsers still allowed)
 //	RELAY_NAME          - node ID (default: "relay-" + hostname)
 //	REGION              - geographic region (default: "")
 //	ROLE                - node role: "hub" or "edge" (default: "")
@@ -88,6 +95,45 @@ func RunRelay(_ []string) error {
 		}
 	}
 
+	// Setup TLS before parsing bootstrap URLs so bootstrapClientTLS is in scope.
+	tlsConfig, err := setupTLS(certFile, keyFile)
+	if err != nil {
+		return fmt.Errorf("failed to setup TLS: %w", err)
+	}
+
+	// mTLS: load CA pool and configure mutual authentication when CA_FILE is set.
+	// Default (MTLS_REQUIRED unset): VerifyClientCertIfGiven — relay peers are verified,
+	// browser clients without a cert are still allowed through (Nginx "optional" mode).
+	// MTLS_REQUIRED=true: RequireAndVerifyClientCert — every connection must present a
+	// cert signed by the CA (use this for relay-only clusters with no browser traffic).
+	caPool, err := loadCACertPool(os.Getenv("CA_FILE"))
+	if err != nil {
+		return fmt.Errorf("failed to load CA_FILE: %w", err)
+	}
+	if caPool != nil {
+		clientAuth := tls.VerifyClientCertIfGiven
+		if os.Getenv("MTLS_REQUIRED") == "true" {
+			clientAuth = tls.RequireAndVerifyClientCert
+		}
+		tlsConfig.ClientAuth = clientAuth
+		tlsConfig.ClientCAs = caPool
+		slog.Info("mTLS enabled on relay server",
+			"ca_file", os.Getenv("CA_FILE"),
+			"strict", clientAuth == tls.RequireAndVerifyClientCert,
+		)
+	}
+
+	// Bootstrap client TLS: present this node's cert and trust only the CA pool.
+	// Built only when mTLS is active (caPool != nil).
+	var bootstrapClientTLS *tls.Config
+	if caPool != nil {
+		bootstrapClientTLS = &tls.Config{
+			MinVersion:   tls.VersionTLS12,
+			Certificates: tlsConfig.Certificates, // relay cert used as client cert
+			RootCAs:      caPool,
+		}
+	}
+
 	var bootstraps []bootstrap.ClientConfig
 	if raw := os.Getenv("BOOTSTRAP_URLS"); raw != "" {
 		intervalStr := envOr("BOOTSTRAP_INTERVAL", "15s")
@@ -95,12 +141,15 @@ func RunRelay(_ []string) error {
 		if parseErr != nil {
 			return fmt.Errorf("invalid BOOTSTRAP_INTERVAL %q: %w", intervalStr, parseErr)
 		}
+		authToken := os.Getenv("BOOTSTRAP_AUTH_TOKEN")
 		for u := range strings.SplitSeq(raw, ",") {
 			u = strings.TrimSpace(u)
 			if u != "" {
 				bootstraps = append(bootstraps, bootstrap.ClientConfig{
-					URL:      u,
-					Interval: interval,
+					URL:       u,
+					Interval:  interval,
+					AuthToken: authToken,
+					TLSConfig: bootstrapClientTLS,
 				})
 			}
 		}
@@ -115,12 +164,6 @@ func RunRelay(_ []string) error {
 		FrameCapacity:  frameCapacity,
 		Peers:          peers,
 		Bootstraps:     bootstraps,
-	}
-
-	// Setup TLS
-	tlsConfig, err := setupTLS(certFile, keyFile)
-	if err != nil {
-		return fmt.Errorf("failed to setup TLS: %w", err)
 	}
 
 	// Setup signal handling for graceful shutdown
@@ -144,7 +187,14 @@ func RunRelay(_ []string) error {
 	// sends both, TLS ALPN picks "h3" first → QPACK decompression failure.
 	dialerTLS := tlsConfig.Clone()
 	dialerTLS.NextProtos = []string{moqt.NextProtoMOQ}
-	if os.Getenv("INSECURE") != "" {
+	// Carry over mTLS settings: trust only the CA pool and strip client-auth fields
+	// (ClientAuth/ClientCAs are server-side settings; the dialer uses RootCAs).
+	dialerTLS.ClientAuth = tls.NoClientCert
+	dialerTLS.ClientCAs = nil
+	if caPool != nil {
+		dialerTLS.RootCAs = caPool
+	}
+	if os.Getenv("INSECURE") == "true" {
 		dialerTLS.InsecureSkipVerify = true //nolint:gosec // INSECURE mode only
 	}
 
@@ -325,6 +375,31 @@ func envDuration(key string, defaultVal time.Duration) (time.Duration, error) {
 		return 0, err
 	}
 	return d, nil
+}
+
+// loadCACertPool reads a PEM-encoded CA certificate file into an x509.CertPool.
+// Returns (nil, nil) when caFile is empty — callers treat nil as "mTLS disabled".
+// CA_FILE must be a relative path with no path traversal components.
+func loadCACertPool(caFile string) (*x509.CertPool, error) {
+	if caFile == "" {
+		return nil, nil
+	}
+	if filepath.IsAbs(caFile) {
+		return nil, fmt.Errorf("CA_FILE must be a relative path")
+	}
+	caFile = filepath.Clean(caFile)
+	if caFile == ".." || strings.HasPrefix(caFile, ".."+string(filepath.Separator)) || strings.Contains(caFile, string(filepath.Separator)+".."+string(filepath.Separator)) {
+		return nil, fmt.Errorf("CA_FILE must not contain path traversal")
+	}
+	pemData, err := os.ReadFile(caFile)
+	if err != nil {
+		return nil, fmt.Errorf("read CA file %q: %w", caFile, err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(pemData) {
+		return nil, fmt.Errorf("no valid certificates in CA file %q", caFile)
+	}
+	return pool, nil
 }
 
 func setupTLS(certFile, keyFile string) (*tls.Config, error) {

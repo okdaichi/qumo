@@ -49,7 +49,7 @@ func TestRegisterHandler_Success(t *testing.T) {
 	}
 }
 
-func TestRegisterHandler_XForwardedFor(t *testing.T) {
+func TestRegisterHandler_IgnoresXForwardedFor(t *testing.T) {
 	store := NewStore(30 * time.Second)
 	h := &RegisterHandler{Store: store}
 
@@ -66,8 +66,39 @@ func TestRegisterHandler_XForwardedFor(t *testing.T) {
 	}
 
 	peers := store.Peers(PeerQuery{})
-	if peers[0].Addr != "203.0.113.50:443" {
-		t.Errorf("expected X-Forwarded-For IP, got %s", peers[0].Addr)
+	if peers[0].Addr != "10.0.0.1:443" {
+		t.Errorf("expected remote IP, got %s", peers[0].Addr)
+	}
+}
+
+func TestRegisterHandler_Unauthorized(t *testing.T) {
+	store := NewStore(30 * time.Second)
+	h := &RegisterHandler{Store: store, AuthToken: "secret"}
+
+	body := `{"id":"n1","addr":"0.0.0.0:443"}`
+	req := httptest.NewRequest(http.MethodPost, "/register", strings.NewReader(body))
+	w := httptest.NewRecorder()
+
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", w.Code)
+	}
+}
+
+func TestRegisterHandler_Authorized(t *testing.T) {
+	store := NewStore(30 * time.Second)
+	h := &RegisterHandler{Store: store, AuthToken: "secret"}
+
+	body := `{"id":"n1","addr":"0.0.0.0:443"}`
+	req := httptest.NewRequest(http.MethodPost, "/register", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer secret")
+	w := httptest.NewRecorder()
+
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
 	}
 }
 
@@ -133,6 +164,39 @@ func TestPeersHandler_ReturnsAll(t *testing.T) {
 	peers := decodePeers(t, w)
 	if len(peers) != 2 {
 		t.Fatalf("expected 2 peers, got %d", len(peers))
+	}
+}
+
+func TestPeersHandler_Unauthorized(t *testing.T) {
+	store := NewStore(30 * time.Second)
+	store.Register(Node{ID: "n1", Addr: "1.1.1.1:443"})
+
+	h := &PeersHandler{Store: store, MaxPeers: 20, AuthToken: "secret"}
+
+	req := httptest.NewRequest(http.MethodGet, "/peers", nil)
+	w := httptest.NewRecorder()
+
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", w.Code)
+	}
+}
+
+func TestPeersHandler_Authorized(t *testing.T) {
+	store := NewStore(30 * time.Second)
+	store.Register(Node{ID: "n1", Addr: "1.1.1.1:443"})
+
+	h := &PeersHandler{Store: store, MaxPeers: 20, AuthToken: "secret"}
+
+	req := httptest.NewRequest(http.MethodGet, "/peers", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	w := httptest.NewRecorder()
+
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
 	}
 }
 

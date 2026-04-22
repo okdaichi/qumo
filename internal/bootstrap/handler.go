@@ -1,6 +1,7 @@
 package bootstrap
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -20,12 +21,19 @@ type registerRequest struct {
 
 // RegisterHandler handles POST /register.
 // It extracts the remote IP from the connection and combines it with the
-// port supplied by the client, so that NAT/proxy scenarios don't break.
+// port supplied by the client, so that NAT/LB scenarios don't break.
 type RegisterHandler struct {
-	Store *Store
+	Store     *Store
+	AuthToken string
 }
 
 func (h *RegisterHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if !validateAuthHeader(r, h.AuthToken) {
+		w.Header().Set("WWW-Authenticate", `Bearer realm="qumo"`)
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -43,7 +51,7 @@ func (h *RegisterHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Server-side IP correction: trust the server-observed IP, use
-	// the client-supplied port. This prevents NAT/LB/proxy issues.
+	// the client-supplied port. This prevents NAT/LB issues.
 	addr := correctAddr(r, req.Addr)
 
 	h.Store.Register(Node{
@@ -59,15 +67,11 @@ func (h *RegisterHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // correctAddr extracts the remote IP from the request and combines it with
 // the port from clientAddr. If extraction fails, clientAddr is returned as-is.
 func correctAddr(r *http.Request, clientAddr string) string {
-	// Prefer X-Forwarded-For if set (reverse proxy scenario).
-	remoteIP := r.Header.Get("X-Forwarded-For")
-	if remoteIP == "" {
-		host, _, err := net.SplitHostPort(r.RemoteAddr)
-		if err != nil {
-			return clientAddr
-		}
-		remoteIP = host
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return clientAddr
 	}
+	remoteIP := host
 
 	_, port, err := net.SplitHostPort(clientAddr)
 	if err != nil {
@@ -82,13 +86,39 @@ func sanitizeLog(s string) string {
 	return strings.NewReplacer("\r", "", "\n", "").Replace(s)
 }
 
+func validateAuthHeader(r *http.Request, expectedToken string) bool {
+	if expectedToken == "" {
+		return true
+	}
+
+	auth := r.Header.Get("Authorization")
+	const prefix = "Bearer "
+	if !strings.HasPrefix(auth, prefix) {
+		return false
+	}
+	// Use constant-time comparison to prevent timing attacks. Enforce equal
+	// lengths first so length information is not leaked.
+	token := auth[len(prefix):]
+	if len(token) != len(expectedToken) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(token), []byte(expectedToken)) == 1
+}
+
 // PeersHandler handles GET /peers.
 type PeersHandler struct {
-	Store    *Store
-	MaxPeers int
+	Store     *Store
+	MaxPeers  int
+	AuthToken string
 }
 
 func (h *PeersHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if !validateAuthHeader(r, h.AuthToken) {
+		w.Header().Set("WWW-Authenticate", `Bearer realm="qumo"`)
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return

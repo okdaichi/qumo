@@ -179,6 +179,7 @@ func TestRunRelay_InvalidBootstrapInterval(t *testing.T) {
 	t.Setenv("ADVERTISE_ADDR", "localhost:4433")
 	t.Setenv("GROUP_CACHE_SIZE", "")
 	t.Setenv("FRAME_CAPACITY", "")
+	t.Setenv("INSECURE", "true") // skip cert-file lookup so we reach BOOTSTRAP_INTERVAL validation
 	t.Setenv("BOOTSTRAP_URLS", "http://bs:8080")
 	t.Setenv("BOOTSTRAP_INTERVAL", "bad-duration")
 
