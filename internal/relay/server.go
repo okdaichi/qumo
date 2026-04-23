@@ -77,6 +77,19 @@ func (s *Server) init() {
 			Logger:   s.MOQServer.Logger,
 		}
 
+		// ConnContext intercepts each accepted QUIC connection before the MOQ
+		// handshake. For native QUIC connections the underlying type satisfies
+		// connStatsProvider, so we launch a polling goroutine to collect
+		// connection-level stats (RTT, packet loss). WebTransport connections
+		// do not satisfy the interface and are silently skipped.
+		s.MOQServer.ConnContext = func(ctx context.Context, conn moqt.StreamConn) context.Context {
+			if provider, ok := conn.(connStatsProvider); ok {
+				addr := conn.RemoteAddr().String()
+				go pollConnStats(conn.Context(), provider, addr)
+			}
+			return ctx
+		}
+
 		if s.connected == nil {
 			s.connected = make(map[string]struct{})
 		}
@@ -288,7 +301,7 @@ func (s *Server) maintainPeer(ctx context.Context, peer Peer) {
 		}
 		metricPeerDialAttempts.WithLabelValues(peer.Address, "ok").Inc()
 
-		go s.pollPeerRTT(sess, peer.Address)
+		go pollPeerRTT(sess, peer.Address)
 		s.Relay(sess)
 
 		<-sess.Context().Done()
@@ -297,30 +310,6 @@ func (s *Server) maintainPeer(ctx context.Context, peer Peer) {
 
 		if !waitRetry(ctx, 5*time.Second) {
 			return
-		}
-	}
-}
-
-// pollPeerRTT periodically samples the smoothed RTT for an outbound relay
-// session and updates the Prometheus gauge. It exits when the session ends.
-func (s *Server) pollPeerRTT(sess *moqt.Session, addr string) {
-	defer metricPeerRTTMilliseconds.DeleteLabelValues(addr)
-
-	probe := func() {
-		if result, err := sess.Probe(0); err == nil && result.RTT > 0 {
-			metricPeerRTTMilliseconds.WithLabelValues(addr).Set(float64(result.RTT))
-		}
-	}
-	probe() // immediate first sample
-
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-sess.Context().Done():
-			return
-		case <-ticker.C:
-			probe()
 		}
 	}
 }

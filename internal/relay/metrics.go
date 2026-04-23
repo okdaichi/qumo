@@ -80,4 +80,30 @@ var (
 		},
 		[]string{"reason"},
 	)
+
+	// metricConnSmoothedRTT tracks the QUIC-layer smoothed RTT (ms) for each
+	// inbound native-QUIC connection, labelled by remote address.
+	// Only populated when the underlying transport exposes ConnectionStats()
+	// (i.e. native QUIC; WebTransport connections are skipped).
+	metricConnSmoothedRTT = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "qumo",
+			Subsystem: "relay",
+			Name:      "conn_smoothed_rtt_ms",
+			Help:      "QUIC-layer smoothed RTT for each inbound native-QUIC connection in milliseconds.",
+		},
+		[]string{"remote"},
+	)
+
+	// metricConnPacketLossRate tracks the cumulative packet loss rate
+	// (PacketsLost / PacketsSent) for each inbound native-QUIC connection.
+	metricConnPacketLossRate = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "qumo",
+			Subsystem: "relay",
+			Name:      "conn_packet_loss_rate",
+			Help:      "Cumulative packet loss rate (lost/sent) for each inbound native-QUIC connection.",
+		},
+		[]string{"remote"},
+	)
 )
