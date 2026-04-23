@@ -18,8 +18,6 @@ github.com/kylelemons/godebug v1.1.0 h1:RPNrshWIDI6G2gRW9EHilWtl7Z6Sb1BR0xunSBf0
 github.com/kylelemons/godebug v1.1.0/go.mod h1:9/0rRGxNHcop5bhtWyNeEfOS8JIWk580+fNqagV/RAw=
 github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 h1:C3w9PqII01/Oq1c1nUAm88MOHcQC9l5mIlSMApZMrHA=
 github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822/go.mod h1:+n7T8mK8HuQTcFwEeznm/DIxMOiR9yIdICNftLE1DvQ=
-github.com/okdaichi/gomoqt v0.13.4 h1:fNRGqCvDn2aWmAE+XnxXSh3VeYniJqhjhOyI4t88ciA=
-github.com/okdaichi/gomoqt v0.13.4/go.mod h1:a3IyfM6v/saxXItcKlzGayq68b35efWlln2JVF5+JSI=
 github.com/okdaichi/webtransport-go v0.10.2-okdaichi.1 h1:6dbSuHazZrzVyMGuB1Kku///8uFI0DVWOCmnjlESvd4=
 github.com/okdaichi/webtransport-go v0.10.2-okdaichi.1/go.mod h1:emdguOY+ZIe1gAIY7YLs5yQHyx9/9a9rWdgQ58o7udM=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
@@ -36,6 +34,8 @@ github.com/quic-go/qpack v0.6.0 h1:g7W+BMYynC1LbYLSqRt8PBg5Tgwxn214ZZR34VIOjz8=
 github.com/quic-go/qpack v0.6.0/go.mod h1:lUpLKChi8njB4ty2bFLX2x4gzDqXwUpaO1DP9qMDZII=
 github.com/quic-go/quic-go v0.59.0 h1:OLJkp1Mlm/aS7dpKgTc6cnpynnD2Xg7C1pwL6vy/SAw=
 github.com/quic-go/quic-go v0.59.0/go.mod h1:upnsH4Ju1YkqpLXC305eW3yDZ4NfnNbmQRCMWS58IKU=
+github.com/qumo-dev/gomoqt v0.14.0 h1:DxVoDgzVmn3bx7grmHLjeHEOP1QFbjeUFQ3irb+UMb8=
+github.com/qumo-dev/gomoqt v0.14.0/go.mod h1:q4FGmnVZ3Cn098Y3rYLiILEH+hhftsIN9maGlA6R7UM=
 github.com/rogpeppe/go-internal v1.14.1 h1:UQB4HGPB6osV0SQTLymcB4TgvyWu6ZyliaW0tI/otEQ=
 github.com/rogpeppe/go-internal v1.14.1/go.mod h1:MaRKkUm5W0goXpeCfT7UZI6fk/L7L7so1lCWt35ZSgc=
 github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=

@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/okdaichi/gomoqt/moqt"
+	"github.com/qumo-dev/gomoqt/moqt"
 	"github.com/qumo-dev/qumo/internal/ingest"
 	"gopkg.in/yaml.v3"
 )

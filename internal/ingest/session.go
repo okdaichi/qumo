@@ -26,7 +26,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/okdaichi/gomoqt/moqt"
+	"github.com/qumo-dev/gomoqt/moqt"
 )
 
 // Session manages the MoQT announcement and fan-out for a single ingested

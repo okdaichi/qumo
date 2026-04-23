@@ -3,9 +3,9 @@ module github.com/qumo-dev/qumo
 go 1.26.0
 
 require (
-	github.com/okdaichi/gomoqt v0.13.4
 	github.com/prometheus/client_golang v1.23.2
 	github.com/quic-go/quic-go v0.59.0
+	github.com/qumo-dev/gomoqt v0.14.0
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/sync v0.20.0
 	gopkg.in/yaml.v3 v3.0.1
