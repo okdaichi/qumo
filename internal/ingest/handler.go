@@ -8,8 +8,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/okdaichi/gomoqt/moqt"
-	"github.com/okdaichi/gomoqt/msf"
+	"github.com/qumo-dev/gomoqt/moqt"
+	"github.com/qumo-dev/gomoqt/msf"
 )
 
 const (

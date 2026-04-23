@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/okdaichi/gomoqt/moqt"
+	"github.com/qumo-dev/gomoqt/moqt"
 )
 
 // TestGroupCacheAppend tests frame appending functionality

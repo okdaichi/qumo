@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/okdaichi/gomoqt/moqt"
-	"github.com/okdaichi/gomoqt/transport"
+	"github.com/qumo-dev/gomoqt/moqt"
+	"github.com/qumo-dev/gomoqt/transport"
 )
 
 // connStatsProvider is satisfied by native QUIC connections (quic.Connection)
