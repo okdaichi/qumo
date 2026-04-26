@@ -888,7 +888,7 @@ func TestRelayHandler_RTT_NilSession(t *testing.T) {
 	h := newTestRelayHandler(ctx) // session is nil
 
 	assert.Equal(t, 0, h.RouteStats().Hops, "nil session should yield 0 hops without panic")
-	assert.Equal(t, uint64(0), h.RouteStats().Bitrate, "nil session should yield 0 bitrate without panic")
+	assert.Equal(t, uint64(0), h.RouteStats().EstimatedBitrate, "nil session should yield 0 bitrate without panic")
 	assert.Equal(t, uint64(0), h.RouteStats().RTT, "nil session should yield 0 RTT without panic")
 }
 
@@ -914,13 +914,13 @@ func TestIsBetterRoute(t *testing.T) {
 			want:      false,
 		},
 		"equal hops: higher bitrate wins over lower RTT": {
-			candidate: RouteStats{Alive: true, Hops: 2, Bitrate: 10_000_000, RTT: 80},
-			current:   RouteStats{Alive: true, Hops: 2, Bitrate: 5_000_000, RTT: 20},
+			candidate: RouteStats{Alive: true, Hops: 2, EstimatedBitrate: 10_000_000, RTT: 80},
+			current:   RouteStats{Alive: true, Hops: 2, EstimatedBitrate: 5_000_000, RTT: 20},
 			want:      true,
 		},
 		"equal hops and bitrate: lower RTT wins": {
-			candidate: RouteStats{Alive: true, Hops: 2, Bitrate: 5_000_000, RTT: 20},
-			current:   RouteStats{Alive: true, Hops: 2, Bitrate: 5_000_000, RTT: 50},
+			candidate: RouteStats{Alive: true, Hops: 2, EstimatedBitrate: 5_000_000, RTT: 20},
+			current:   RouteStats{Alive: true, Hops: 2, EstimatedBitrate: 5_000_000, RTT: 50},
 			want:      true,
 		},
 		"equal hops: higher RTT loses": {
@@ -930,7 +930,7 @@ func TestIsBetterRoute(t *testing.T) {
 		},
 		"equal hops: zero bitrate/RTT keeps existing route": {
 			candidate: RouteStats{Alive: true, Hops: 2},
-			current:   RouteStats{Alive: true, Hops: 2, Bitrate: 5_000_000, RTT: 50},
+			current:   RouteStats{Alive: true, Hops: 2, EstimatedBitrate: 5_000_000, RTT: 50},
 			want:      false,
 		},
 		// Alive dominates all quality metrics.

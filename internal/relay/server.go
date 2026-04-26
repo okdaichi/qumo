@@ -301,7 +301,6 @@ func (s *Server) maintainPeer(ctx context.Context, peer Peer) {
 		}
 		metricPeerDialAttempts.WithLabelValues(peer.Address, "ok").Inc()
 
-		go pollPeerRTT(sess, peer.Address)
 		s.Relay(sess)
 
 		<-sess.Context().Done()

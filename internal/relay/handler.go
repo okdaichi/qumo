@@ -33,10 +33,10 @@ type RouteStats struct {
 	// Hops is the number of relay hops the announcement has traversed.
 	// Fewer hops generally implies lower latency.
 	Hops int
-	// Bitrate is the measured bitrate in bits per second. A value of 0 means unknown.
-	Bitrate uint64
+	// EstimatedBitrate is the measured bitrate in bits per second. A value of 0 means unknown.
+	EstimatedBitrate uint64
 	// RTT is the smoothed round-trip time in milliseconds. A value of 0 means unknown.
-	RTT uint64
+	RTT time.Duration
 }
 
 // Drainable is implemented by handlers that support graceful drain-then-shutdown.
@@ -126,8 +126,8 @@ func isBetterRoute(candidate, current RouteStats) (bool, rejectionReason) {
 		return false, rejectionInferiorHops
 	}
 	// Higher available bandwidth wins first.
-	if candidate.Bitrate != current.Bitrate {
-		if candidate.Bitrate > current.Bitrate {
+	if candidate.EstimatedBitrate != current.EstimatedBitrate {
+		if candidate.EstimatedBitrate > current.EstimatedBitrate {
 			return true, ""
 		}
 		return false, rejectionInferiorBitrate
@@ -172,16 +172,15 @@ func (h *relayHandler) Drain(timeout time.Duration) {
 // RouteStats probes the upstream session and returns combined routing metrics.
 // The probe is performed once per call; results are not cached.
 func (h *relayHandler) RouteStats() RouteStats {
+	sessionStats := h.session.Stats()
+
 	rs := RouteStats{
-		Alive: h.ctx.Err() == nil && h.announcement.IsActive(),
-		Hops:  len(h.announcement.HopIDs()),
+		Alive:            h.ctx.Err() == nil && h.announcement.IsActive(),
+		Hops:             len(h.announcement.HopIDs()),
+		EstimatedBitrate: sessionStats.EstimatedBitrate,
+		RTT:              sessionStats.RTT,
 	}
-	if h.session != nil {
-		if result, err := h.session.Probe(0); err == nil {
-			rs.Bitrate = result.Bitrate
-			rs.RTT = result.RTT
-		}
-	}
+
 	return rs
 }
 

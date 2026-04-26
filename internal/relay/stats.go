@@ -4,7 +4,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/qumo-dev/gomoqt/moqt"
 	"github.com/qumo-dev/gomoqt/transport"
 )
 
@@ -47,26 +46,26 @@ func pollConnStats(ctx context.Context, provider connStatsProvider, addr string)
 	}
 }
 
-// pollPeerRTT periodically samples the smoothed RTT for an outbound relay
-// session and updates the Prometheus gauge. It exits when the session ends.
-func pollPeerRTT(sess *moqt.Session, addr string) {
-	defer metricPeerRTTMilliseconds.DeleteLabelValues(addr)
+// // pollRTT periodically samples the smoothed RTT for an outbound relay
+// // session and updates the Prometheus gauge. It exits when the session ends.
+// func pollRTT(sess *moqt.Session, addr string) {
+// 	defer metricPeerRTTMilliseconds.DeleteLabelValues(addr)
 
-	probe := func() {
-		if result, err := sess.Probe(0); err == nil && result.RTT > 0 {
-			metricPeerRTTMilliseconds.WithLabelValues(addr).Set(float64(result.RTT))
-		}
-	}
-	probe() // immediate first sample
+// 	probe := func() {
+// 		if result, err := sess.Probe(0); err == nil && result.RTT > 0 {
+// 			metricPeerRTTMilliseconds.WithLabelValues(addr).Set(float64(result.RTT))
+// 		}
+// 	}
+// 	probe() // immediate first sample
 
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-sess.Context().Done():
-			return
-		case <-ticker.C:
-			probe()
-		}
-	}
-}
+// 	ticker := time.NewTicker(30 * time.Second)
+// 	defer ticker.Stop()
+// 	for {
+// 		select {
+// 		case <-sess.Context().Done():
+// 			return
+// 		case <-ticker.C:
+// 			probe()
+// 		}
+// 	}
+// }
