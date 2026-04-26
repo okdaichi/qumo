@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Enhanced Prometheus metrics (`internal/relay`, `internal/ingest`):** Comprehensive
+  observability for both relay and ingest subsystems.
+  - *Relay metrics*: New gauges for `sessions_active`, `subscribers_active`,
+    `peers_connected`, `broadcasts_active`, and `buffer_depth_groups`.
+    Added `subscriber_skips_total` counter for QoS tracking and `subscribe_errors_total`,
+    `peer_dial_attempts_total`, `route_replacements_total`, and `route_rejections_total`
+    for operational analysis.
+  - *QUIC-layer metrics*: Added `conn_smoothed_rtt_ms` and `conn_packet_loss_rate`
+    for native QUIC connections (skipped for WebTransport).
+  - *Ingest metrics*: Achieved parity with relay by adding `publishers_active`,
+    `subscribers_active`, `buffer_depth_groups`, and `subscriber_skips_total`.
+  - *Latency Histograms*: Added `session_rtt_seconds` and `group_delivery_seconds`
+    histograms to track RTT and delivery performance distributions.
+  - *Session Polling*: Re-enabled RTT and estimated bitrate polling for all MoQT sessions
+    (including WebTransport) via the new `pollSessionStats` background routine.
+  - *Label Cleanup*: Dynamic Prometheus labels (remote addresses, track names) are now
+    rigorously deleted on session/track termination to prevent memory growth.
+- **Route selection improvements (`internal/relay`):**
+  - `isBetterRoute` now returns a detailed `rejectionReason` when a route is rejected.
+  - Rejections are logged and tracked via the `qumo_relay_route_rejections_total` metric.
+- **Health check refinement (`internal/relay`):** `statusHandler` no longer tracks
+  active connections manually; it now relies on Prometheus gauges for session counts.
+- **Dependency upgrade:** `gomoqt` upgraded to v0.15.0.
 - **Bootstrap API authentication (`internal/bootstrap`, `internal/cli`):** The `/register`
   and `/peers` endpoints now support optional bearer token authentication. Set
   `BOOTSTRAP_AUTH_TOKEN` on both the bootstrap server and relay nodes to require an

@@ -4,10 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 
-	"github.com/okdaichi/gomoqt/moqt"
+	"github.com/qumo-dev/gomoqt/moqt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -49,8 +50,17 @@ func TestSourceGroup_IsComplete(t *testing.T) {
 // trackBuffer tests
 // ---------------------------------------------------------------------------
 
+func newTestTrackBuffer() *trackBuffer {
+	return &trackBuffer{
+		name:        "test",
+		ring:        make([]atomic.Pointer[sourceGroup], defaultRingSize),
+		size:        defaultRingSize,
+		subscribers: make(map[chan struct{}]struct{}),
+	}
+}
+
 func TestTrackBuffer_OpenGroup(t *testing.T) {
-	b := newTrackBuffer()
+	b := newTestTrackBuffer()
 
 	assert.Equal(t, moqt.GroupSequence(0), b.head())
 
@@ -66,7 +76,7 @@ func TestTrackBuffer_OpenGroup(t *testing.T) {
 }
 
 func TestTrackBuffer_Get(t *testing.T) {
-	b := newTrackBuffer()
+	b := newTestTrackBuffer()
 
 	g := b.openGroup()
 	got := b.get(g.seq)
@@ -74,7 +84,7 @@ func TestTrackBuffer_Get(t *testing.T) {
 }
 
 func TestTrackBuffer_EarliestAvailable(t *testing.T) {
-	b := newTrackBuffer()
+	b := newTestTrackBuffer()
 
 	// No groups yet — earliest is still 1 (since head=0 < size=8).
 	assert.Equal(t, moqt.GroupSequence(1), b.earliestAvailable())
@@ -172,7 +182,7 @@ func TestVideoTrack_Close_NoGroup(t *testing.T) {
 
 func TestTrackBuffer_SubscribeUnsubscribe(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		b := newTrackBuffer()
+		b := newTestTrackBuffer()
 
 		ch1 := b.subscribe()
 		ch2 := b.subscribe()
@@ -213,7 +223,7 @@ func TestTrackBuffer_SubscribeUnsubscribe(t *testing.T) {
 
 func TestTrackBuffer_Notify(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		b := newTrackBuffer()
+		b := newTestTrackBuffer()
 
 		ch := b.subscribe()
 		defer b.unsubscribe(ch)
@@ -233,7 +243,7 @@ func TestTrackBuffer_Notify(t *testing.T) {
 
 func TestTrackBuffer_Notify_NonBlocking(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		b := newTrackBuffer()
+		b := newTestTrackBuffer()
 
 		ch := b.subscribe()
 		defer b.unsubscribe(ch)
@@ -260,7 +270,7 @@ func TestTrackBuffer_Notify_NonBlocking(t *testing.T) {
 
 func TestTrackBuffer_MultipleSubscribers(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		b := newTrackBuffer()
+		b := newTestTrackBuffer()
 
 		ch1 := b.subscribe()
 		ch2 := b.subscribe()
@@ -285,7 +295,7 @@ func TestTrackBuffer_MultipleSubscribers(t *testing.T) {
 }
 
 func TestTrackBuffer_RingWrapAround(t *testing.T) {
-	b := newTrackBuffer()
+	b := newTestTrackBuffer()
 
 	// Fill beyond ring size.
 	for i := range defaultRingSize + 3 {
@@ -324,7 +334,7 @@ func TestNewIngestHandler(t *testing.T) {
 func TestIngestHandler_Close(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+		// No defer cancel() here, we do it explicitly to wait.
 
 		h, err := newIngestHandler(ctx)
 		require.NoError(t, err)
@@ -345,6 +355,10 @@ func TestIngestHandler_Close(t *testing.T) {
 
 		// Context cancelled by caller (Session) — simulate.
 		cancel()
+
+		// Wait for pollCacheDepth goroutines to see the cancellation and exit.
+		synctest.Wait()
+
 		select {
 		case <-h.video.ctx.Done():
 		default:
@@ -464,19 +478,15 @@ func TestSourceGroup_ConcurrentAppendNext(t *testing.T) {
 	const n = 50
 	var wg sync.WaitGroup
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for i := range n {
 			f := moqt.NewFrame(1)
 			f.Write([]byte{byte(i)})
 			g.append(f)
 		}
-	}()
+	})
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for i := range n {
 			for {
 				if f := g.next(i); f != nil {
@@ -484,7 +494,7 @@ func TestSourceGroup_ConcurrentAppendNext(t *testing.T) {
 				}
 			}
 		}
-	}()
+	})
 
 	wg.Wait()
 

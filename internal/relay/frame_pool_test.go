@@ -2,11 +2,12 @@ package relay
 
 import (
 	"runtime"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
 
-	"github.com/okdaichi/gomoqt/moqt"
+	"github.com/qumo-dev/gomoqt/moqt"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -67,16 +68,14 @@ func TestFramePoolConcurrent(t *testing.T) {
 	var wg sync.WaitGroup
 
 	// Concurrent Get/Put operations
-	for i := 0; i < goroutines; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := 0; j < iterations; j++ {
+	for range goroutines {
+		wg.Go(func() {
+			for range iterations {
 				frame := pool.Get()
 				frame.Write([]byte("data"))
 				pool.Put(frame)
 			}
-		}()
+		})
 	}
 
 	wg.Wait()
@@ -123,7 +122,7 @@ func TestFramePoolReuse(t *testing.T) {
 
 	// Pre-allocate some frames
 	frames := make([]*moqt.Frame, 10)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		frames[i] = pool.Get()
 	}
 
@@ -135,13 +134,10 @@ func TestFramePoolReuse(t *testing.T) {
 	// Get again - at least some should be reused
 	// (Can't guarantee which one due to sync.Pool implementation)
 	reused := 0
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		newFrame := pool.Get()
-		for _, oldFrame := range frames {
-			if newFrame == oldFrame {
-				reused++
-				break
-			}
+		if slices.Contains(frames, newFrame) {
+			reused++
 		}
 	}
 
@@ -266,16 +262,14 @@ func TestFramePoolStress(t *testing.T) {
 		const goroutines = 50
 		const iterations = 10000
 
-		for i := 0; i < goroutines; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				for j := 0; j < iterations; j++ {
+		for range goroutines {
+			wg.Go(func() {
+				for range iterations {
 					frame := pool.Get()
 					frame.Write([]byte("data"))
 					pool.Put(frame)
 				}
-			}()
+			})
 		}
 
 		wg.Wait()
@@ -287,23 +281,19 @@ func TestFramePoolStress(t *testing.T) {
 		var wg sync.WaitGroup
 
 		// More Gets than Puts
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			frames := make([]*moqt.Frame, 1000)
-			for i := 0; i < 1000; i++ {
+			for i := range 1000 {
 				frames[i] = pool.Get()
 			}
 			// Only return half
-			for i := 0; i < 500; i++ {
+			for i := range 500 {
 				pool.Put(frames[i])
 			}
-		}()
+		})
 
 		// More Puts than Gets
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			frames := make([]*moqt.Frame, 100)
 			for i := range frames {
 				frames[i] = pool.Get()
@@ -315,7 +305,7 @@ func TestFramePoolStress(t *testing.T) {
 				pool.Put(pool.Get())
 				_ = f
 			}
-		}()
+		})
 
 		wg.Wait()
 	})
@@ -328,10 +318,10 @@ func TestFramePoolMemoryEfficiency(t *testing.T) {
 
 		// Pre-warm the pool
 		frames := make([]*moqt.Frame, 100)
-		for i := 0; i < 100; i++ {
+		for i := range 100 {
 			frames[i] = pool.Get()
 		}
-		for i := 0; i < 100; i++ {
+		for i := range 100 {
 			pool.Put(frames[i])
 		}
 
@@ -340,7 +330,7 @@ func TestFramePoolMemoryEfficiency(t *testing.T) {
 		var m1, m2 runtime.MemStats
 		runtime.ReadMemStats(&m1)
 
-		for i := 0; i < iterations; i++ {
+		for range iterations {
 			frame := pool.Get()
 			frame.Write([]byte("test data"))
 			pool.Put(frame)
@@ -360,18 +350,18 @@ func TestFramePoolMemoryEfficiency(t *testing.T) {
 
 		// Hold many frames simultaneously
 		frames := make([]*moqt.Frame, 10000)
-		for i := 0; i < 10000; i++ {
+		for i := range 10000 {
 			frames[i] = pool.Get()
 			frames[i].Write(make([]byte, DefaultNewFrameCapacity))
 		}
 
 		// Return all
-		for i := 0; i < 10000; i++ {
+		for i := range 10000 {
 			pool.Put(frames[i])
 		}
 
 		// Get again - pool should still work
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			frame := pool.Get()
 			if frame == nil {
 				t.Error("Pool failed under pressure")
@@ -455,11 +445,11 @@ func TestFramePoolConcurrentPatterns(t *testing.T) {
 		var wg sync.WaitGroup
 
 		// Producers
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			wg.Add(1)
 			go func(id int) {
 				defer wg.Done()
-				for j := 0; j < 100; j++ {
+				for range 100 {
 					frame := pool.Get()
 					frame.Write([]byte("producer data"))
 					frameChan <- frame
@@ -468,16 +458,14 @@ func TestFramePoolConcurrentPatterns(t *testing.T) {
 		}
 
 		// Consumers
-		for i := 0; i < 5; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				for j := 0; j < 100; j++ {
+		for range 5 {
+			wg.Go(func() {
+				for range 100 {
 					frame := <-frameChan
 					_ = frame.Len()
 					pool.Put(frame)
 				}
-			}()
+			})
 		}
 
 		wg.Wait()
@@ -489,12 +477,12 @@ func TestFramePoolConcurrentPatterns(t *testing.T) {
 
 		// Sudden burst of Gets
 		frames := make([]*moqt.Frame, 1000)
-		for i := 0; i < 1000; i++ {
+		for i := range 1000 {
 			frames[i] = pool.Get()
 		}
 
 		// Sudden burst of Puts
-		for i := 0; i < 1000; i++ {
+		for i := range 1000 {
 			pool.Put(frames[i])
 		}
 
@@ -559,19 +547,19 @@ func TestFramePoolStatistics(t *testing.T) {
 
 		// Pre-populate
 		frames := make([]*moqt.Frame, 100)
-		for i := 0; i < 100; i++ {
+		for i := range 100 {
 			frames[i] = pool.Get()
 		}
-		for i := 0; i < 100; i++ {
+		for i := range 100 {
 			pool.Put(frames[i])
 		}
 
 		// Track reuse
 		var reused atomic.Int32
 		const samples = 100
-		for i := 0; i < samples; i++ {
+		for range samples {
 			frame := pool.Get()
-			for j := 0; j < len(frames); j++ {
+			for j := range frames {
 				if frame == frames[j] {
 					reused.Add(1)
 					break
@@ -619,10 +607,10 @@ func BenchmarkFramePoolPatterns(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			frames := make([]*moqt.Frame, 10)
-			for j := 0; j < 10; j++ {
+			for j := range 10 {
 				frames[j] = pool.Get()
 			}
-			for j := 0; j < 10; j++ {
+			for j := range 10 {
 				pool.Put(frames[j])
 			}
 		}
@@ -690,13 +678,13 @@ func TestFramePool_MultipleFrames(t *testing.T) {
 	pool := NewFramePool(1500)
 
 	frames := make([]*moqt.Frame, 10)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		frames[i] = pool.Get()
 		assert.NotNil(t, frames[i])
 	}
 
 	// Return all
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		pool.Put(frames[i])
 	}
 
@@ -748,7 +736,7 @@ func TestGroupCache_ConcurrentAppend(t *testing.T) {
 	}
 
 	// Append concurrently
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		frame := DefaultFramePool.Get()
 		cache.append(frame)
 	}

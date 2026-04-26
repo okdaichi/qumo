@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/okdaichi/gomoqt/moqt"
+	"github.com/qumo-dev/gomoqt/moqt"
 	"github.com/qumo-dev/qumo/internal/rtmp"
 )
 
@@ -67,11 +67,9 @@ func (s *RTMPServer) ListenAndServe(ctx context.Context) error {
 			}
 			return err
 		}
-		s.connWg.Add(1)
-		go func() {
-			defer s.connWg.Done()
+		s.connWg.Go(func() {
 			s.handleConn(connCtx, conn)
-		}()
+		})
 	}
 }
 

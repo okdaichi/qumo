@@ -26,9 +26,9 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/okdaichi/gomoqt/moqt"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/quic-go/quic-go"
+	"github.com/qumo-dev/gomoqt/moqt"
 	"github.com/qumo-dev/qumo/internal/bootstrap"
 	"github.com/qumo-dev/qumo/internal/relay"
 )
@@ -87,7 +87,7 @@ func RunRelay(_ []string) error {
 
 	var peers []relay.Peer
 	if raw := os.Getenv("PEERS"); raw != "" {
-		for _, p := range strings.Split(raw, ",") {
+		for p := range strings.SplitSeq(raw, ",") {
 			p = strings.TrimSpace(p)
 			if p != "" {
 				peers = append(peers, relay.Peer{Address: p})

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/okdaichi/gomoqt/moqt"
+	"github.com/qumo-dev/gomoqt/moqt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -16,9 +16,11 @@ import (
 func newTestRelayHandler(ctx context.Context) *relayHandler {
 	ann, _ := moqt.NewAnnouncement(ctx, "/test")
 	ctx, cancel := context.WithCancel(ctx)
+	// minimal moqt.Session to satisfy non-nil constraints
+	sess := &moqt.Session{}
 	return &relayHandler{
 		announcement: ann,
-		session:      nil,
+		session:      sess,
 		tracks:       newTrackManager(),
 		ctx:          ctx,
 		cancel:       cancel,
@@ -40,9 +42,7 @@ func TestTrackDistributor_Broadcast_SingleSubscriber(t *testing.T) {
 	ready := make(chan struct{})
 	var wg sync.WaitGroup
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		ch := dist.subscribe()
 		defer dist.unsubscribe(ch)
 		close(ready)
@@ -54,7 +54,7 @@ func TestTrackDistributor_Broadcast_SingleSubscriber(t *testing.T) {
 		case <-timeout:
 			return
 		}
-	}()
+	})
 
 	<-ready
 
@@ -94,9 +94,7 @@ func TestTrackDistributor_Broadcast_MultipleSubscribers(t *testing.T) {
 			var wg sync.WaitGroup
 
 			for i := 0; i < tt.numSubscribers; i++ {
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
+				wg.Go(func() {
 					ch := dist.subscribe()
 					defer dist.unsubscribe(ch)
 					ready <- struct{}{}
@@ -109,7 +107,7 @@ func TestTrackDistributor_Broadcast_MultipleSubscribers(t *testing.T) {
 							return
 						}
 					}
-				}()
+				})
 			}
 
 			for i := 0; i < tt.numSubscribers; i++ {
@@ -185,22 +183,18 @@ func TestTrackDistributor_ConcurrentAccess(t *testing.T) {
 
 	var wg sync.WaitGroup
 
-	for i := 0; i < goroutines; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := 0; j < iterations; j++ {
+	for range goroutines {
+		wg.Go(func() {
+			for range iterations {
 				ch := dist.subscribe()
 				dist.unsubscribe(ch)
 			}
-		}()
+		})
 	}
 
-	for i := 0; i < goroutines; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := 0; j < iterations; j++ {
+	for range goroutines {
+		wg.Go(func() {
+			for range iterations {
 				dist.mu.RLock()
 				for ch := range dist.subscribers {
 					select {
@@ -210,7 +204,7 @@ func TestTrackDistributor_ConcurrentAccess(t *testing.T) {
 				}
 				dist.mu.RUnlock()
 			}
-		}()
+		})
 	}
 
 	wg.Wait()
@@ -264,7 +258,7 @@ func TestTrackDistributor_NoBroadcastBlocking(t *testing.T) {
 	}
 
 	// Create subscribers but don't read
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		dist.subscribe()
 	}
 
@@ -358,7 +352,7 @@ func TestTrackDistributor_EdgeCases(t *testing.T) {
 		}
 
 		// Rapidly add and remove
-		for i := 0; i < 1000; i++ {
+		for range 1000 {
 			ch := dist.subscribe()
 			dist.unsubscribe(ch)
 		}
@@ -380,13 +374,13 @@ func TestTrackDistributor_Stress(t *testing.T) {
 		}
 
 		const numSubs = 100
-		for i := 0; i < numSubs; i++ {
+		for range numSubs {
 			dist.subscribe()
 		}
 
 		done := make(chan bool)
 		go func() {
-			for i := 0; i < 10000; i++ {
+			for range 10000 {
 				dist.mu.RLock()
 				for ch := range dist.subscribers {
 					select {
@@ -416,10 +410,8 @@ func TestTrackDistributor_Stress(t *testing.T) {
 		var wg sync.WaitGroup
 		stopCh := make(chan struct{})
 
-		for i := 0; i < 10; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+		for range 10 {
+			wg.Go(func() {
 				for {
 					select {
 					case <-stopCh:
@@ -429,13 +421,11 @@ func TestTrackDistributor_Stress(t *testing.T) {
 						dist.unsubscribe(ch)
 					}
 				}
-			}()
+			})
 		}
 
-		for i := 0; i < 5; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+		for range 5 {
+			wg.Go(func() {
 				for {
 					select {
 					case <-stopCh:
@@ -451,7 +441,7 @@ func TestTrackDistributor_Stress(t *testing.T) {
 						dist.mu.RUnlock()
 					}
 				}
-			}()
+			})
 		}
 
 		time.Sleep(2 * time.Second)
@@ -476,7 +466,7 @@ func TestTrackDistributor_Scalability(t *testing.T) {
 			}
 
 			// Create n subscribers
-			for i := 0; i < n; i++ {
+			for range n {
 				dist.subscribe()
 			}
 
@@ -510,7 +500,7 @@ func TestTrackDistributor_MemoryBehavior(t *testing.T) {
 
 		// Subscribe many
 		const count = 1000
-		for i := 0; i < count; i++ {
+		for range count {
 			ch := dist.subscribe()
 			// Immediately unsubscribe to allow GC
 			dist.unsubscribe(ch)
@@ -526,7 +516,7 @@ func TestTrackDistributor_MemoryBehavior(t *testing.T) {
 		}
 
 		channels := make([]chan struct{}, 100)
-		for i := 0; i < 100; i++ {
+		for i := range 100 {
 			channels[i] = dist.subscribe()
 		}
 
@@ -559,14 +549,14 @@ func TestTrackDistributor_RaceConditions(t *testing.T) {
 
 		go func() {
 			defer wg.Done()
-			for i := 0; i < 100; i++ {
+			for range 100 {
 				dist.subscribe()
 			}
 		}()
 
 		go func() {
 			defer wg.Done()
-			for i := 0; i < 100; i++ {
+			for range 100 {
 				dist.mu.RLock()
 				for ch := range dist.subscribers {
 					select {
@@ -588,7 +578,7 @@ func TestTrackDistributor_RaceConditions(t *testing.T) {
 		}
 
 		channels := make([]chan struct{}, 100)
-		for i := 0; i < 100; i++ {
+		for i := range 100 {
 			channels[i] = dist.subscribe()
 		}
 
@@ -604,7 +594,7 @@ func TestTrackDistributor_RaceConditions(t *testing.T) {
 
 		go func() {
 			defer wg.Done()
-			for i := 0; i < 100; i++ {
+			for range 100 {
 				dist.mu.RLock()
 				for ch := range dist.subscribers {
 					select {
@@ -652,7 +642,7 @@ func TestTrackDistributor_NotificationDelivery(t *testing.T) {
 			}()
 		}
 
-		for i := 0; i < numSubs; i++ {
+		for range numSubs {
 			<-ready
 		}
 
@@ -807,17 +797,25 @@ func TestTrackDistributor_RingBehavior(t *testing.T) {
 // round-trip. A second ServeTrack call (e.g. for "video" while "video.meta" was
 // subscribing) would block on the same mutex, causing a deadlock.
 func TestRelayHandler_ConcurrentSubscribe(t *testing.T) {
-	h := newTestRelayHandler(t.Context()) // nil session for test
+	h := newTestRelayHandler(t.Context())
 
+	// Pre-fill distributors to avoid real Session.Subscribe calls
 	const numTracks = 10
+	for i := range numTracks {
+		name := moqt.TrackName(fmt.Sprintf("track-%d", i))
+		d := newTrackDistributor(name, h.tracks)
+		defer close(d.done)
+		h.tracks.store(name, d)
+	}
+
 	done := make(chan struct{}, numTracks)
 
-	for i := 0; i < numTracks; i++ {
+	for i := range numTracks {
 		go func() {
 			defer func() { done <- struct{}{} }()
 			name := moqt.TrackName(fmt.Sprintf("track-%d", i))
 
-			// Mirrors ServeTrack: subscribe returns nil because Session is nil
+			// Should hit the cache and return immediately
 			tr := h.subscribe(name)
 			_ = tr
 		}()
@@ -825,7 +823,7 @@ func TestRelayHandler_ConcurrentSubscribe(t *testing.T) {
 
 	// All goroutines must finish within 1 second; a deadlock would hang.
 	timeout := time.After(1 * time.Second)
-	for i := 0; i < numTracks; i++ {
+	for range numTracks {
 		select {
 		case <-done:
 		case <-timeout:
@@ -841,6 +839,7 @@ func TestRelayHandler_SingleflightDedup(t *testing.T) {
 
 	// Pre-populate a distributor in the cache
 	existing := newTrackDistributor("video", newTrackManager())
+	defer close(existing.done) // Cleanup goroutine
 	h.tracks.store(moqt.TrackName("video"), existing)
 
 	// Load should return the existing one
@@ -888,8 +887,8 @@ func TestRelayHandler_RTT_NilSession(t *testing.T) {
 	h := newTestRelayHandler(ctx) // session is nil
 
 	assert.Equal(t, 0, h.RouteStats().Hops, "nil session should yield 0 hops without panic")
-	assert.Equal(t, uint64(0), h.RouteStats().Bitrate, "nil session should yield 0 bitrate without panic")
-	assert.Equal(t, uint64(0), h.RouteStats().RTT, "nil session should yield 0 RTT without panic")
+	assert.Equal(t, uint64(0), h.RouteStats().EstimatedBitrate, "nil session should yield 0 bitrate without panic")
+	assert.Equal(t, time.Duration(0), h.RouteStats().RTT, "nil session should yield 0 RTT without panic")
 }
 
 // ============================================================================
@@ -914,13 +913,13 @@ func TestIsBetterRoute(t *testing.T) {
 			want:      false,
 		},
 		"equal hops: higher bitrate wins over lower RTT": {
-			candidate: RouteStats{Alive: true, Hops: 2, Bitrate: 10_000_000, RTT: 80},
-			current:   RouteStats{Alive: true, Hops: 2, Bitrate: 5_000_000, RTT: 20},
+			candidate: RouteStats{Alive: true, Hops: 2, EstimatedBitrate: 10_000_000, RTT: 80},
+			current:   RouteStats{Alive: true, Hops: 2, EstimatedBitrate: 5_000_000, RTT: 20},
 			want:      true,
 		},
 		"equal hops and bitrate: lower RTT wins": {
-			candidate: RouteStats{Alive: true, Hops: 2, Bitrate: 5_000_000, RTT: 20},
-			current:   RouteStats{Alive: true, Hops: 2, Bitrate: 5_000_000, RTT: 50},
+			candidate: RouteStats{Alive: true, Hops: 2, EstimatedBitrate: 5_000_000, RTT: 20},
+			current:   RouteStats{Alive: true, Hops: 2, EstimatedBitrate: 5_000_000, RTT: 50},
 			want:      true,
 		},
 		"equal hops: higher RTT loses": {
@@ -930,7 +929,7 @@ func TestIsBetterRoute(t *testing.T) {
 		},
 		"equal hops: zero bitrate/RTT keeps existing route": {
 			candidate: RouteStats{Alive: true, Hops: 2},
-			current:   RouteStats{Alive: true, Hops: 2, Bitrate: 5_000_000, RTT: 50},
+			current:   RouteStats{Alive: true, Hops: 2, EstimatedBitrate: 5_000_000, RTT: 50},
 			want:      false,
 		},
 		// Alive dominates all quality metrics.
@@ -958,7 +957,8 @@ func TestIsBetterRoute(t *testing.T) {
 
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
-			assert.Equal(t, tt.want, isBetterRoute(tt.candidate, tt.current))
+			got, _ := isBetterRoute(tt.candidate, tt.current)
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
@@ -977,9 +977,10 @@ func TestRelayHandler_Alive_ActiveContext(t *testing.T) {
 func TestRelayHandler_Alive_CancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	ann, _ := moqt.NewAnnouncement(ctx, "/test")
+	sess := &moqt.Session{}
 	h := &relayHandler{
 		announcement: ann,
-		session:      nil,
+		session:      sess,
 		tracks:       newTrackManager(),
 		ctx:          ctx,
 		cancel:       cancel,
@@ -998,9 +999,10 @@ func TestRelayHandler_Alive_RetractedAnnouncement(t *testing.T) {
 
 	// Create an announcement then retract it via EndAnnouncementFunc.
 	ann, end := moqt.NewAnnouncement(ctx, "/test")
+	sess := &moqt.Session{}
 	h := &relayHandler{
 		announcement: ann,
-		session:      nil,
+		session:      sess,
 		tracks:       newTrackManager(),
 		ctx:          ctx,
 		cancel:       cancel,

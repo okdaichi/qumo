@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/okdaichi/gomoqt/moqt"
+	"github.com/qumo-dev/gomoqt/moqt"
 	"github.com/qumo-dev/qumo/internal/bootstrap"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -169,14 +169,14 @@ func TestServer_Init_Concurrent(t *testing.T) {
 	server := newTestServer("localhost:4433")
 
 	done := make(chan bool)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		go func() {
 			server.init()
 			done <- true
 		}()
 	}
 
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		<-done
 	}
 
@@ -293,14 +293,14 @@ func TestServer_MarkConnected_Concurrent(t *testing.T) {
 	addr := "moqt://relay-concurrent:4433"
 	wins := make(chan bool, 20)
 
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		go func() {
 			wins <- server.markConnected(addr)
 		}()
 	}
 
 	var trueCount int
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		if <-wins {
 			trueCount++
 		}

@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/okdaichi/gomoqt/moqt"
+	"github.com/qumo-dev/gomoqt/moqt"
 	"github.com/qumo-dev/qumo/internal/bootstrap"
 )
 
@@ -77,6 +77,19 @@ func (s *Server) init() {
 			Logger:   s.MOQServer.Logger,
 		}
 
+		// ConnContext intercepts each accepted QUIC connection before the MOQ
+		// handshake. For native QUIC connections the underlying type satisfies
+		// connStatsProvider, so we launch a polling goroutine to collect
+		// connection-level stats (RTT, packet loss). WebTransport connections
+		// do not satisfy the interface and are silently skipped.
+		s.MOQServer.ConnContext = func(ctx context.Context, conn moqt.StreamConn) context.Context {
+			if provider, ok := conn.(connStatsProvider); ok {
+				addr := conn.RemoteAddr().String()
+				go pollConnStats(conn.Context(), provider, addr)
+			}
+			return ctx
+		}
+
 		if s.connected == nil {
 			s.connected = make(map[string]struct{})
 		}
@@ -136,7 +149,6 @@ func (s *Server) ConnectPeers(ctx context.Context) {
 
 	// Dynamic peers from bootstrap servers.
 	for _, bsCfg := range s.Config.Bootstraps {
-		bsCfg := bsCfg
 		wg.Go(func() {
 			client := bootstrap.NewClient(bsCfg, s.Config.NodeID, s.Config.AdvertiseAddr, s.Config.Region, s.Config.Role)
 			// Heartbeat goroutine.
@@ -257,6 +269,7 @@ func (s *Server) markConnected(addr string) bool {
 		return false
 	}
 	s.connected[addr] = struct{}{}
+	metricPeersConnected.Inc()
 	return true
 }
 
@@ -266,6 +279,9 @@ func (s *Server) markUnconnected(addr string) {
 	s.connectedMu.Lock()
 	defer s.connectedMu.Unlock()
 	delete(s.connected, addr)
+	metricPeersConnected.Dec()
+	metricSessionRTTMilliseconds.DeleteLabelValues(addr)
+	metricSessionEstimatedBitrate.DeleteLabelValues(addr)
 }
 
 func (s *Server) maintainPeer(ctx context.Context, peer Peer) {
@@ -276,12 +292,14 @@ func (s *Server) maintainPeer(ctx context.Context, peer Peer) {
 
 		sess, err := s.MOQDialer.DialQUIC(ctx, peer.Address, s.TrackMux)
 		if err != nil {
+			metricPeerDialAttempts.WithLabelValues(peer.Address, "error").Inc()
 			slog.Warn("failed to dial peer", "address", peer.Address, "error", err)
 			if !waitRetry(ctx, 5*time.Second) {
 				return
 			}
 			continue
 		}
+		metricPeerDialAttempts.WithLabelValues(peer.Address, "ok").Inc()
 
 		s.Relay(sess)
 
@@ -312,12 +330,13 @@ func (s *Server) Relay(sess *moqt.Session) {
 	s.init()
 	defer sess.CloseWithError(moqt.NoError, moqt.NoError.String())
 
-	if s.statusHandler != nil {
-		s.statusHandler.incrementConnections()
-		defer s.statusHandler.decrementConnections()
-	}
+	metricSessionsActive.Inc()
+	defer metricSessionsActive.Dec()
 
-	slog.Info("relay: new session", "remote", sess.RemoteAddr())
+	addr := sess.RemoteAddr().String()
+	go pollSessionStats(sess, addr)
+
+	slog.Info("relay: new session", "remote", addr)
 
 	announced, err := sess.AcceptAnnounce("/")
 	if err != nil {
@@ -342,19 +361,28 @@ func (s *Server) Relay(sess *moqt.Session) {
 		// preserve group-cache hit rates and playback continuity.
 		if _, existing := s.TrackMux.TrackHandler(ann.BroadcastPath()); existing != nil {
 			if rr, ok := existing.(RouteReporter); ok {
-				if !isBetterRoute(handler.RouteStats(), rr.RouteStats()) {
+				better, reason := isBetterRoute(handler.RouteStats(), rr.RouteStats())
+				if !better {
 					slog.Debug("relay: skipping inferior route",
 						"path", ann.BroadcastPath(),
+						"reason", reason,
 					)
+					metricRouteRejections.WithLabelValues(string(reason)).Inc()
 					handler.cancel()
 					continue
 				}
+				metricRouteReplacements.Inc()
 				// Gracefully drain the displaced handler.
 				if dr, ok := existing.(Drainable); ok {
 					dr.Drain(DrainTimeout)
 				}
 			}
 		}
+
+		// Track the broadcast route and release it when the handler's context
+		// is cancelled (covers both normal session end and drain expiry).
+		metricBroadcastsActive.Inc()
+		context.AfterFunc(handler.ctx, func() { metricBroadcastsActive.Dec() })
 
 		// Ensure handler.cancel is called when the session ends to release
 		// the child context from the parent's internal children list.

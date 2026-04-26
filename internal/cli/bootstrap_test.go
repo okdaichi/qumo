@@ -34,7 +34,7 @@ func TestRunBOOTSTRAP_ADDRsAndServes(t *testing.T) {
 
 	// Wait for server to start.
 	var connected bool
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		conn, err := net.DialTimeout("tcp", addr, 50*time.Millisecond)
 		if err == nil {
 			conn.Close()

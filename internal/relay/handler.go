@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/okdaichi/gomoqt/moqt"
+	"github.com/qumo-dev/gomoqt/moqt"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -33,10 +33,10 @@ type RouteStats struct {
 	// Hops is the number of relay hops the announcement has traversed.
 	// Fewer hops generally implies lower latency.
 	Hops int
-	// Bitrate is the measured bitrate in bits per second. A value of 0 means unknown.
-	Bitrate uint64
+	// EstimatedBitrate is the measured bitrate in bits per second. A value of 0 means unknown.
+	EstimatedBitrate uint64
 	// RTT is the smoothed round-trip time in milliseconds. A value of 0 means unknown.
-	RTT uint64
+	RTT time.Duration
 }
 
 // Drainable is implemented by handlers that support graceful drain-then-shutdown.
@@ -79,40 +79,74 @@ type relayHandler struct {
 	drainOnce sync.Once
 }
 
+// rejectionReason is the cause returned by isBetterRoute when a route
+// candidate is not better than the existing route. Values map directly to
+// the "reason" label on the qumo_relay_route_rejections_total metric.
+type rejectionReason string
+
+const (
+	// rejectionDeadCandidate: candidate is not alive (session ended or announcement retracted).
+	rejectionDeadCandidate rejectionReason = "dead_candidate"
+	// rejectionInferiorHops: candidate has more hops than the current route.
+	rejectionInferiorHops rejectionReason = "inferior_hops"
+	// rejectionInferiorBitrate: candidate has lower measured bitrate.
+	rejectionInferiorBitrate rejectionReason = "inferior_bitrate"
+	// rejectionInferiorRTT: candidate has higher or equal RTT.
+	rejectionInferiorRTT rejectionReason = "inferior_rtt"
+	// rejectionEqualOrUnknown: RTT is unknown (0) for one or both routes, so
+	// no improvement can be confirmed.
+	rejectionEqualOrUnknown rejectionReason = "equal_or_unknown"
+)
+
 // isBetterRoute reports whether candidate is a strictly better route than
 // current. A live route always beats a dead one. Among routes with the same
 // liveness, fewer hops wins outright; equal hops are broken first by bitrate
 // (higher available bandwidth is better for streaming), then by RTT (lower
 // latency is better). When a metric cannot be determined (nil probe or 0
 // value), the current route is preferred.
-func isBetterRoute(candidate, current RouteStats) bool {
+//
+// The second return value is the rejection reason when the function returns
+// false. It is empty when the function returns true.
+func isBetterRoute(candidate, current RouteStats) (bool, rejectionReason) {
 	// A live route always beats a dead one.
 	if candidate.Alive != current.Alive {
-		return candidate.Alive
+		if candidate.Alive {
+			return true, ""
+		}
+		return false, rejectionDeadCandidate
 	}
 	// Both dead: no benefit in switching.
 	if !candidate.Alive {
-		return false
+		return false, rejectionDeadCandidate
 	}
 	if candidate.Hops < current.Hops {
-		return true
+		return true, ""
 	}
 	if candidate.Hops > current.Hops {
-		return false
+		return false, rejectionInferiorHops
 	}
 	// Higher available bandwidth wins first.
-	if candidate.Bitrate != current.Bitrate {
-		return candidate.Bitrate > current.Bitrate
+	if candidate.EstimatedBitrate != current.EstimatedBitrate {
+		if candidate.EstimatedBitrate > current.EstimatedBitrate {
+			return true, ""
+		}
+		return false, rejectionInferiorBitrate
 	}
 	// Bandwidth equal or unknown: prefer lower RTT.
 	if candidate.RTT == 0 || current.RTT == 0 {
-		return false
+		return false, rejectionEqualOrUnknown
 	}
-	return candidate.RTT < current.RTT
+	if candidate.RTT < current.RTT {
+		return true, ""
+	}
+	return false, rejectionInferiorRTT
 }
 
 func newRelayHandler(ann *moqt.Announcement, sess *moqt.Session) *relayHandler {
-	if sess == nil || ann == nil {
+	if sess == nil {
+		panic("relay: session must not be nil")
+	}
+	if ann == nil {
 		return nil
 	}
 
@@ -141,16 +175,15 @@ func (h *relayHandler) Drain(timeout time.Duration) {
 // RouteStats probes the upstream session and returns combined routing metrics.
 // The probe is performed once per call; results are not cached.
 func (h *relayHandler) RouteStats() RouteStats {
+	sessionStats := h.session.Stats()
+
 	rs := RouteStats{
-		Alive: h.ctx.Err() == nil && h.announcement.IsActive(),
-		Hops:  len(h.announcement.HopIDs()),
+		Alive:            h.ctx.Err() == nil && h.announcement.IsActive(),
+		Hops:             len(h.announcement.HopIDs()),
+		EstimatedBitrate: sessionStats.EstimatedBitrate,
+		RTT:              sessionStats.RTT,
 	}
-	if h.session != nil {
-		if result, err := h.session.Probe(0); err == nil {
-			rs.Bitrate = result.Bitrate
-			rs.RTT = result.RTT
-		}
-	}
+
 	return rs
 }
 
@@ -179,6 +212,7 @@ func (h *relayHandler) ServeTrack(tw *moqt.TrackWriter) {
 	case result := <-ch:
 		if result.Err != nil {
 			tw.CloseWithError(moqt.SubscribeErrorCodeNotFound)
+			metricSubscribeErrorsTotal.WithLabelValues("not_found").Inc()
 			logger.Warn("Track not found, closing track writer")
 			return
 		}
@@ -268,18 +302,46 @@ type trackDistributor struct {
 }
 
 func newTrackDistributor(name moqt.TrackName, manager *trackManager) *trackDistributor {
-	return &trackDistributor{
+	d := &trackDistributor{
 		name:        name,
 		ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
 		manager:     manager,
 		subscribers: make(map[chan struct{}]struct{}),
 		done:        make(chan struct{}),
 	}
+	go d.pollCacheDepth()
+	return d
+}
+
+func (d *trackDistributor) pollCacheDepth() {
+	trackName := string(d.name)
+	defer metricBufferDepthGroups.DeleteLabelValues(trackName)
+
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-d.done:
+			return
+		case <-ticker.C:
+			head := d.ring.head()
+			earliest := d.ring.earliestAvailable()
+			depth := 0
+			if head >= earliest {
+				depth = int(head - earliest + 1)
+			}
+			metricBufferDepthGroups.WithLabelValues(trackName).Set(float64(depth))
+		}
+	}
 }
 
 func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 	// Get track writer context once and check if it's valid
 	twCtx := tw.Context()
+
+	metricSubscribersActive.Inc()
+	defer metricSubscribersActive.Dec()
 
 	// Subscribe to notifications
 	notify := d.subscribe()
@@ -305,6 +367,7 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 					"latest_available", latest,
 				)
 				// Subscriber fell behind - catchup
+				metricSubscriberSkipsTotal.Inc()
 
 				// Skip to latest available
 				last = latest - 1
@@ -321,6 +384,7 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 			if err != nil {
 				return
 			}
+			start := time.Now()
 
 			slog.Debug("egress starting group",
 				"track_name", tw.TrackName,
@@ -372,6 +436,7 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 			}
 
 			_ = gw.Close()
+			metricGroupDeliveryHistogram.WithLabelValues(string(tw.TrackName)).Observe(time.Since(start).Seconds())
 			continue
 		}
 

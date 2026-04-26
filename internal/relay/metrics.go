@@ -1,0 +1,187 @@
+package relay
+
+import (
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+)
+
+var (
+	// metricSessionsActive tracks the number of currently active MoQT sessions
+	// being served by Relay(). Replaces the active_connections field that was
+	// previously tracked inside statusHandler.
+	metricSessionsActive = promauto.NewGauge(prometheus.GaugeOpts{
+		Namespace: "qumo",
+		Subsystem: "relay",
+		Name:      "sessions_active",
+		Help:      "Current number of active MoQT relay sessions.",
+	})
+
+	// metricPeersConnected tracks the number of active outbound relay peer
+	// connections managed by maintainPeer.
+	metricPeersConnected = promauto.NewGauge(prometheus.GaugeOpts{
+		Namespace: "qumo",
+		Subsystem: "relay",
+		Name:      "peers_connected",
+		Help:      "Current number of outbound relay peer connections.",
+	})
+
+	// metricBroadcastsActive tracks the number of relay broadcast routes
+	// currently registered in the TrackMux (including routes that are
+	// draining after being replaced by a better route).
+	metricBroadcastsActive = promauto.NewGauge(prometheus.GaugeOpts{
+		Namespace: "qumo",
+		Subsystem: "relay",
+		Name:      "broadcasts_active",
+		Help:      "Current number of active relay broadcast routes.",
+	})
+
+	// metricSessionRTTMilliseconds tracks the smoothed RTT (in milliseconds) to
+	// each MoQT session, labelled by remote address.
+	metricSessionRTTMilliseconds = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "qumo",
+			Subsystem: "relay",
+			Name:      "session_rtt_ms",
+			Help:      "Smoothed round-trip time to each MoQT session in milliseconds.",
+		},
+		[]string{"remote"},
+	)
+
+	// metricSessionEstimatedBitrate tracks the estimated available bandwidth
+	// (in bits per second) for each MoQT session, labelled by remote address.
+	metricSessionEstimatedBitrate = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "qumo",
+			Subsystem: "relay",
+			Name:      "session_estimated_bitrate_bps",
+			Help:      "Estimated available bandwidth for each MoQT session in bits per second.",
+		},
+		[]string{"remote"},
+	)
+
+	// metricPeerDialAttempts counts outbound peer dial attempts, labelled by
+	// peer address and result ("ok" or "error").
+	metricPeerDialAttempts = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "qumo",
+			Subsystem: "relay",
+			Name:      "peer_dial_attempts_total",
+			Help:      "Total number of outbound relay peer dial attempts.",
+		},
+		[]string{"peer", "result"},
+	)
+
+	// metricRouteReplacements counts how many times an existing broadcast route
+	// was replaced by a strictly better candidate.
+	metricRouteReplacements = promauto.NewCounter(prometheus.CounterOpts{
+		Namespace: "qumo",
+		Subsystem: "relay",
+		Name:      "route_replacements_total",
+		Help:      "Total number of relay broadcast routes replaced by a better route.",
+	})
+
+	// metricRouteRejections counts route candidates that were rejected because
+	// they were not better than the existing route. The reason label carries the
+	// specific rejection cause from isBetterRoute.
+	metricRouteRejections = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "qumo",
+			Subsystem: "relay",
+			Name:      "route_rejections_total",
+			Help:      "Total number of relay route candidates rejected, by rejection reason.",
+		},
+		[]string{"reason"},
+	)
+
+	// metricConnSmoothedRTT tracks the QUIC-layer smoothed RTT (ms) for each
+	// inbound native-QUIC connection, labelled by remote address.
+	// Only populated when the underlying transport exposes ConnectionStats()
+	// (i.e. native QUIC; WebTransport connections are skipped).
+	metricConnSmoothedRTT = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "qumo",
+			Subsystem: "relay",
+			Name:      "conn_smoothed_rtt_ms",
+			Help:      "QUIC-layer smoothed RTT for each inbound native-QUIC connection in milliseconds.",
+		},
+		[]string{"remote"},
+	)
+
+	// metricConnPacketLossRate tracks the cumulative packet loss rate
+	// (PacketsLost / PacketsSent) for each inbound native-QUIC connection.
+	metricConnPacketLossRate = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "qumo",
+			Subsystem: "relay",
+			Name:      "conn_packet_loss_rate",
+			Help:      "Cumulative packet loss rate (lost/sent) for each inbound native-QUIC connection.",
+		},
+		[]string{"remote"},
+	)
+
+	// metricSubscribersActive tracks the number of currently active MoQT track
+	// subscribers.
+	metricSubscribersActive = promauto.NewGauge(prometheus.GaugeOpts{
+		Namespace: "qumo",
+		Subsystem: "relay",
+		Name:      "subscribers_active",
+		Help:      "Current number of active MoQT track subscribers.",
+	})
+
+	// metricSubscriberSkipsTotal counts how many times a subscriber was skipped
+	// forward because it fell behind the ring buffer.
+	metricSubscriberSkipsTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Namespace: "qumo",
+		Subsystem: "relay",
+		Name:      "subscriber_skips_total",
+		Help:      "Total number of times subscribers were skipped forward due to falling behind.",
+	})
+
+	// metricBufferDepthGroups tracks the number of groups currently held in the
+	// track's ring buffer, labelled by track name.
+	metricBufferDepthGroups = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "qumo",
+			Subsystem: "relay",
+			Name:      "buffer_depth_groups",
+			Help:      "Number of groups currently held in the track's ring buffer.",
+		},
+		[]string{"track"},
+	)
+
+	// metricSessionRTTHistogram tracks the distribution of RTT for all MoQT sessions.
+	metricSessionRTTHistogram = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "qumo",
+			Subsystem: "relay",
+			Name:      "session_rtt_seconds",
+			Help:      "Distribution of RTT for MoQT sessions in seconds.",
+			Buckets:   []float64{.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5},
+		},
+		[]string{"remote"},
+	)
+
+	// metricGroupDeliveryHistogram tracks the time it takes to deliver a full group to a subscriber.
+	metricGroupDeliveryHistogram = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "qumo",
+			Subsystem: "relay",
+			Name:      "group_delivery_seconds",
+			Help:      "Time taken to deliver a complete group to a subscriber in seconds.",
+			Buckets:   prometheus.DefBuckets,
+		},
+		[]string{"track"},
+	)
+
+	// metricSubscribeErrorsTotal counts how many times a MoQT subscription
+	// request failed, labelled by error code.
+	metricSubscribeErrorsTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "qumo",
+			Subsystem: "relay",
+			Name:      "subscribe_errors_total",
+			Help:      "Total number of MoQT subscription errors.",
+		},
+		[]string{"code"},
+	)
+)
