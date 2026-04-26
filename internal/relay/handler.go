@@ -143,7 +143,10 @@ func isBetterRoute(candidate, current RouteStats) (bool, rejectionReason) {
 }
 
 func newRelayHandler(ann *moqt.Announcement, sess *moqt.Session) *relayHandler {
-	if sess == nil || ann == nil {
+	if sess == nil {
+		panic("relay: session must not be nil")
+	}
+	if ann == nil {
 		return nil
 	}
 

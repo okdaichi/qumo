@@ -456,7 +456,7 @@ func (d *Decoder) decodeArray(depth int) (any, error) {
 	}
 	idx := len(d.objectRefs) - 1
 
-	for i := 0; i < denseLen; i++ {
+	for i := range denseLen {
 		v, err := d.decodeValue(depth + 1)
 		if err != nil {
 			return nil, err
@@ -509,7 +509,7 @@ func (d *Decoder) decodeObject(depth int) (any, error) {
 		}
 
 		sealed := make([]string, 0, sealedCount)
-		for i := 0; i < sealedCount; i++ {
+		for range sealedCount {
 			nameAny, err := d.readAMF3String()
 			if err != nil {
 				return nil, err
@@ -644,7 +644,7 @@ func readU29(r io.Reader) (int32, error) {
 	var b [1]byte
 	var v int32
 
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		if _, err := io.ReadFull(r, b[:]); err != nil {
 			return 0, err
 		}

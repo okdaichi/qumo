@@ -87,7 +87,7 @@ func RunRelay(_ []string) error {
 
 	var peers []relay.Peer
 	if raw := os.Getenv("PEERS"); raw != "" {
-		for _, p := range strings.Split(raw, ",") {
+		for p := range strings.SplitSeq(raw, ",") {
 			p = strings.TrimSpace(p)
 			if p != "" {
 				peers = append(peers, relay.Peer{Address: p})

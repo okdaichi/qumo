@@ -149,7 +149,6 @@ func (s *Server) ConnectPeers(ctx context.Context) {
 
 	// Dynamic peers from bootstrap servers.
 	for _, bsCfg := range s.Config.Bootstraps {
-		bsCfg := bsCfg
 		wg.Go(func() {
 			client := bootstrap.NewClient(bsCfg, s.Config.NodeID, s.Config.AdvertiseAddr, s.Config.Region, s.Config.Role)
 			// Heartbeat goroutine.

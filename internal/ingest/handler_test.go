@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 
@@ -50,8 +51,12 @@ func TestSourceGroup_IsComplete(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func newTestTrackBuffer() *trackBuffer {
-	ctx := context.Background()
-	return newTrackBuffer(ctx, "test")
+	return &trackBuffer{
+		name:        "test",
+		ring:        make([]atomic.Pointer[sourceGroup], defaultRingSize),
+		size:        defaultRingSize,
+		subscribers: make(map[chan struct{}]struct{}),
+	}
 }
 
 func TestTrackBuffer_OpenGroup(t *testing.T) {
@@ -329,7 +334,7 @@ func TestNewIngestHandler(t *testing.T) {
 func TestIngestHandler_Close(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+		// No defer cancel() here, we do it explicitly to wait.
 
 		h, err := newIngestHandler(ctx)
 		require.NoError(t, err)
@@ -350,6 +355,10 @@ func TestIngestHandler_Close(t *testing.T) {
 
 		// Context cancelled by caller (Session) — simulate.
 		cancel()
+
+		// Wait for pollCacheDepth goroutines to see the cancellation and exit.
+		synctest.Wait()
+
 		select {
 		case <-h.video.ctx.Done():
 		default:
@@ -469,19 +478,15 @@ func TestSourceGroup_ConcurrentAppendNext(t *testing.T) {
 	const n = 50
 	var wg sync.WaitGroup
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for i := range n {
 			f := moqt.NewFrame(1)
 			f.Write([]byte{byte(i)})
 			g.append(f)
 		}
-	}()
+	})
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for i := range n {
 			for {
 				if f := g.next(i); f != nil {
@@ -489,7 +494,7 @@ func TestSourceGroup_ConcurrentAppendNext(t *testing.T) {
 				}
 			}
 		}
-	}()
+	})
 
 	wg.Wait()
 

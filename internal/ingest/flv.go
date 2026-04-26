@@ -430,7 +430,7 @@ type bitReader struct {
 
 func (r *bitReader) readBits(n int) uint32 {
 	var val uint32
-	for i := 0; i < n; i++ {
+	for range n {
 		bytePos := r.off / 8
 		bitPos := 7 - (r.off % 8)
 		if bytePos < len(r.data) {
@@ -472,7 +472,7 @@ func (r *bitReader) readSignedEG() int32 {
 func skipScalingList(r *bitReader, size int) {
 	lastScale := 8
 	nextScale := 8
-	for j := 0; j < size; j++ {
+	for range size {
 		if nextScale != 0 {
 			delta := r.readSignedEG()
 			nextScale = (lastScale + int(delta) + 256) % 256

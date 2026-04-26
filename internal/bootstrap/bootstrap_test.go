@@ -109,7 +109,7 @@ func TestStore_Peers_FiltersByRole(t *testing.T) {
 func TestStore_Peers_RespectsLimit(t *testing.T) {
 	s := NewStore(30 * time.Second)
 
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		s.Register(Node{ID: fmt.Sprintf("n%d", i), Addr: fmt.Sprintf("1.1.1.%d:443", i)})
 	}
 

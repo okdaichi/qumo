@@ -241,10 +241,7 @@ func (c *Conn) readMessage() (*rawMessage, error) {
 		}
 
 		// Read chunk payload directly into pre-allocated slice.
-		toRead := state.remaining
-		if toRead > c.readChunkSize {
-			toRead = c.readChunkSize
-		}
+		toRead := min(state.remaining, c.readChunkSize)
 		if toRead > 0 {
 			start := uint32(len(state.payload))
 			state.payload = state.payload[:start+toRead]

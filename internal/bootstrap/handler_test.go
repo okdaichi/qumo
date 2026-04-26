@@ -271,7 +271,7 @@ func TestPeersHandler_AllowRemote(t *testing.T) {
 
 func TestPeersHandler_Limit(t *testing.T) {
 	store := NewStore(30 * time.Second)
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		store.Register(Node{ID: strings.Repeat(string(rune('a'+i)), 2), Addr: "1.1.1.1:443"})
 	}
 

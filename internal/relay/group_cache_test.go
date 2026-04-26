@@ -33,7 +33,7 @@ func TestGroupCacheAppend(t *testing.T) {
 	}
 
 	// Append multiple frames
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		f := moqt.NewFrame(100)
 		f.Write([]byte("data"))
 		gc.append(f)
@@ -52,13 +52,13 @@ func TestGroupCacheNext(t *testing.T) {
 	}
 
 	// Add frames
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		frame := moqt.NewFrame(100)
 		gc.append(frame)
 	}
 
 	// Test valid indices
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		frame := gc.next(i)
 		if frame == nil {
 			t.Errorf("Expected frame at index %d, got nil", i)
@@ -193,9 +193,9 @@ func TestGroupRingConcurrentAccess(t *testing.T) {
 
 	// Concurrent writes
 	done := make(chan bool)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		go func(id int) {
-			for j := 0; j < 100; j++ {
+			for j := range 100 {
 				cache := &groupCache{
 					seq:    moqt.GroupSequence(id*100 + j),
 					frames: make([]*moqt.Frame, 0),
@@ -209,9 +209,9 @@ func TestGroupRingConcurrentAccess(t *testing.T) {
 	}
 
 	// Concurrent reads
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		go func() {
-			for j := 0; j < 100; j++ {
+			for j := range 100 {
 				_ = ring.head()
 				_ = ring.earliestAvailable()
 				_ = ring.get(moqt.GroupSequence(j))
@@ -221,7 +221,7 @@ func TestGroupRingConcurrentAccess(t *testing.T) {
 	}
 
 	// Wait for completion
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		<-done
 	}
 
@@ -368,7 +368,7 @@ func TestGroupCacheBehavior(t *testing.T) {
 		}
 
 		const count = 1000
-		for i := 0; i < count; i++ {
+		for i := range count {
 			frame := moqt.NewFrame(10)
 			frame.Write([]byte{byte(i)})
 			gc.append(frame)
@@ -414,16 +414,14 @@ func TestGroupRingStress(t *testing.T) {
 		const goroutines = 10
 		const iterations = 10000
 
-		for i := 0; i < goroutines; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				for j := 0; j < iterations; j++ {
+		for range goroutines {
+			wg.Go(func() {
+				for range iterations {
 					ring.pos.Add(1)
 					_ = ring.head()
 					_ = ring.earliestAvailable()
 				}
-			}()
+			})
 		}
 
 		wg.Wait()
@@ -436,7 +434,7 @@ func TestGroupRingStress(t *testing.T) {
 		stopCh := make(chan struct{})
 
 		// Writers
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			wg.Add(1)
 			go func(id int) {
 				defer wg.Done()
@@ -459,21 +457,19 @@ func TestGroupRingStress(t *testing.T) {
 		}
 
 		// Readers
-		for i := 0; i < 10; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+		for range 10 {
+			wg.Go(func() {
 				for {
 					select {
 					case <-stopCh:
 						return
 					default:
-						for j := 0; j < 100; j++ {
+						for j := range 100 {
 							_ = ring.get(moqt.GroupSequence(j))
 						}
 					}
 				}
-			}()
+			})
 		}
 
 		<-time.After(500 * time.Millisecond)
@@ -510,7 +506,7 @@ func TestGroupCacheMemory(t *testing.T) {
 		}
 
 		// Add many frames
-		for i := 0; i < 1000; i++ {
+		for range 1000 {
 			frame := moqt.NewFrame(1500)
 			gc.append(frame)
 		}
@@ -576,16 +572,14 @@ func TestGroupCacheConcurrency(t *testing.T) {
 		const goroutines = 10
 		const appendsPerGoroutine = 100
 
-		for i := 0; i < goroutines; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				for j := 0; j < appendsPerGoroutine; j++ {
+		for range goroutines {
+			wg.Go(func() {
+				for range appendsPerGoroutine {
 					frame := moqt.NewFrame(100)
 					frame.Write([]byte("data"))
 					gc.append(frame)
 				}
-			}()
+			})
 		}
 
 		wg.Wait()
@@ -603,7 +597,7 @@ func TestGroupCacheConcurrency(t *testing.T) {
 		}
 
 		// Pre-populate
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			frame := moqt.NewFrame(100)
 			gc.append(frame)
 		}
@@ -611,16 +605,14 @@ func TestGroupCacheConcurrency(t *testing.T) {
 		var wg sync.WaitGroup
 		var successCount atomic.Int32
 
-		for i := 0; i < 50; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				for j := 0; j < 100; j++ {
+		for range 50 {
+			wg.Go(func() {
+				for j := range 100 {
 					if gc.next(j) != nil {
 						successCount.Add(1)
 					}
 				}
-			}()
+			})
 		}
 
 		wg.Wait()
@@ -655,7 +647,7 @@ func BenchmarkGroupCacheOperations(b *testing.B) {
 		}
 
 		// Pre-populate
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			frame := moqt.NewFrame(1500)
 			gc.append(frame)
 		}
