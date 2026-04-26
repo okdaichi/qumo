@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/qumo-dev/gomoqt/moqt"
 	"github.com/qumo-dev/gomoqt/transport"
 )
 
@@ -46,26 +47,34 @@ func pollConnStats(ctx context.Context, provider connStatsProvider, addr string)
 	}
 }
 
-// // pollRTT periodically samples the smoothed RTT for an outbound relay
-// // session and updates the Prometheus gauge. It exits when the session ends.
-// func pollRTT(sess *moqt.Session, addr string) {
-// 	defer metricPeerRTTMilliseconds.DeleteLabelValues(addr)
+// pollSessionStats periodically samples MoQT-level session statistics (RTT and
+// estimated bitrate) and updates Prometheus gauges. It exits when the session
+// context is cancelled.
+func pollSessionStats(sess *moqt.Session, addr string) {
+	defer func() {
+		metricSessionRTTMilliseconds.DeleteLabelValues(addr)
+		metricSessionEstimatedBitrate.DeleteLabelValues(addr)
+	}()
 
-// 	probe := func() {
-// 		if result, err := sess.Probe(0); err == nil && result.RTT > 0 {
-// 			metricPeerRTTMilliseconds.WithLabelValues(addr).Set(float64(result.RTT))
-// 		}
-// 	}
-// 	probe() // immediate first sample
+	poll := func() {
+		stats := sess.Stats()
+		if stats.RTT > 0 {
+			metricSessionRTTMilliseconds.WithLabelValues(addr).Set(float64(stats.RTT.Milliseconds()))
+		}
+		if stats.EstimatedBitrate > 0 {
+			metricSessionEstimatedBitrate.WithLabelValues(addr).Set(float64(stats.EstimatedBitrate))
+		}
+	}
+	poll() // immediate first sample
 
-// 	ticker := time.NewTicker(30 * time.Second)
-// 	defer ticker.Stop()
-// 	for {
-// 		select {
-// 		case <-sess.Context().Done():
-// 			return
-// 		case <-ticker.C:
-// 			probe()
-// 		}
-// 	}
-// }
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-sess.Context().Done():
+			return
+		case <-ticker.C:
+			poll()
+		}
+	}
+}

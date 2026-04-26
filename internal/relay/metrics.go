@@ -35,16 +35,28 @@ var (
 		Help:      "Current number of active relay broadcast routes.",
 	})
 
-	// metricPeerRTTMilliseconds tracks the smoothed RTT (in milliseconds) to
-	// each outbound relay peer, labelled by peer address.
-	metricPeerRTTMilliseconds = promauto.NewGaugeVec(
+	// metricSessionRTTMilliseconds tracks the smoothed RTT (in milliseconds) to
+	// each MoQT session, labelled by remote address.
+	metricSessionRTTMilliseconds = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "qumo",
 			Subsystem: "relay",
-			Name:      "peer_rtt_ms",
-			Help:      "Smoothed round-trip time to each outbound relay peer in milliseconds.",
+			Name:      "session_rtt_ms",
+			Help:      "Smoothed round-trip time to each MoQT session in milliseconds.",
 		},
-		[]string{"peer"},
+		[]string{"remote"},
+	)
+
+	// metricSessionEstimatedBitrate tracks the estimated available bandwidth
+	// (in bits per second) for each MoQT session, labelled by remote address.
+	metricSessionEstimatedBitrate = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "qumo",
+			Subsystem: "relay",
+			Name:      "session_estimated_bitrate_bps",
+			Help:      "Estimated available bandwidth for each MoQT session in bits per second.",
+		},
+		[]string{"remote"},
 	)
 
 	// metricPeerDialAttempts counts outbound peer dial attempts, labelled by

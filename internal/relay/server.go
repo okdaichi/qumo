@@ -281,7 +281,8 @@ func (s *Server) markUnconnected(addr string) {
 	defer s.connectedMu.Unlock()
 	delete(s.connected, addr)
 	metricPeersConnected.Dec()
-	metricPeerRTTMilliseconds.DeleteLabelValues(addr)
+	metricSessionRTTMilliseconds.DeleteLabelValues(addr)
+	metricSessionEstimatedBitrate.DeleteLabelValues(addr)
 }
 
 func (s *Server) maintainPeer(ctx context.Context, peer Peer) {
@@ -333,7 +334,10 @@ func (s *Server) Relay(sess *moqt.Session) {
 	metricSessionsActive.Inc()
 	defer metricSessionsActive.Dec()
 
-	slog.Info("relay: new session", "remote", sess.RemoteAddr())
+	addr := sess.RemoteAddr().String()
+	go pollSessionStats(sess, addr)
+
+	slog.Info("relay: new session", "remote", addr)
 
 	announced, err := sess.AcceptAnnounce("/")
 	if err != nil {
