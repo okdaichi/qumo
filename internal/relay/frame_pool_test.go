@@ -559,11 +559,8 @@ func TestFramePoolStatistics(t *testing.T) {
 		const samples = 100
 		for range samples {
 			frame := pool.Get()
-			for j := range frames {
-				if frame == frames[j] {
-					reused.Add(1)
-					break
-				}
+			if slices.Contains(frames, frame) {
+				reused.Add(1)
 			}
 			pool.Put(frame)
 		}
