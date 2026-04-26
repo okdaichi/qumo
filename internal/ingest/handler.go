@@ -43,6 +43,7 @@ func newIngestHandler(ctx context.Context) (*ingestHandler, error) {
 	if err != nil {
 		return nil, fmt.Errorf("initializing broadcast: %w", err)
 	}
+	metricPublishersActive.Inc()
 	return &ingestHandler{
 		broadcast: b,
 		video:     newVideoTrack(ctx),
@@ -100,6 +101,7 @@ func (h *ingestHandler) registerAudio(cfg *AACConfig) error {
 func (h *ingestHandler) close() {
 	h.once.Do(func() {
 		h.video.close()
+		metricPublishersActive.Dec()
 	})
 }
 
@@ -118,7 +120,7 @@ type videoTrack struct {
 }
 
 func newVideoTrack(ctx context.Context) *videoTrack {
-	return &videoTrack{buf: newTrackBuffer(), ctx: ctx}
+	return &videoTrack{buf: newTrackBuffer(ctx, "video"), ctx: ctx}
 }
 
 func (v *videoTrack) push(f *moqt.Frame, isKeyframe bool) {
@@ -167,7 +169,7 @@ type singleTrack struct {
 }
 
 func newSingleTrack(ctx context.Context) *singleTrack {
-	return &singleTrack{buf: newTrackBuffer(), ctx: ctx}
+	return &singleTrack{buf: newTrackBuffer(ctx, "audio"), ctx: ctx}
 }
 
 func (s *singleTrack) push(f *moqt.Frame) {
@@ -192,6 +194,8 @@ func (s *singleTrack) serve(tw *moqt.TrackWriter) {
 // single MoQT track. Like [bytes.Buffer], it is a reusable data structure
 // that decouples producers (push side) from consumers (serve side).
 type trackBuffer struct {
+	name string
+	ctx  context.Context
 	ring []atomic.Pointer[sourceGroup]
 	size uint64
 	pos  atomic.Uint64 // monotonically increasing; first group = 1
@@ -200,11 +204,35 @@ type trackBuffer struct {
 	subscribers map[chan struct{}]struct{}
 }
 
-func newTrackBuffer() *trackBuffer {
-	return &trackBuffer{
+func newTrackBuffer(ctx context.Context, name string) *trackBuffer {
+	b := &trackBuffer{
+		name:        name,
+		ctx:         ctx,
 		ring:        make([]atomic.Pointer[sourceGroup], defaultRingSize),
 		size:        defaultRingSize,
 		subscribers: make(map[chan struct{}]struct{}),
+	}
+	go b.pollCacheDepth()
+	return b
+}
+
+func (b *trackBuffer) pollCacheDepth() {
+	defer metricBufferDepthGroups.DeleteLabelValues(b.name)
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-b.ctx.Done():
+			return
+		case <-ticker.C:
+			head := b.head()
+			earliest := b.earliestAvailable()
+			depth := 0
+			if head >= earliest {
+				depth = int(head - earliest + 1)
+			}
+			metricBufferDepthGroups.WithLabelValues(b.name).Set(float64(depth))
+		}
 	}
 }
 
@@ -269,6 +297,10 @@ func (b *trackBuffer) get(seq moqt.GroupSequence) *sourceGroup {
 // until the subscriber disconnects or ctx is cancelled.
 func (b *trackBuffer) serve(ctx context.Context, tw *moqt.TrackWriter) {
 	twCtx := tw.Context()
+
+	metricSubscribersActive.Inc()
+	defer metricSubscribersActive.Dec()
+
 	notify := b.subscribe()
 	defer b.unsubscribe(notify)
 
@@ -286,6 +318,7 @@ func (b *trackBuffer) serve(ctx context.Context, tw *moqt.TrackWriter) {
 			earliest := b.earliestAvailable()
 			if last < earliest {
 				// Subscriber fell behind; skip to latest.
+				metricSubscriberSkipsTotal.Inc()
 				last = latest - 1
 				continue
 			}
@@ -298,8 +331,10 @@ func (b *trackBuffer) serve(ctx context.Context, tw *moqt.TrackWriter) {
 
 			gw, err := tw.OpenGroupAt(g.seq)
 			if err != nil {
+				metricSubscribeErrorsTotal.WithLabelValues("open_group_failed").Inc()
 				return
 			}
+			start := time.Now()
 
 			frameIdx := 0
 			for {
@@ -331,6 +366,7 @@ func (b *trackBuffer) serve(ctx context.Context, tw *moqt.TrackWriter) {
 			}
 
 			_ = gw.Close()
+			metricGroupDeliveryHistogram.WithLabelValues(b.name).Observe(time.Since(start).Seconds())
 			continue
 		}
 

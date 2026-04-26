@@ -60,6 +60,7 @@ func pollSessionStats(sess *moqt.Session, addr string) {
 		stats := sess.Stats()
 		if stats.RTT > 0 {
 			metricSessionRTTMilliseconds.WithLabelValues(addr).Set(float64(stats.RTT.Milliseconds()))
+			metricSessionRTTHistogram.WithLabelValues(addr).Observe(stats.RTT.Seconds())
 		}
 		if stats.EstimatedBitrate > 0 {
 			metricSessionEstimatedBitrate.WithLabelValues(addr).Set(float64(stats.EstimatedBitrate))

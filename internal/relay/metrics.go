@@ -118,4 +118,70 @@ var (
 		},
 		[]string{"remote"},
 	)
+
+	// metricSubscribersActive tracks the number of currently active MoQT track
+	// subscribers.
+	metricSubscribersActive = promauto.NewGauge(prometheus.GaugeOpts{
+		Namespace: "qumo",
+		Subsystem: "relay",
+		Name:      "subscribers_active",
+		Help:      "Current number of active MoQT track subscribers.",
+	})
+
+	// metricSubscriberSkipsTotal counts how many times a subscriber was skipped
+	// forward because it fell behind the ring buffer.
+	metricSubscriberSkipsTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Namespace: "qumo",
+		Subsystem: "relay",
+		Name:      "subscriber_skips_total",
+		Help:      "Total number of times subscribers were skipped forward due to falling behind.",
+	})
+
+	// metricBufferDepthGroups tracks the number of groups currently held in the
+	// track's ring buffer, labelled by track name.
+	metricBufferDepthGroups = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "qumo",
+			Subsystem: "relay",
+			Name:      "buffer_depth_groups",
+			Help:      "Number of groups currently held in the track's ring buffer.",
+		},
+		[]string{"track"},
+	)
+
+	// metricSessionRTTHistogram tracks the distribution of RTT for all MoQT sessions.
+	metricSessionRTTHistogram = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "qumo",
+			Subsystem: "relay",
+			Name:      "session_rtt_seconds",
+			Help:      "Distribution of RTT for MoQT sessions in seconds.",
+			Buckets:   []float64{.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5},
+		},
+		[]string{"remote"},
+	)
+
+	// metricGroupDeliveryHistogram tracks the time it takes to deliver a full group to a subscriber.
+	metricGroupDeliveryHistogram = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "qumo",
+			Subsystem: "relay",
+			Name:      "group_delivery_seconds",
+			Help:      "Time taken to deliver a complete group to a subscriber in seconds.",
+			Buckets:   prometheus.DefBuckets,
+		},
+		[]string{"track"},
+	)
+
+	// metricSubscribeErrorsTotal counts how many times a MoQT subscription
+	// request failed, labelled by error code.
+	metricSubscribeErrorsTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "qumo",
+			Subsystem: "relay",
+			Name:      "subscribe_errors_total",
+			Help:      "Total number of MoQT subscription errors.",
+		},
+		[]string{"code"},
+	)
 )

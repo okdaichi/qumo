@@ -209,6 +209,7 @@ func (h *relayHandler) ServeTrack(tw *moqt.TrackWriter) {
 	case result := <-ch:
 		if result.Err != nil {
 			tw.CloseWithError(moqt.SubscribeErrorCodeNotFound)
+			metricSubscribeErrorsTotal.WithLabelValues("not_found").Inc()
 			logger.Warn("Track not found, closing track writer")
 			return
 		}
@@ -298,18 +299,46 @@ type trackDistributor struct {
 }
 
 func newTrackDistributor(name moqt.TrackName, manager *trackManager) *trackDistributor {
-	return &trackDistributor{
+	d := &trackDistributor{
 		name:        name,
 		ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
 		manager:     manager,
 		subscribers: make(map[chan struct{}]struct{}),
 		done:        make(chan struct{}),
 	}
+	go d.pollCacheDepth()
+	return d
+}
+
+func (d *trackDistributor) pollCacheDepth() {
+	trackName := string(d.name)
+	defer metricBufferDepthGroups.DeleteLabelValues(trackName)
+
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-d.done:
+			return
+		case <-ticker.C:
+			head := d.ring.head()
+			earliest := d.ring.earliestAvailable()
+			depth := 0
+			if head >= earliest {
+				depth = int(head - earliest + 1)
+			}
+			metricBufferDepthGroups.WithLabelValues(trackName).Set(float64(depth))
+		}
+	}
 }
 
 func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 	// Get track writer context once and check if it's valid
 	twCtx := tw.Context()
+
+	metricSubscribersActive.Inc()
+	defer metricSubscribersActive.Dec()
 
 	// Subscribe to notifications
 	notify := d.subscribe()
@@ -335,6 +364,7 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 					"latest_available", latest,
 				)
 				// Subscriber fell behind - catchup
+				metricSubscriberSkipsTotal.Inc()
 
 				// Skip to latest available
 				last = latest - 1
@@ -351,6 +381,7 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 			if err != nil {
 				return
 			}
+			start := time.Now()
 
 			slog.Debug("egress starting group",
 				"track_name", tw.TrackName,
@@ -402,6 +433,7 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 			}
 
 			_ = gw.Close()
+			metricGroupDeliveryHistogram.WithLabelValues(string(tw.TrackName)).Observe(time.Since(start).Seconds())
 			continue
 		}
 

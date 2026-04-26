@@ -49,8 +49,13 @@ func TestSourceGroup_IsComplete(t *testing.T) {
 // trackBuffer tests
 // ---------------------------------------------------------------------------
 
+func newTestTrackBuffer() *trackBuffer {
+	ctx := context.Background()
+	return newTrackBuffer(ctx, "test")
+}
+
 func TestTrackBuffer_OpenGroup(t *testing.T) {
-	b := newTrackBuffer()
+	b := newTestTrackBuffer()
 
 	assert.Equal(t, moqt.GroupSequence(0), b.head())
 
@@ -66,7 +71,7 @@ func TestTrackBuffer_OpenGroup(t *testing.T) {
 }
 
 func TestTrackBuffer_Get(t *testing.T) {
-	b := newTrackBuffer()
+	b := newTestTrackBuffer()
 
 	g := b.openGroup()
 	got := b.get(g.seq)
@@ -74,7 +79,7 @@ func TestTrackBuffer_Get(t *testing.T) {
 }
 
 func TestTrackBuffer_EarliestAvailable(t *testing.T) {
-	b := newTrackBuffer()
+	b := newTestTrackBuffer()
 
 	// No groups yet — earliest is still 1 (since head=0 < size=8).
 	assert.Equal(t, moqt.GroupSequence(1), b.earliestAvailable())
@@ -172,7 +177,7 @@ func TestVideoTrack_Close_NoGroup(t *testing.T) {
 
 func TestTrackBuffer_SubscribeUnsubscribe(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		b := newTrackBuffer()
+		b := newTestTrackBuffer()
 
 		ch1 := b.subscribe()
 		ch2 := b.subscribe()
@@ -213,7 +218,7 @@ func TestTrackBuffer_SubscribeUnsubscribe(t *testing.T) {
 
 func TestTrackBuffer_Notify(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		b := newTrackBuffer()
+		b := newTestTrackBuffer()
 
 		ch := b.subscribe()
 		defer b.unsubscribe(ch)
@@ -233,7 +238,7 @@ func TestTrackBuffer_Notify(t *testing.T) {
 
 func TestTrackBuffer_Notify_NonBlocking(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		b := newTrackBuffer()
+		b := newTestTrackBuffer()
 
 		ch := b.subscribe()
 		defer b.unsubscribe(ch)
@@ -260,7 +265,7 @@ func TestTrackBuffer_Notify_NonBlocking(t *testing.T) {
 
 func TestTrackBuffer_MultipleSubscribers(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		b := newTrackBuffer()
+		b := newTestTrackBuffer()
 
 		ch1 := b.subscribe()
 		ch2 := b.subscribe()
@@ -285,7 +290,7 @@ func TestTrackBuffer_MultipleSubscribers(t *testing.T) {
 }
 
 func TestTrackBuffer_RingWrapAround(t *testing.T) {
-	b := newTrackBuffer()
+	b := newTestTrackBuffer()
 
 	// Fill beyond ring size.
 	for i := range defaultRingSize + 3 {
