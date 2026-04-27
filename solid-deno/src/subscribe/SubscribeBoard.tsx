@@ -86,12 +86,21 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 							const catalog = parseCatalog(frame.bytes);
 							const videoTrack = catalog.tracks?.find((t) => t.role === "video");
 							if (videoTrack?.codec) {
+								// Decode Base64 initData → ArrayBuffer description (for avc1.* AVCC streams).
+								let description: ArrayBuffer | undefined;
+								if (videoTrack.initData) {
+									const binary = atob(videoTrack.initData);
+									const bytes = new Uint8Array(binary.length);
+									for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+									description = bytes.buffer;
+								}
 								const cfg: VideoDecoderConfig = {
 									codec: videoTrack.codec,
 									codedWidth: videoTrack.width,
 									codedHeight: videoTrack.height,
 									hardwareAcceleration: "prefer-software",
 									optimizeForLatency: true,
+									...(description ? { description } : {}),
 								};
 								videoDecodeNode!.configure(cfg);
 								console.log("[Subscribe] VideoDecoder configured:", cfg.codec);

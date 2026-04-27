@@ -14,58 +14,14 @@ import { background, type CancelFunc, type Context, withCancel } from "@okdaichi
 import { MediaFrame } from "./media_frame.ts";
 import { useBroadcastPath } from "../useBroadcastPath.ts";
 
-// Extract SPS/PPS NALU arrays from an AVCDecoderConfigurationRecord.
-function extractSpsPpsNalus(description: ArrayBufferLike | ArrayBufferView): Uint8Array[] {
-	const buf: ArrayBuffer = ArrayBuffer.isView(description)
-		? (description.buffer as ArrayBuffer).slice(
-			description.byteOffset,
-			description.byteOffset + description.byteLength,
-		)
-		: (description as ArrayBuffer);
-	const view = new DataView(buf);
-	const nalus: Uint8Array[] = [];
-	let offset = 5; // configVersion(1) + profile(1) + compatibility(1) + level(1) + lengthSizeMinus1(1)
-
-	const spsCount = view.getUint8(offset++) & 0x1f;
-	for (let i = 0; i < spsCount; i++) {
-		const len = view.getUint16(offset); offset += 2;
-		nalus.push(new Uint8Array(buf, offset, len));
-		offset += len;
-	}
-	const ppsCount = view.getUint8(offset++);
-	for (let i = 0; i < ppsCount; i++) {
-		const len = view.getUint16(offset); offset += 2;
-		nalus.push(new Uint8Array(buf, offset, len));
-		offset += len;
-	}
-	return nalus;
-}
-
-const ANNEXB_START_CODE = new Uint8Array([0, 0, 0, 1]);
-
-// Convert an EncodedVideoChunk from AVCC (length-prefixed NALUs) to Annex-B
-// (start-code-prefixed). For keyframes, prepend SPS/PPS NALUs from the decoder config.
-function avccChunkToAnnexB(chunk: EncodedVideoChunk, spsPps?: Uint8Array[]): Uint8Array {
-	const raw = new Uint8Array(chunk.byteLength);
-	chunk.copyTo(raw);
-
-	const parts: Uint8Array[] = [];
-	if (spsPps) {
-		for (const nalu of spsPps) parts.push(ANNEXB_START_CODE, nalu);
-	}
-	let i = 0;
-	while (i < raw.length) {
-		const naluLen = ((raw[i] << 24) | (raw[i + 1] << 16) | (raw[i + 2] << 8) | raw[i + 3]) >>> 0;
-		i += 4;
-		parts.push(ANNEXB_START_CODE, raw.subarray(i, i + naluLen));
-		i += naluLen;
-	}
-
-	const totalLen = parts.reduce((acc, p) => acc + p.length, 0);
-	const result = new Uint8Array(totalLen);
-	let pos = 0;
-	for (const p of parts) { result.set(p, pos); pos += p.length; }
-	return result;
+// Encode an ArrayBuffer or ArrayBufferView as a Base64 string.
+function encodeBase64(buf: ArrayBufferLike | ArrayBufferView): string {
+	const bytes = ArrayBuffer.isView(buf)
+		? new Uint8Array(buf.buffer as ArrayBuffer, buf.byteOffset, buf.byteLength)
+		: new Uint8Array(buf as ArrayBuffer);
+	let binary = "";
+	for (const b of bytes) binary += String.fromCharCode(b);
+	return btoa(binary);
 }
 
 const GOP_DURATION = 1000; // 1 second
@@ -135,7 +91,6 @@ export function PublishBoard(props: { mux: TrackMux }) {
 	createEffect(() => {
 		const config = encoderConfig();
 		if (streamingActive || !config || !videoEncodeNode) return;
-		const inlineCodec = config.codec.replace(/^avc1\./, "avc3.");
 		videoEncodeNode.configure(config);
 		if (broadcastRef) {
 			const updatedTrack: Track = {
@@ -143,7 +98,7 @@ export function PublishBoard(props: { mux: TrackMux }) {
 				role: "video",
 				packaging: "loc",
 				isLive: true,
-				codec: inlineCodec,
+				codec: config.codec,
 				width: config.width,
 				height: config.height,
 			};
@@ -223,7 +178,6 @@ export function PublishBoard(props: { mux: TrackMux }) {
 		setEncoderConfig(config);
 		setCanvasWidth(actualWidth);
 		setCanvasHeight(actualHeight);
-		const inlineCodec = config.codec.replace(/^avc1\./, "avc3.");
 
 		// Set up audio encoder (AudioContext.resume() works here as we're in a user-gesture handler).
 		if (audioContext && audioEncodeNode) {
@@ -253,7 +207,7 @@ export function PublishBoard(props: { mux: TrackMux }) {
 			role: "video",
 			packaging: "loc",
 			isLive: true,
-			codec: inlineCodec,
+			codec: config.codec,
 			width: config.width,
 			height: config.height,
 		};
@@ -269,14 +223,26 @@ export function PublishBoard(props: { mux: TrackMux }) {
 				if (!videoEncodeNode) throw new Error("Encode node not initialized");
 
 				let currentGroup: GroupWriter | undefined;
-				let latestSpsPps: Uint8Array[] | undefined;
+				// Tracks whether we have published an initData-bearing catalog for the
+				// current encoder configuration. Reset when the encoder is reconfigured.
+				let initDataPublished = false;
 
 				const { done } = videoEncodeNode.encodeTo({
 					output: async (chunk: EncodedVideoChunk, decoderConfig?: VideoDecoderConfig) => {
-						if (decoderConfig?.description) {
-							latestSpsPps = extractSpsPpsNalus(
+						// When the encoder emits a new decoder config (first keyframe or
+						// parameter change), push the SPS/PPS description into the catalog
+						// as a Base64-encoded initData field so subscribers can configure
+						// their VideoDecoder with the correct description.
+						if (decoderConfig?.description && !initDataPublished) {
+							initDataPublished = true;
+							const initData = encodeBase64(
 								decoderConfig.description as ArrayBufferLike,
 							);
+							const updatedTrack: Track = { ...initialTrack, initData };
+							const tracks: Track[] = audioTrackDef
+								? [updatedTrack, audioTrackDef]
+								: [updatedTrack];
+							broadcast.setCatalog({ version: 1, tracks }).catch(console.error);
 						}
 
 						if (chunk.type === "key") {
@@ -288,18 +254,7 @@ export function PublishBoard(props: { mux: TrackMux }) {
 							return; // drop delta frames until first keyframe
 						}
 
-						const annexBData = avccChunkToAnnexB(
-							chunk,
-							chunk.type === "key" ? latestSpsPps : undefined,
-						);
-						const annexBChunk = new EncodedVideoChunk({
-							type: chunk.type,
-							timestamp: chunk.timestamp,
-							...(chunk.duration != null ? { duration: chunk.duration } : {}),
-							data: annexBData,
-						});
-
-						const err = await currentGroup!.writeFrame(new MediaFrame(annexBChunk));
+						const err = await currentGroup!.writeFrame(new MediaFrame(chunk));
 						if (err) throw err;
 					},
 				});
