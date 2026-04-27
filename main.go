@@ -69,7 +69,6 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  version    Print version information")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Configuration:")
-	fmt.Fprintln(os.Stderr, "  relay/bootstrap are configured via environment variables.")
+	fmt.Fprintln(os.Stderr, "  All commands are configured via environment variables.")
 	fmt.Fprintln(os.Stderr, "  See relay-config.example.env and bootstrap-config.example.env for details.")
-	fmt.Fprintln(os.Stderr, "  rtmp requires -config flag: qumo rtmp -config <path>")
 }

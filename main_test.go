@@ -153,11 +153,6 @@ func TestMain_Subprocess(t *testing.T) {
 			wantExitNonZero:    true,
 			wantOutputContains: []string{"ADVERTISE_ADDR is required", "error:"},
 		},
-		"rtmp missing config file": {
-			args:               []string{"rtmp", "-config", "does-not-exist.yaml"},
-			wantExitNonZero:    true,
-			wantOutputContains: []string{"failed to load config", "error:"},
-		},
 	}
 
 	for name, tt := range tests {

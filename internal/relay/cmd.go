@@ -364,18 +364,6 @@ func envInt(key string, defaultVal int) (int, error) {
 	return n, nil
 }
 
-func envDuration(key string, defaultVal time.Duration) (time.Duration, error) {
-	v := os.Getenv(key)
-	if v == "" {
-		return defaultVal, nil
-	}
-	d, err := time.ParseDuration(v)
-	if err != nil {
-		return 0, err
-	}
-	return d, nil
-}
-
 // loadCACertPool reads a PEM-encoded CA certificate file into an x509.CertPool.
 // Returns (nil, nil) when caFile is empty — callers treat nil as "mTLS disabled".
 // CA_FILE must be a relative path with no path traversal components.
