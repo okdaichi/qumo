@@ -1,8 +1,6 @@
 {
   "version": "5",
   "specifiers": {
-    "jsr:@okdaichi/av-nodes@~0.9.1": "0.9.1",
-    "jsr:@okdaichi/golikejs@0.8": "0.8.0",
     "jsr:@okdaichi/golikejs@0.8.0": "0.8.0",
     "jsr:@okdaichi/moq@~0.12.1": "0.12.1",
     "npm:@deno/vite-plugin@^1.0.6": "1.0.6_vite@7.3.0__@types+node@25.0.3__picomatch@4.0.3_@types+node@25.0.3",
@@ -10,24 +8,16 @@
     "npm:solid-js@^1.9.10": "1.9.10_seroval@1.3.2",
     "npm:typescript@~5.9.3": "5.9.3",
     "npm:vite-plugin-solid@^2.11.10": "2.11.10_solid-js@1.9.10__seroval@1.3.2_vite@7.3.0__@types+node@25.0.3__picomatch@4.0.3_@babel+core@7.28.5_@types+node@25.0.3",
-    "npm:vite@^7.3.0": "7.3.0_@types+node@25.0.3_picomatch@4.0.3",
-    "npm:zod@^3.24.2": "3.25.76"
+    "npm:vite@^7.3.0": "7.3.0_@types+node@25.0.3_picomatch@4.0.3"
   },
   "jsr": {
-    "@okdaichi/av-nodes@0.9.1": {
-      "integrity": "cce45eb2ae35bab2808c032c29ce115469758da4505666ce0163ceb89a5c05cd",
-      "dependencies": [
-        "jsr:@okdaichi/golikejs@0.8"
-      ]
-    },
     "@okdaichi/golikejs@0.8.0": {
       "integrity": "dd1a6418bf53ae80078881e8bfe114e1a666f5e158b7fe2d17d60b34f28edc9a"
     },
     "@okdaichi/moq@0.12.1": {
       "integrity": "13706e62a8a4aef42473eab45bba4d2552a985b8aa44cc245dfd4aa00dfd1c32",
       "dependencies": [
-        "jsr:@okdaichi/golikejs@0.8.0",
-        "npm:zod"
+        "jsr:@okdaichi/golikejs"
       ]
     }
   },
@@ -796,7 +786,7 @@
   },
   "workspace": {
     "dependencies": [
-      "jsr:@okdaichi/av-nodes@~0.9.1",
+      "jsr:@okdaichi/av-nodes@0.10.0",
       "jsr:@okdaichi/golikejs@0.8",
       "jsr:@okdaichi/moq@~0.12.1"
     ],
