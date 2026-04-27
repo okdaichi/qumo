@@ -1,21 +1,23 @@
-package cli
+package bootstrap
 
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
-
-	"github.com/qumo-dev/qumo/internal/bootstrap"
 )
 
-// RunBootstrap starts the MoQ bootstrap server for node registration and peer discovery.
+// Run starts the MoQ bootstrap server for node registration and peer discovery.
 //
 // Configuration is read from environment variables:
 //
@@ -29,7 +31,7 @@ import (
 //	CA_FILE                     - PEM CA cert; enables mTLS client verification when set
 //	                               (requires BOOTSTRAP_CERT_FILE / BOOTSTRAP_KEY_FILE)
 //	MTLS_REQUIRED               - "true" to require a client certificate on every HTTPS request
-func RunBootstrap(_ []string) error {
+func Run(_ []string) error {
 	listen := envOr("BOOTSTRAP_ADDR", ":8080")
 
 	ttl, err := envDuration("BOOTSTRAP_TTL", 30*time.Second)
@@ -82,7 +84,7 @@ func RunBootstrap(_ []string) error {
 		return fmt.Errorf("invalid BOOTSTRAP_MAX_PEERS: %w", err)
 	}
 
-	store := bootstrap.NewStore(ttl)
+	store := NewStore(ttl)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -90,11 +92,11 @@ func RunBootstrap(_ []string) error {
 	store.StartCleaner(ctx, cleanupInterval)
 
 	mux := http.NewServeMux()
-	mux.Handle("/register", &bootstrap.RegisterHandler{
+	mux.Handle("/register", &RegisterHandler{
 		Store:     store,
 		AuthToken: authToken,
 	})
-	mux.Handle("/peers", &bootstrap.PeersHandler{Store: store, MaxPeers: maxPeers, AuthToken: authToken})
+	mux.Handle("/peers", &PeersHandler{Store: store, MaxPeers: maxPeers, AuthToken: authToken})
 
 	srv := &http.Server{
 		Addr:              listen,
@@ -142,4 +144,60 @@ func RunBootstrap(_ []string) error {
 
 	slog.Info("bootstrap server stopped")
 	return nil
+}
+
+func envOr(key, defaultVal string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return defaultVal
+}
+
+func envInt(key string, defaultVal int) (int, error) {
+	v := os.Getenv(key)
+	if v == "" {
+		return defaultVal, nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+func envDuration(key string, defaultVal time.Duration) (time.Duration, error) {
+	v := os.Getenv(key)
+	if v == "" {
+		return defaultVal, nil
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return 0, err
+	}
+	return d, nil
+}
+
+// loadCACertPool reads a PEM-encoded CA certificate file into an x509.CertPool.
+// Returns (nil, nil) when caFile is empty — callers treat nil as "mTLS disabled".
+// CA_FILE must be a relative path with no path traversal components.
+func loadCACertPool(caFile string) (*x509.CertPool, error) {
+	if caFile == "" {
+		return nil, nil
+	}
+	if filepath.IsAbs(caFile) {
+		return nil, fmt.Errorf("CA_FILE must be a relative path")
+	}
+	caFile = filepath.Clean(caFile)
+	if caFile == ".." || strings.HasPrefix(caFile, ".."+string(filepath.Separator)) || strings.Contains(caFile, string(filepath.Separator)+".."+string(filepath.Separator)) {
+		return nil, fmt.Errorf("CA_FILE must not contain path traversal")
+	}
+	pemData, err := os.ReadFile(caFile)
+	if err != nil {
+		return nil, fmt.Errorf("read CA file %q: %w", caFile, err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(pemData) {
+		return nil, fmt.Errorf("no valid certificates in CA file %q", caFile)
+	}
+	return pool, nil
 }

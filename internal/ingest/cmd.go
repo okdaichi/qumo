@@ -1,4 +1,4 @@
-package cli
+package ingest
 
 import (
 	"context"
@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/qumo-dev/gomoqt/moqt"
-	"github.com/qumo-dev/qumo/internal/ingest"
 	"gopkg.in/yaml.v3"
 )
 
@@ -54,7 +53,7 @@ func RunRTMP(args []string) error {
 	trackMux := moqt.NewTrackMux(0)
 
 	// RTMP ingest server
-	rtmpSrv := ingest.NewRTMPServer(ingest.RTMPConfig{
+	rtmpSrv := NewRTMPServer(RTMPConfig{
 		Addr:     cfg.IngestAddr,
 		TrackMux: trackMux,
 	})

@@ -1,4 +1,4 @@
-package cli
+package bootstrap
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-func TestRunBOOTSTRAP_ADDRsAndServes(t *testing.T) {
+func TestRun(t *testing.T) {
 	// Find a free port.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -28,8 +28,8 @@ func TestRunBOOTSTRAP_ADDRsAndServes(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		// RunBootstrap blocks; reads config from env vars.
-		errCh <- RunBootstrap(nil)
+		// Run blocks; reads config from env vars.
+		errCh <- Run(nil)
 	}()
 
 	// Wait for server to start.
@@ -90,10 +90,10 @@ func TestRunBOOTSTRAP_ADDRsAndServes(t *testing.T) {
 	}
 
 	// Shutdown (cancel would normally come from signal, but we use context cancel
-	// in tests; RunBootstrap uses signal.NotifyContext, so we send interrupt).
+	// in tests; Run uses signal.NotifyContext, so we send interrupt).
 	cancel()
 
-	// RunBootstrap may not exit immediately since we can't send os.Interrupt
+	// Run may not exit immediately since we can't send os.Interrupt
 	// to ourselves in a unit test. This is tested via subprocess in main_test.go.
 	_ = ctx
 }

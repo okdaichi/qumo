@@ -4,15 +4,17 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/qumo-dev/qumo/internal/cli"
+	"github.com/qumo-dev/qumo/internal/bootstrap"
+	"github.com/qumo-dev/qumo/internal/ingest"
+	"github.com/qumo-dev/qumo/internal/relay"
 	"github.com/qumo-dev/qumo/internal/version"
 )
 
 var (
 	// overridable command handlers for easier unit-testing
-	runRelay     = cli.RunRelay
-	runRTMP      = cli.RunRTMP
-	runBootstrap = cli.RunBootstrap
+	runRelay     = relay.Run
+	runRTMP      = ingest.RunRTMP
+	runBootstrap = bootstrap.Run
 )
 
 func main() {

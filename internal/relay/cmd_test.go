@@ -1,4 +1,4 @@
-package cli
+package relay
 
 import (
 	"context"
@@ -155,26 +155,26 @@ func TestServeComponents_ReturnsErrorOnPanic(t *testing.T) {
 	}
 }
 
-func TestRunRelay_WildcardRequiresAdvertiseAddr(t *testing.T) {
+func TestRun_WildcardRequiresAdvertiseAddr(t *testing.T) {
 	t.Setenv("RELAY_ADDR", "0.0.0.0:4433")
 	t.Setenv("ADVERTISE_ADDR", "")
 
-	err := RunRelay(nil)
+	err := Run(nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "ADVERTISE_ADDR is required")
 }
 
-func TestRunRelay_InvalidGroupCacheSize(t *testing.T) {
+func TestRun_InvalidGroupCacheSize(t *testing.T) {
 	t.Setenv("RELAY_ADDR", "localhost:4433")
 	t.Setenv("ADVERTISE_ADDR", "localhost:4433")
 	t.Setenv("GROUP_CACHE_SIZE", "not-a-number")
 
-	err := RunRelay(nil)
+	err := Run(nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "GROUP_CACHE_SIZE")
 }
 
-func TestRunRelay_InvalidBootstrapInterval(t *testing.T) {
+func TestRun_InvalidBootstrapInterval(t *testing.T) {
 	t.Setenv("RELAY_ADDR", "localhost:4433")
 	t.Setenv("ADVERTISE_ADDR", "localhost:4433")
 	t.Setenv("GROUP_CACHE_SIZE", "")
@@ -183,7 +183,7 @@ func TestRunRelay_InvalidBootstrapInterval(t *testing.T) {
 	t.Setenv("BOOTSTRAP_URLS", "http://bs:8080")
 	t.Setenv("BOOTSTRAP_INTERVAL", "bad-duration")
 
-	err := RunRelay(nil)
+	err := Run(nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "BOOTSTRAP_INTERVAL")
 }

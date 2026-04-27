@@ -1,4 +1,4 @@
-package cli
+package relay
 
 import (
 	"context"
@@ -30,7 +30,6 @@ import (
 	"github.com/quic-go/quic-go"
 	"github.com/qumo-dev/gomoqt/moqt"
 	"github.com/qumo-dev/qumo/internal/bootstrap"
-	"github.com/qumo-dev/qumo/internal/relay"
 )
 
 // sanitizeLog strips CR and LF from s to prevent log injection.
@@ -38,7 +37,7 @@ func sanitizeLog(s string) string {
 	return strings.NewReplacer("\r", "", "\n", "").Replace(s)
 }
 
-// RunRelay starts the MoQ relay server.
+// Run starts the MoQ relay server.
 //
 // Configuration is read from environment variables:
 //
@@ -60,7 +59,7 @@ func sanitizeLog(s string) string {
 //	PEERS               - comma-separated list of peer addresses
 //	BOOTSTRAP_URLS      - comma-separated list of bootstrap server URLs
 //	BOOTSTRAP_INTERVAL  - polling interval for bootstrap servers (default: "15s")
-func RunRelay(_ []string) error {
+func Run(_ []string) error {
 	addr := envOr("RELAY_ADDR", "0.0.0.0:4433")
 	certFile := envOr("CERT_FILE", "certs/server.crt")
 	keyFile := envOr("KEY_FILE", "certs/server.key")
@@ -85,12 +84,12 @@ func RunRelay(_ []string) error {
 		advertiseAddr = addr
 	}
 
-	var peers []relay.Peer
+	var peers []Peer
 	if raw := os.Getenv("PEERS"); raw != "" {
 		for p := range strings.SplitSeq(raw, ",") {
 			p = strings.TrimSpace(p)
 			if p != "" {
-				peers = append(peers, relay.Peer{Address: p})
+				peers = append(peers, Peer{Address: p})
 			}
 		}
 	}
@@ -155,7 +154,7 @@ func RunRelay(_ []string) error {
 		}
 	}
 
-	relayCfg := relay.Config{
+	relayCfg := Config{
 		NodeID:         nodeID,
 		Region:         os.Getenv("REGION"),
 		Role:           os.Getenv("ROLE"),
@@ -170,7 +169,7 @@ func RunRelay(_ []string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	// Create relay relayServer
+	// Create relay server
 	httpMux := http.NewServeMux()
 
 	quicConfig := &quic.Config{
@@ -199,7 +198,7 @@ func RunRelay(_ []string) error {
 	}
 
 	trackMux := moqt.NewTrackMux(moqt.NewHopID())
-	relayServer := &relay.Server{
+	relayServer := &Server{
 		MOQServer: &moqt.Server{
 			Addr:               addr,
 			TLSConfig:          tlsConfig,
@@ -251,7 +250,7 @@ func RunRelay(_ []string) error {
 	return nil
 }
 
-// server is a minimal interface implemented by both *relay.Server and
+// server is a minimal interface implemented by both *Server and
 // *http.Server so we can unit-test the run/shutdown flow with fakes.
 type server interface {
 	ListenAndServe() error
