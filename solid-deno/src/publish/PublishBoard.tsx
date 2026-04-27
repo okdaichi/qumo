@@ -14,6 +14,16 @@ import { background, type CancelFunc, type Context, withCancel } from "@okdaichi
 import { MediaFrame } from "./media_frame.ts";
 import { useBroadcastPath } from "../useBroadcastPath.ts";
 
+// Encode an ArrayBuffer or ArrayBufferView as a Base64 string.
+function encodeBase64(buf: ArrayBufferLike | ArrayBufferView): string {
+	const bytes = ArrayBuffer.isView(buf)
+		? new Uint8Array(buf.buffer as ArrayBuffer, buf.byteOffset, buf.byteLength)
+		: new Uint8Array(buf as ArrayBuffer);
+	let binary = "";
+	for (const b of bytes) binary += String.fromCharCode(b);
+	return btoa(binary);
+}
+
 const GOP_DURATION = 1000; // 1 second
 
 export function PublishBoard(props: { mux: TrackMux }) {
@@ -81,7 +91,6 @@ export function PublishBoard(props: { mux: TrackMux }) {
 	createEffect(() => {
 		const config = encoderConfig();
 		if (streamingActive || !config || !videoEncodeNode) return;
-		const inlineCodec = config.codec.replace(/^avc1\./, "avc3.");
 		videoEncodeNode.configure(config);
 		if (broadcastRef) {
 			const updatedTrack: Track = {
@@ -89,7 +98,7 @@ export function PublishBoard(props: { mux: TrackMux }) {
 				role: "video",
 				packaging: "loc",
 				isLive: true,
-				codec: inlineCodec,
+				codec: config.codec,
 				width: config.width,
 				height: config.height,
 			};
@@ -169,7 +178,6 @@ export function PublishBoard(props: { mux: TrackMux }) {
 		setEncoderConfig(config);
 		setCanvasWidth(actualWidth);
 		setCanvasHeight(actualHeight);
-		const inlineCodec = config.codec.replace(/^avc1\./, "avc3.");
 
 		// Set up audio encoder (AudioContext.resume() works here as we're in a user-gesture handler).
 		if (audioContext && audioEncodeNode) {
@@ -199,7 +207,7 @@ export function PublishBoard(props: { mux: TrackMux }) {
 			role: "video",
 			packaging: "loc",
 			isLive: true,
-			codec: inlineCodec,
+			codec: config.codec,
 			width: config.width,
 			height: config.height,
 		};
@@ -215,9 +223,28 @@ export function PublishBoard(props: { mux: TrackMux }) {
 				if (!videoEncodeNode) throw new Error("Encode node not initialized");
 
 				let currentGroup: GroupWriter | undefined;
+				// Tracks whether we have published an initData-bearing catalog for the
+				// current encoder configuration. Reset when the encoder is reconfigured.
+				let initDataPublished = false;
 
 				const { done } = videoEncodeNode.encodeTo({
-					output: async (chunk: EncodedVideoChunk, _?: VideoDecoderConfig) => {
+					output: async (chunk: EncodedVideoChunk, decoderConfig?: VideoDecoderConfig) => {
+						// When the encoder emits a new decoder config (first keyframe or
+						// parameter change), push the SPS/PPS description into the catalog
+						// as a Base64-encoded initData field so subscribers can configure
+						// their VideoDecoder with the correct description.
+						if (decoderConfig?.description && !initDataPublished) {
+							initDataPublished = true;
+							const initData = encodeBase64(
+								decoderConfig.description as ArrayBufferLike,
+							);
+							const updatedTrack: Track = { ...initialTrack, initData };
+							const tracks: Track[] = audioTrackDef
+								? [updatedTrack, audioTrackDef]
+								: [updatedTrack];
+							broadcast.setCatalog({ version: 1, tracks }).catch(console.error);
+						}
+
 						if (chunk.type === "key") {
 							if (currentGroup) void currentGroup.close();
 							const [group, err] = await trackWriter.openGroup();
@@ -227,7 +254,7 @@ export function PublishBoard(props: { mux: TrackMux }) {
 							return; // drop delta frames until first keyframe
 						}
 
-						const err = await currentGroup.writeFrame(new MediaFrame(chunk));
+						const err = await currentGroup!.writeFrame(new MediaFrame(chunk));
 						if (err) throw err;
 					},
 				});

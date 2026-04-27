@@ -1,6 +1,6 @@
 {
 	"imports": {
-		"@okdaichi/av-nodes": "jsr:@okdaichi/av-nodes@^0.9.1",
+		"@okdaichi/av-nodes": "jsr:@okdaichi/av-nodes@0.10.0",
 		"@okdaichi/golikejs": "jsr:@okdaichi/golikejs@^0.8.0",
 		"@okdaichi/moq": "jsr:@okdaichi/moq@^0.12.1",
 		"@okdaichi/moq/msf": "jsr:@okdaichi/moq@^0.12.1/msf"
