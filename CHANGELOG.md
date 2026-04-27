@@ -107,6 +107,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **AVCC codec mismatch in web demo publisher (`solid-deno/src/publish/PublishBoard.tsx`,
+  `solid-deno/src/subscribe/SubscribeBoard.tsx`):** `VideoEncoder` configured with `avc1.*`
+  outputs AVCC-format frames, but the catalog was misreporting the codec as `avc3.*`
+  (Annex-B) and discarding `decoderConfig.description`. The fix uses the MSF catalog
+  `Track.initData` field (Base64-encoded `AVCDecoderConfigurationRecord`) so subscribers
+  can configure `VideoDecoder` with the correct `description`. AVCC bytes are now forwarded
+  as-is — no per-frame conversion.
 - **`fs.Parse` error handling:** `RunRTMP` now propagates `flag.Parse` errors instead
   of silently discarding them (flag set changed to `ContinueOnError`).
 - **Smoke test error handling:** `frame.Write` and `gw.Close` errors are now caught
