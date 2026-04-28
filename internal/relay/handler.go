@@ -477,12 +477,8 @@ func (d *trackDistributor) ingest(ctx context.Context, src *moqt.TrackReader) {
 }
 
 func (d *trackDistributor) addGroup(group *moqt.GroupReader) {
-	d.ring.add(group, func(frame *moqt.Frame) {
-		if frame != nil {
-			reportIngressBytes(d.nodeID, frame.Len())
-		}
-		d.broadcast()
-	})
+	totalBytes := d.ring.add(group, d.broadcast)
+	reportIngressBytes(d.nodeID, totalBytes)
 }
 
 // broadcast notifies all subscribers that new data is available.

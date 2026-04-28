@@ -70,7 +70,11 @@ type groupRing struct {
 	pos    atomic.Uint64
 }
 
-func (ring *groupRing) add(group *moqt.GroupReader, onFrame func(*moqt.Frame)) {
+// add ingests all frames from group into the ring cache.
+// notify is called after each frame and once more when the group is complete,
+// allowing subscribers to wake up incrementally.
+// It returns the total number of bytes ingested.
+func (ring *groupRing) add(group *moqt.GroupReader, notify func()) int {
 	cache := &groupCache{
 		seq:    group.GroupSequence(),
 		frames: make([]*moqt.Frame, 0, 1),
@@ -81,24 +85,21 @@ func (ring *groupRing) add(group *moqt.GroupReader, onFrame func(*moqt.Frame)) {
 
 	frame := ring.pool.Get()
 
-	frameCount := 0
+	totalBytes := 0
 	for frame := range group.Frames(frame) {
-		frameCount++
+		totalBytes += frame.Len()
 		cache.append(frame)
-
-		// Notify subscribers that a new frame is available, and let the caller
-		// observe the ingested frame for accounting.
-		if onFrame != nil {
-			onFrame(frame)
+		if notify != nil {
+			notify()
 		}
 	}
 
 	cache.markComplete()
-
-	// Final notification for group completion
-	if onFrame != nil {
-		onFrame(nil)
+	if notify != nil {
+		notify()
 	}
+
+	return totalBytes
 }
 
 func (ring *groupRing) get(seq moqt.GroupSequence) *groupCache {
