@@ -71,6 +71,28 @@ var (
 		[]string{"peer", "result"},
 	)
 
+	// metricRelayIngressBytesTotal counts bytes received from upstream publishers.
+	metricRelayIngressBytesTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "qumo",
+			Subsystem: "relay",
+			Name:      "ingress_bytes_total",
+			Help:      "Total bytes received from publishers by this relay node.",
+		},
+		[]string{"node_id"},
+	)
+
+	// metricRelayEgressBytesTotal counts bytes written to downstream subscribers.
+	metricRelayEgressBytesTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "qumo",
+			Subsystem: "relay",
+			Name:      "egress_bytes_total",
+			Help:      "Total bytes sent to subscribers by this relay node, including fan-out.",
+		},
+		[]string{"node_id"},
+	)
+
 	// metricRouteReplacements counts how many times an existing broadcast route
 	// was replaced by a strictly better candidate.
 	metricRouteReplacements = promauto.NewCounter(prometheus.CounterOpts{
@@ -185,3 +207,11 @@ var (
 		[]string{"code"},
 	)
 )
+
+func reportIngressBytes(nodeID string, bytes int) {
+	metricRelayIngressBytesTotal.WithLabelValues(nodeID).Add(float64(bytes))
+}
+
+func reportEgressBytes(nodeID string, bytes int) {
+	metricRelayEgressBytesTotal.WithLabelValues(nodeID).Add(float64(bytes))
+}

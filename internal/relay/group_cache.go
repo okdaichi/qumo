@@ -1,7 +1,6 @@
 package relay
 
 import (
-	"log/slog"
 	"sync"
 	"sync/atomic"
 
@@ -71,7 +70,7 @@ type groupRing struct {
 	pos    atomic.Uint64
 }
 
-func (ring *groupRing) add(group *moqt.GroupReader, onFrame func()) {
+func (ring *groupRing) add(group *moqt.GroupReader, onFrame func(*moqt.Frame)) {
 	cache := &groupCache{
 		seq:    group.GroupSequence(),
 		frames: make([]*moqt.Frame, 0, 1),
@@ -87,18 +86,18 @@ func (ring *groupRing) add(group *moqt.GroupReader, onFrame func()) {
 		frameCount++
 		cache.append(frame)
 
-		// Notify subscribers that a new frame is available
+		// Notify subscribers that a new frame is available, and let the caller
+		// observe the ingested frame for accounting.
 		if onFrame != nil {
-			onFrame()
+			onFrame(frame)
 		}
 	}
 
-	slog.Debug("group cached", "seq", cache.seq, "frames", frameCount)
 	cache.markComplete()
 
 	// Final notification for group completion
 	if onFrame != nil {
-		onFrame()
+		onFrame(nil)
 	}
 }
 

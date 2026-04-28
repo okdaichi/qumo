@@ -73,6 +73,7 @@ type relayHandler struct {
 
 	tracks  *trackManager
 	flights singleflight.Group
+	nodeID  string
 
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -142,7 +143,7 @@ func isBetterRoute(candidate, current RouteStats) (bool, rejectionReason) {
 	return false, rejectionInferiorRTT
 }
 
-func newRelayHandler(ann *moqt.Announcement, sess *moqt.Session) *relayHandler {
+func newRelayHandler(ann *moqt.Announcement, sess *moqt.Session, nodeID string) *relayHandler {
 	if sess == nil {
 		panic("relay: session must not be nil")
 	}
@@ -155,6 +156,7 @@ func newRelayHandler(ann *moqt.Announcement, sess *moqt.Session) *relayHandler {
 		announcement: ann,
 		session:      sess,
 		tracks:       newTrackManager(),
+		nodeID:       nodeID,
 		ctx:          ctx,
 		cancel:       cancel,
 	}
@@ -216,7 +218,6 @@ func (h *relayHandler) ServeTrack(tw *moqt.TrackWriter) {
 			logger.Warn("Track not found, closing track writer")
 			return
 		}
-		logger.Debug("Relaying track")
 		result.Val.(*trackDistributor).egress(tw)
 	case <-tw.Context().Done():
 		// Client unsubscribed before we could subscribe upstream - just return
@@ -256,7 +257,7 @@ func (h *relayHandler) subscribe(name moqt.TrackName) *trackDistributor {
 		return nil
 	}
 
-	d := newTrackDistributor(name, h.tracks)
+	d := newTrackDistributor(name, h.tracks, h.nodeID)
 
 	go d.ingest(h.ctx, src)
 
@@ -294,6 +295,7 @@ type trackDistributor struct {
 	name    moqt.TrackName
 	ring    *groupRing
 	manager *trackManager
+	nodeID  string
 
 	mu          sync.RWMutex
 	subscribers map[chan struct{}]struct{}
@@ -301,11 +303,12 @@ type trackDistributor struct {
 	done chan struct{} // closed when ingest returns
 }
 
-func newTrackDistributor(name moqt.TrackName, manager *trackManager) *trackDistributor {
+func newTrackDistributor(name moqt.TrackName, manager *trackManager, nodeID string) *trackDistributor {
 	d := &trackDistributor{
 		name:        name,
 		ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
 		manager:     manager,
+		nodeID:      nodeID,
 		subscribers: make(map[chan struct{}]struct{}),
 		done:        make(chan struct{}),
 	}
@@ -385,31 +388,16 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 				return
 			}
 			start := time.Now()
-
-			slog.Debug("egress starting group",
-				"track_name", tw.TrackName,
-				"broadcast_path", tw.BroadcastPath,
-				"group_sequence", cache.seq,
-				"latest_available", latest,
-				"earliest_available", earliest,
-			)
-
-			// Incrementally send frames as they become available
 			frameIdx := 0
+
 			for {
 				frame := cache.next(frameIdx)
 				if frame != nil {
-					if frameIdx == 0 {
-						slog.Debug("egress writing first frame of group",
-							"track_name", tw.TrackName,
-							"broadcast_path", tw.BroadcastPath,
-							"group_sequence", cache.seq,
-						)
-					}
 					if err := gw.WriteFrame(frame); err != nil {
 						_ = gw.Close()
 						return
 					}
+					reportEgressBytes(d.nodeID, frame.Len())
 					frameIdx++
 					continue
 				}
@@ -481,12 +469,20 @@ func (d *trackDistributor) ingest(ctx context.Context, src *moqt.TrackReader) {
 	for {
 		gr, err := src.AcceptGroup(ctx)
 		if err != nil {
-			slog.Debug("ingest stopped", "error", err)
 			return
 		}
 
-		d.ring.add(gr, d.broadcast)
+		d.addGroup(gr)
 	}
+}
+
+func (d *trackDistributor) addGroup(group *moqt.GroupReader) {
+	d.ring.add(group, func(frame *moqt.Frame) {
+		if frame != nil {
+			reportIngressBytes(d.nodeID, frame.Len())
+		}
+		d.broadcast()
+	})
 }
 
 // broadcast notifies all subscribers that new data is available.

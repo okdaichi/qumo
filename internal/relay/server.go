@@ -354,7 +354,7 @@ func (s *Server) Relay(sess *moqt.Session) {
 			return
 		}
 
-		handler := newRelayHandler(ann, sess)
+		handler := newRelayHandler(ann, sess, s.Config.NodeID)
 
 		// Route selection: only replace an existing active handler if the new
 		// route is strictly better. This is evaluated once per new candidate to
@@ -363,10 +363,6 @@ func (s *Server) Relay(sess *moqt.Session) {
 			if rr, ok := existing.(RouteReporter); ok {
 				better, reason := isBetterRoute(handler.RouteStats(), rr.RouteStats())
 				if !better {
-					slog.Debug("relay: skipping inferior route",
-						"path", ann.BroadcastPath(),
-						"reason", reason,
-					)
 					metricRouteRejections.WithLabelValues(string(reason)).Inc()
 					handler.cancel()
 					continue

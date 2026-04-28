@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/qumo-dev/gomoqt/moqt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -22,9 +23,21 @@ func newTestRelayHandler(ctx context.Context) *relayHandler {
 		announcement: ann,
 		session:      sess,
 		tracks:       newTrackManager(),
+		nodeID:       "test-node",
 		ctx:          ctx,
 		cancel:       cancel,
 	}
+}
+
+func TestRelayByteCounters_IngressAndEgress(t *testing.T) {
+	nodeID := fmt.Sprintf("node-%d", time.Now().UnixNano())
+
+	reportIngressBytes(nodeID, 100)
+	reportEgressBytes(nodeID, 125)
+	reportEgressBytes(nodeID, 125)
+
+	assert.Equal(t, 100.0, testutil.ToFloat64(metricRelayIngressBytesTotal.WithLabelValues(nodeID)))
+	assert.Equal(t, 250.0, testutil.ToFloat64(metricRelayEgressBytesTotal.WithLabelValues(nodeID)))
 }
 
 // ============================================================================
@@ -726,7 +739,7 @@ func TestTrackDistributor_GroupRingIntegration(t *testing.T) {
 
 // TestTrackDistributor_DoneChannel tests that the done channel is closed when ingest stops
 func TestTrackDistributor_DoneChannel(t *testing.T) {
-	dist := newTrackDistributor("test", newTrackManager())
+	dist := newTrackDistributor("test", newTrackManager(), "test-node")
 
 	// done should not be closed initially
 	select {
@@ -803,7 +816,7 @@ func TestRelayHandler_ConcurrentSubscribe(t *testing.T) {
 	const numTracks = 10
 	for i := range numTracks {
 		name := moqt.TrackName(fmt.Sprintf("track-%d", i))
-		d := newTrackDistributor(name, h.tracks)
+		d := newTrackDistributor(name, h.tracks, "test-node")
 		defer close(d.done)
 		h.tracks.store(name, d)
 	}
@@ -838,7 +851,7 @@ func TestRelayHandler_SingleflightDedup(t *testing.T) {
 	h := newTestRelayHandler(t.Context()) // nil session for test
 
 	// Pre-populate a distributor in the cache
-	existing := newTrackDistributor("video", newTrackManager())
+	existing := newTrackDistributor("video", newTrackManager(), "test-node")
 	defer close(existing.done) // Cleanup goroutine
 	h.tracks.store(moqt.TrackName("video"), existing)
 
