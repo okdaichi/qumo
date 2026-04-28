@@ -77,9 +77,9 @@ var (
 			Namespace: "qumo",
 			Subsystem: "relay",
 			Name:      "ingress_bytes_total",
-			Help:      "Total bytes received from publishers by this relay node.",
+			Help:      "Total bytes received from publishers, keyed by node/broadcast_path/track_name.",
 		},
-		[]string{"node_id"},
+		[]string{"track"},
 	)
 
 	// metricRelayEgressBytesTotal counts bytes written to downstream subscribers.
@@ -88,9 +88,9 @@ var (
 			Namespace: "qumo",
 			Subsystem: "relay",
 			Name:      "egress_bytes_total",
-			Help:      "Total bytes sent to subscribers by this relay node, including fan-out.",
+			Help:      "Total bytes sent to subscribers, keyed by node/broadcast_path/track_name, including fan-out.",
 		},
-		[]string{"node_id"},
+		[]string{"track"},
 	)
 
 	// metricRouteReplacements counts how many times an existing broadcast route

@@ -197,7 +197,8 @@ func (h *relayHandler) ServeTrack(tw *moqt.TrackWriter) {
 	)
 
 	// Fast path: reuse existing distributor
-	if d, ok := h.tracks.load(tw.TrackName); ok {
+	trackID := "[" + h.nodeID + "]" + string(tw.BroadcastPath) + "/" + string(tw.TrackName)
+	if d, ok := h.tracks.load(trackID); ok {
 		d.egress(tw)
 		return
 	}
@@ -227,7 +228,14 @@ func (h *relayHandler) ServeTrack(tw *moqt.TrackWriter) {
 }
 
 func (h *relayHandler) subscribe(name moqt.TrackName) *trackDistributor {
-	if d, ok := h.tracks.load(name); ok {
+	announcement := h.announcement
+	if announcement == nil {
+		slog.Warn("relay: subscribe failed: announcement is nil", "track", name)
+		return nil
+	}
+
+	trackID := "[" + h.nodeID + "]" + string(announcement.BroadcastPath()) + "/" + string(name)
+	if d, ok := h.tracks.load(trackID); ok {
 		return d
 	}
 
@@ -237,11 +245,6 @@ func (h *relayHandler) subscribe(name moqt.TrackName) *trackDistributor {
 		return nil
 	}
 
-	announcement := h.announcement
-	if announcement == nil {
-		slog.Warn("relay: subscribe failed: announcement is nil", "track", name)
-		return nil
-	}
 	if !announcement.IsActive() {
 		slog.Warn("relay: subscribe failed: announcement inactive",
 			"track", name,
@@ -258,45 +261,44 @@ func (h *relayHandler) subscribe(name moqt.TrackName) *trackDistributor {
 		return nil
 	}
 
-	d := newTrackDistributor(name, h.tracks, h.nodeID)
+	d := newTrackDistributor(h.tracks, trackID)
 
 	go d.ingest(h.ctx, src)
 
-	h.tracks.store(name, d)
+	h.tracks.store(trackID, d)
 
 	return d
 }
 
 // trackManager manages the set of active track distributors.
 type trackManager struct {
-	m sync.Map // moqt.TrackName → *trackDistributor
+	m sync.Map // trackID string → *trackDistributor
 }
 
 func newTrackManager() *trackManager {
 	return &trackManager{}
 }
 
-func (tm *trackManager) load(name moqt.TrackName) (*trackDistributor, bool) {
-	v, ok := tm.m.Load(name)
+func (tm *trackManager) load(trackID string) (*trackDistributor, bool) {
+	v, ok := tm.m.Load(trackID)
 	if !ok {
 		return nil, false
 	}
 	return v.(*trackDistributor), true
 }
 
-func (tm *trackManager) store(name moqt.TrackName, d *trackDistributor) {
-	tm.m.Store(name, d)
+func (tm *trackManager) store(trackID string, d *trackDistributor) {
+	tm.m.Store(trackID, d)
 }
 
-func (tm *trackManager) remove(name moqt.TrackName, d *trackDistributor) {
-	tm.m.CompareAndDelete(name, d)
+func (tm *trackManager) remove(trackID string, d *trackDistributor) {
+	tm.m.CompareAndDelete(trackID, d)
 }
 
 type trackDistributor struct {
-	name    moqt.TrackName
+	trackID string
 	ring    *groupRing
 	manager *trackManager
-	nodeID  string
 
 	// Pre-bound Prometheus counters to avoid per-frame label lookups in hot paths.
 	ingressCounter prometheus.Counter
@@ -308,14 +310,13 @@ type trackDistributor struct {
 	done chan struct{} // closed when ingest returns
 }
 
-func newTrackDistributor(name moqt.TrackName, manager *trackManager, nodeID string) *trackDistributor {
+func newTrackDistributor(manager *trackManager, trackID string) *trackDistributor {
 	d := &trackDistributor{
-		name:           name,
+		trackID:        trackID,
 		ring:           newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
 		manager:        manager,
-		nodeID:         nodeID,
-		ingressCounter: metricRelayIngressBytesTotal.WithLabelValues(nodeID),
-		egressCounter:  metricRelayEgressBytesTotal.WithLabelValues(nodeID),
+		ingressCounter: metricRelayIngressBytesTotal.WithLabelValues(trackID),
+		egressCounter:  metricRelayEgressBytesTotal.WithLabelValues(trackID),
 		subscribers:    make(map[chan struct{}]struct{}),
 		done:           make(chan struct{}),
 	}
@@ -324,8 +325,7 @@ func newTrackDistributor(name moqt.TrackName, manager *trackManager, nodeID stri
 }
 
 func (d *trackDistributor) pollCacheDepth() {
-	trackName := string(d.name)
-	defer metricBufferDepthGroups.DeleteLabelValues(trackName)
+	defer metricBufferDepthGroups.DeleteLabelValues(d.trackID)
 
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
@@ -341,7 +341,7 @@ func (d *trackDistributor) pollCacheDepth() {
 			if head >= earliest {
 				depth = int(head - earliest + 1)
 			}
-			metricBufferDepthGroups.WithLabelValues(trackName).Set(float64(depth))
+			metricBufferDepthGroups.WithLabelValues(d.trackID).Set(float64(depth))
 		}
 	}
 }
@@ -470,7 +470,7 @@ func (d *trackDistributor) unsubscribe(ch chan struct{}) {
 }
 
 func (d *trackDistributor) ingest(ctx context.Context, src *moqt.TrackReader) {
-	defer d.manager.remove(d.name, d)
+	defer d.manager.remove(d.trackID, d)
 	defer close(d.done)
 
 	for {

@@ -30,10 +30,11 @@ func newTestRelayHandler(ctx context.Context) *relayHandler {
 }
 
 func TestTrackDistributor_ByteCounters(t *testing.T) {
-	// Use a unique nodeID per run so parallel tests don't share counter state.
+	// Use a unique trackID per run so parallel tests don't share counter state.
 	nodeID := fmt.Sprintf("node-%d", time.Now().UnixNano())
+	trackID := "[" + nodeID + "]/live/cam1/video"
 
-	dist := newTrackDistributor("video", newTrackManager(), nodeID)
+	dist := newTrackDistributor(newTrackManager(), trackID)
 	defer close(dist.done)
 
 	// Verify the counters are wired to the correct Prometheus metric+label.
@@ -42,8 +43,8 @@ func TestTrackDistributor_ByteCounters(t *testing.T) {
 	dist.ingressCounter.Add(100)
 	dist.egressCounter.Add(150)
 
-	assert.Equal(t, 300.0, testutil.ToFloat64(metricRelayIngressBytesTotal.WithLabelValues(nodeID)))
-	assert.Equal(t, 150.0, testutil.ToFloat64(metricRelayEgressBytesTotal.WithLabelValues(nodeID)))
+	assert.Equal(t, 300.0, testutil.ToFloat64(metricRelayIngressBytesTotal.WithLabelValues(trackID)))
+	assert.Equal(t, 150.0, testutil.ToFloat64(metricRelayEgressBytesTotal.WithLabelValues(trackID)))
 }
 
 // ============================================================================
@@ -745,7 +746,7 @@ func TestTrackDistributor_GroupRingIntegration(t *testing.T) {
 
 // TestTrackDistributor_DoneChannel tests that the done channel is closed when ingest stops
 func TestTrackDistributor_DoneChannel(t *testing.T) {
-	dist := newTrackDistributor("test", newTrackManager(), "test-node")
+	dist := newTrackDistributor(newTrackManager(), "[test-node]/test/test")
 
 	// done should not be closed initially
 	select {
@@ -822,9 +823,10 @@ func TestRelayHandler_ConcurrentSubscribe(t *testing.T) {
 	const numTracks = 10
 	for i := range numTracks {
 		name := moqt.TrackName(fmt.Sprintf("track-%d", i))
-		d := newTrackDistributor(name, h.tracks, "test-node")
+		trackID := "[test-node]/test/" + string(name)
+		d := newTrackDistributor(h.tracks, trackID)
 		defer close(d.done)
-		h.tracks.store(name, d)
+		h.tracks.store(trackID, d)
 	}
 
 	done := make(chan struct{}, numTracks)
@@ -857,20 +859,20 @@ func TestRelayHandler_SingleflightDedup(t *testing.T) {
 	h := newTestRelayHandler(t.Context()) // nil session for test
 
 	// Pre-populate a distributor in the cache
-	existing := newTrackDistributor("video", newTrackManager(), "test-node")
+	existing := newTrackDistributor(newTrackManager(), "[test-node]/test/video")
 	defer close(existing.done) // Cleanup goroutine
-	h.tracks.store(moqt.TrackName("video"), existing)
+	h.tracks.store("[test-node]/test/video", existing)
 
 	// Load should return the existing one
-	v, ok := h.tracks.load(moqt.TrackName("video"))
+	v, ok := h.tracks.load("[test-node]/test/video")
 	require.True(t, ok, "Expected cached entry")
 	assert.Same(t, existing, v, "Should return the cached distributor")
 
 	// remove with the correct value should succeed
-	h.tracks.remove(moqt.TrackName("video"), existing)
+	h.tracks.remove("[test-node]/test/video", existing)
 
 	// Subsequent load should miss
-	_, ok = h.tracks.load(moqt.TrackName("video"))
+	_, ok = h.tracks.load("[test-node]/test/video")
 	assert.False(t, ok, "Should not find deleted entry")
 }
 
