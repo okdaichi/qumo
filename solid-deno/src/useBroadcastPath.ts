@@ -1,4 +1,4 @@
-import type { BroadcastPath } from "@okdaichi/moq";
+import type { BroadcastPath } from "@qumo/moq";
 import { useUser } from "./user/context.ts";
 
 export function useBroadcastPath() {

@@ -1,10 +1,10 @@
 import { createSignal, onCleanup, onMount, Show } from "solid-js";
 import { AudioDecodeNode, VideoContext, VideoDecodeNode } from "@okdaichi/av-nodes";
-import { type Session, SubscribeErrorCode } from "@okdaichi/moq";
-import { parseCatalog } from "@okdaichi/moq/msf";
+import { type Session, SubscribeErrorCode } from "@qumo/moq";
+import { parseCatalog } from "@qumo/moq/msf";
 import { deserializeMediaFrame } from "../publish/media_frame.ts";
 import { background, withCancel } from "@okdaichi/golikejs/context";
-import type { BroadcastPath } from "@okdaichi/moq";
+import type { BroadcastPath } from "@qumo/moq";
 
 export function SubscribeBoard(props: { session: Promise<Session> }) {
 	const [isSubscribed, setIsSubscribed] = createSignal(false);
@@ -23,8 +23,6 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 	let audioDecodeNode: AudioDecodeNode | undefined;
 	let currentCancel: (() => void) | null = null;
 
-
-
 	onMount(() => {
 		if (canvasEle) {
 			videoContext = new VideoContext({ canvas: canvasEle });
@@ -37,8 +35,6 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 			audioDecodeNode.connect(audioContext.destination);
 		}
 	});
-
-
 
 	onCleanup(() => {
 		stopSubscribing();
@@ -61,7 +57,9 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 			// Gate: the video loop awaits this before feeding any frames to the decoder.
 			// Resolved the moment the first catalog group is received.
 			let resolveFirstConfig!: () => void;
-			const firstConfigReady = new Promise<void>((r) => { resolveFirstConfig = r; });
+			const firstConfigReady = new Promise<void>((r) => {
+				resolveFirstConfig = r;
+			});
 			let firstConfigReceived = false;
 
 			// Subscribe to catalog: each new group updates the reactive signal,
@@ -91,7 +89,9 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 								if (videoTrack.initData) {
 									const binary = atob(videoTrack.initData);
 									const bytes = new Uint8Array(binary.length);
-									for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+									for (let i = 0; i < binary.length; i++) {
+										bytes[i] = binary.charCodeAt(i);
+									}
 									description = bytes.buffer;
 								}
 								const cfg: VideoDecoderConfig = {
@@ -108,7 +108,10 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 								// (or any non-default-aspect) streams are not stretched.
 								if (videoTrack.width) setCanvasWidth(videoTrack.width);
 								if (videoTrack.height) setCanvasHeight(videoTrack.height);
-								console.log("[Subscribe] catalog received, video codec:", videoTrack.codec);
+								console.log(
+									"[Subscribe] catalog received, video codec:",
+									videoTrack.codec,
+								);
 								if (!firstConfigReceived) {
 									firstConfigReceived = true;
 									resolveFirstConfig();
@@ -121,7 +124,10 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 									sampleRate: audioTrack.samplerate ?? 48000,
 									numberOfChannels: parseInt(audioTrack.channelConfig ?? "2", 10),
 								});
-								console.log("[Subscribe] audio decoder configured:", audioTrack.codec);
+								console.log(
+									"[Subscribe] audio decoder configured:",
+									audioTrack.codec,
+								);
 							}
 						}
 					}
@@ -141,20 +147,29 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 							try {
 								// Wait for the first catalog before feeding any frames.
 								await firstConfigReady;
-								console.log("[Subscribe] video: catalog ready, starting decode loop");
+								console.log(
+									"[Subscribe] video: catalog ready, starting decode loop",
+								);
 
 								let frameCount = 0;
 								while (isSubscribed()) {
-									const [group, groupErr] = await videoTrack.acceptGroup(ctx.done());
+									const [group, groupErr] = await videoTrack.acceptGroup(
+										ctx.done(),
+									);
 									if (groupErr) {
 										if (!isSubscribed()) break;
-										console.error("[Subscribe] video acceptGroup error:", groupErr);
+										console.error(
+											"[Subscribe] video acceptGroup error:",
+											groupErr,
+										);
 										break;
 									}
 
 									let isKey = true;
 									for await (const frame of group.frames()) {
-										const { timestamp, data } = deserializeMediaFrame(frame.bytes);
+										const { timestamp, data } = deserializeMediaFrame(
+											frame.bytes,
+										);
 
 										// Log first 10 frames for diagnostics.
 										if (frameCount < 10) {
@@ -162,7 +177,9 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 												.map((b: number) => b.toString(16).padStart(2, "0"))
 												.join(" ");
 											console.log(
-												`[Subscribe] video #${frameCount}: type=${isKey ? "key" : "delta"} ts=${timestamp} len=${data.byteLength} hex=[${hex}]`,
+												`[Subscribe] video #${frameCount}: type=${
+													isKey ? "key" : "delta"
+												} ts=${timestamp} len=${data.byteLength} hex=[${hex}]`,
 											);
 											frameCount++;
 										}
@@ -212,14 +229,21 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 							try {
 								await firstConfigReady;
 								while (isSubscribed()) {
-									const [group, groupErr] = await audioMoqTrack.acceptGroup(ctx.done());
+									const [group, groupErr] = await audioMoqTrack.acceptGroup(
+										ctx.done(),
+									);
 									if (groupErr) {
 										if (!isSubscribed()) break;
-										console.error("moq: Error accepting audio group:", groupErr);
+										console.error(
+											"moq: Error accepting audio group:",
+											groupErr,
+										);
 										break;
 									}
 									for await (const frame of group.frames()) {
-										const { timestamp, data } = deserializeMediaFrame(frame.bytes);
+										const { timestamp, data } = deserializeMediaFrame(
+											frame.bytes,
+										);
 										const chunk = new EncodedAudioChunk({
 											type: "key", // Opus frames are all independently decodable
 											timestamp,

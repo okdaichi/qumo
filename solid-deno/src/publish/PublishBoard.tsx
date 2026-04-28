@@ -1,6 +1,6 @@
 import { createEffect, createSignal, onMount, Show } from "solid-js";
-import { type BroadcastPath, type GroupWriter, TrackMux } from "@okdaichi/moq";
-import { Broadcast, type Track } from "@okdaichi/moq/msf";
+import { type BroadcastPath, type GroupWriter, TrackMux } from "@qumo/moq";
+import { Broadcast, type Track } from "@qumo/moq/msf";
 import {
 	AudioEncodeNode,
 	audioEncoderConfig,
@@ -82,7 +82,13 @@ export function PublishBoard(props: { mux: TrackMux }) {
 		const width = canvasWidth();
 		const height = canvasHeight();
 		if (streamingActive || !videoEncodeNode || width <= 0 || height <= 0) return;
-		void videoEncoderConfig({ width, height, bitrate: 2_500_000, frameRate: 30, tryHardware: true })
+		void videoEncoderConfig({
+			width,
+			height,
+			bitrate: 2_500_000,
+			frameRate: 30,
+			tryHardware: true,
+		})
 			.then(setEncoderConfig);
 	});
 
@@ -141,7 +147,9 @@ export function PublishBoard(props: { mux: TrackMux }) {
 		if (videoTrack && "ImageCapture" in globalThis) {
 			try {
 				const imageCapture = new ImageCapture(videoTrack);
-				const bitmap = await (imageCapture as unknown as { grabFrame(): Promise<ImageBitmap> }).grabFrame();
+				const bitmap =
+					await (imageCapture as unknown as { grabFrame(): Promise<ImageBitmap> })
+						.grabFrame();
 				actualWidth = bitmap.width;
 				actualHeight = bitmap.height;
 				bitmap.close();
@@ -213,7 +221,9 @@ export function PublishBoard(props: { mux: TrackMux }) {
 		};
 
 		// Broadcast auto-serves the "catalog" track as MSF catalog JSON.
-		const initialTracks: Track[] = audioTrackDef ? [initialTrack, audioTrackDef] : [initialTrack];
+		const initialTracks: Track[] = audioTrackDef
+			? [initialTrack, audioTrackDef]
+			: [initialTrack];
 		const broadcast = new Broadcast({ version: 1, tracks: initialTracks });
 		broadcastRef = broadcast;
 
@@ -228,7 +238,10 @@ export function PublishBoard(props: { mux: TrackMux }) {
 				let initDataPublished = false;
 
 				const { done } = videoEncodeNode.encodeTo({
-					output: async (chunk: EncodedVideoChunk, decoderConfig?: VideoDecoderConfig) => {
+					output: async (
+						chunk: EncodedVideoChunk,
+						decoderConfig?: VideoDecoderConfig,
+					) => {
 						// When the encoder emits a new decoder config (first keyframe or
 						// parameter change), push the SPS/PPS description into the catalog
 						// as a Base64-encoded initData field so subscribers can configure

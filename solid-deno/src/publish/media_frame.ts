@@ -1,4 +1,4 @@
-import type { ByteSource } from "@okdaichi/moq";
+import type { ByteSource } from "@qumo/moq";
 export class MediaFrame implements ByteSource {
 	timestamp: number;
 	source: ByteSource;
