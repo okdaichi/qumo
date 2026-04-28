@@ -1,4 +1,4 @@
-import { Client, DefaultTrackMux } from "@okdaichi/moq";
+import { connect, DefaultTrackMux } from "@qumo/moq";
 import { PublishBoard } from "./publish/PublishBoard.tsx";
 import { SubscribeBoard } from "./subscribe/SubscribeBoard.tsx";
 import { createUsername } from "./user/user_name.ts";
@@ -24,8 +24,7 @@ export function Dashborad() {
 	}
 
 	const mux = DefaultTrackMux;
-	const client = new Client({ transportOptions });
-	const session = client.dial(relayUrl, mux);
+	const session = connect(relayUrl, { mux, transportOptions });
 	session.catch((e) => console.error("[client] session failed:", e));
 	return (
 		<>
