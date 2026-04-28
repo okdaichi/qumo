@@ -102,6 +102,38 @@ func (ring *groupRing) add(group *moqt.GroupReader, onFrame func()) {
 	}
 }
 
+// reserve atomically allocates a ring slot for seq and returns the new cache.
+// It must be called from the ingest goroutine (single writer) to preserve group ordering.
+func (ring *groupRing) reserve(seq moqt.GroupSequence) *groupCache {
+	cache := &groupCache{
+		seq:    seq,
+		frames: make([]*moqt.Frame, 0, 1),
+	}
+	idx := int(ring.pos.Add(1) % uint64(ring.size))
+	ring.caches[idx].Store(cache)
+	return cache
+}
+
+// fill reads all frames from group into cache, calling onFrame after each frame
+// and once more when the group is complete.
+// It is safe to call fill concurrently for different groups.
+func (ring *groupRing) fill(group *moqt.GroupReader, cache *groupCache, onFrame func()) {
+	frame := ring.pool.Get()
+	frameCount := 0
+	for frame := range group.Frames(frame) {
+		frameCount++
+		cache.append(frame)
+		if onFrame != nil {
+			onFrame()
+		}
+	}
+	slog.Debug("group cached", "seq", cache.seq, "frames", frameCount)
+	cache.markComplete()
+	if onFrame != nil {
+		onFrame()
+	}
+}
+
 func (ring *groupRing) get(seq moqt.GroupSequence) *groupCache {
 	return ring.caches[uint64(seq)%uint64(ring.size)].Load()
 }

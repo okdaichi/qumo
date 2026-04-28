@@ -478,6 +478,11 @@ func (d *trackDistributor) ingest(ctx context.Context, src *moqt.TrackReader) {
 	defer d.manager.remove(d.name, d)
 	defer close(d.done)
 
+	// wg tracks in-flight fill goroutines so we can wait for them before
+	// closing d.done (which signals egress goroutines to stop).
+	var wg sync.WaitGroup
+	defer wg.Wait()
+
 	for {
 		gr, err := src.AcceptGroup(ctx)
 		if err != nil {
@@ -485,7 +490,12 @@ func (d *trackDistributor) ingest(ctx context.Context, src *moqt.TrackReader) {
 			return
 		}
 
-		d.ring.add(gr, d.broadcast)
+		// Reserve a ring slot synchronously to preserve group ordering,
+		// then fill frames concurrently so the next AcceptGroup is not blocked.
+		cache := d.ring.reserve(gr.GroupSequence())
+		wg.Go(func() {
+			d.ring.fill(gr, cache, d.broadcast)
+		})
 	}
 }
 
