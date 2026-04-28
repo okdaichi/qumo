@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     Added `subscriber_skips_total` counter for QoS tracking and `subscribe_errors_total`,
     `peer_dial_attempts_total`, `route_replacements_total`, and `route_rejections_total`
     for operational analysis.
+    Added node-level byte accounting for relay ingress and egress with
+    `qumo_relay_ingress_bytes_total{node_id}` and `qumo_relay_egress_bytes_total{node_id}`.
   - *QUIC-layer metrics*: Added `conn_smoothed_rtt_ms` and `conn_packet_loss_rate`
     for native QUIC connections (skipped for WebTransport).
   - *Ingest metrics*: Achieved parity with relay by adding `publishers_active`,

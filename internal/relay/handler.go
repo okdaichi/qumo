@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/qumo-dev/gomoqt/moqt"
 	"golang.org/x/sync/singleflight"
 )
@@ -73,6 +74,7 @@ type relayHandler struct {
 
 	tracks  *trackManager
 	flights singleflight.Group
+	nodeID  string
 
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -142,7 +144,7 @@ func isBetterRoute(candidate, current RouteStats) (bool, rejectionReason) {
 	return false, rejectionInferiorRTT
 }
 
-func newRelayHandler(ann *moqt.Announcement, sess *moqt.Session) *relayHandler {
+func newRelayHandler(ann *moqt.Announcement, sess *moqt.Session, nodeID string) *relayHandler {
 	if sess == nil {
 		panic("relay: session must not be nil")
 	}
@@ -155,6 +157,7 @@ func newRelayHandler(ann *moqt.Announcement, sess *moqt.Session) *relayHandler {
 		announcement: ann,
 		session:      sess,
 		tracks:       newTrackManager(),
+		nodeID:       nodeID,
 		ctx:          ctx,
 		cancel:       cancel,
 	}
@@ -194,7 +197,8 @@ func (h *relayHandler) ServeTrack(tw *moqt.TrackWriter) {
 	)
 
 	// Fast path: reuse existing distributor
-	if d, ok := h.tracks.load(tw.TrackName); ok {
+	trackID := "[" + h.nodeID + "]" + string(tw.BroadcastPath) + "/" + string(tw.TrackName)
+	if d, ok := h.tracks.load(trackID); ok {
 		d.egress(tw)
 		return
 	}
@@ -216,7 +220,6 @@ func (h *relayHandler) ServeTrack(tw *moqt.TrackWriter) {
 			logger.Warn("Track not found, closing track writer")
 			return
 		}
-		logger.Debug("Relaying track")
 		result.Val.(*trackDistributor).egress(tw)
 	case <-tw.Context().Done():
 		// Client unsubscribed before we could subscribe upstream - just return
@@ -225,7 +228,14 @@ func (h *relayHandler) ServeTrack(tw *moqt.TrackWriter) {
 }
 
 func (h *relayHandler) subscribe(name moqt.TrackName) *trackDistributor {
-	if d, ok := h.tracks.load(name); ok {
+	announcement := h.announcement
+	if announcement == nil {
+		slog.Warn("relay: subscribe failed: announcement is nil", "track", name)
+		return nil
+	}
+
+	trackID := "[" + h.nodeID + "]" + string(announcement.BroadcastPath()) + "/" + string(name)
+	if d, ok := h.tracks.load(trackID); ok {
 		return d
 	}
 
@@ -235,11 +245,6 @@ func (h *relayHandler) subscribe(name moqt.TrackName) *trackDistributor {
 		return nil
 	}
 
-	announcement := h.announcement
-	if announcement == nil {
-		slog.Warn("relay: subscribe failed: announcement is nil", "track", name)
-		return nil
-	}
 	if !announcement.IsActive() {
 		slog.Warn("relay: subscribe failed: announcement inactive",
 			"track", name,
@@ -256,44 +261,48 @@ func (h *relayHandler) subscribe(name moqt.TrackName) *trackDistributor {
 		return nil
 	}
 
-	d := newTrackDistributor(name, h.tracks)
+	d := newTrackDistributor(h.tracks, trackID)
 
 	go d.ingest(h.ctx, src)
 
-	h.tracks.store(name, d)
+	h.tracks.store(trackID, d)
 
 	return d
 }
 
 // trackManager manages the set of active track distributors.
 type trackManager struct {
-	m sync.Map // moqt.TrackName → *trackDistributor
+	m sync.Map // trackID string → *trackDistributor
 }
 
 func newTrackManager() *trackManager {
 	return &trackManager{}
 }
 
-func (tm *trackManager) load(name moqt.TrackName) (*trackDistributor, bool) {
-	v, ok := tm.m.Load(name)
+func (tm *trackManager) load(trackID string) (*trackDistributor, bool) {
+	v, ok := tm.m.Load(trackID)
 	if !ok {
 		return nil, false
 	}
 	return v.(*trackDistributor), true
 }
 
-func (tm *trackManager) store(name moqt.TrackName, d *trackDistributor) {
-	tm.m.Store(name, d)
+func (tm *trackManager) store(trackID string, d *trackDistributor) {
+	tm.m.Store(trackID, d)
 }
 
-func (tm *trackManager) remove(name moqt.TrackName, d *trackDistributor) {
-	tm.m.CompareAndDelete(name, d)
+func (tm *trackManager) remove(trackID string, d *trackDistributor) {
+	tm.m.CompareAndDelete(trackID, d)
 }
 
 type trackDistributor struct {
-	name    moqt.TrackName
+	trackID string
 	ring    *groupRing
 	manager *trackManager
+
+	// Pre-bound Prometheus counters to avoid per-frame label lookups in hot paths.
+	ingressCounter prometheus.Counter
+	egressCounter  prometheus.Counter
 
 	mu          sync.RWMutex
 	subscribers map[chan struct{}]struct{}
@@ -301,21 +310,22 @@ type trackDistributor struct {
 	done chan struct{} // closed when ingest returns
 }
 
-func newTrackDistributor(name moqt.TrackName, manager *trackManager) *trackDistributor {
+func newTrackDistributor(manager *trackManager, trackID string) *trackDistributor {
 	d := &trackDistributor{
-		name:        name,
-		ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-		manager:     manager,
-		subscribers: make(map[chan struct{}]struct{}),
-		done:        make(chan struct{}),
+		trackID:        trackID,
+		ring:           newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
+		manager:        manager,
+		ingressCounter: metricRelayIngressBytesTotal.WithLabelValues(trackID),
+		egressCounter:  metricRelayEgressBytesTotal.WithLabelValues(trackID),
+		subscribers:    make(map[chan struct{}]struct{}),
+		done:           make(chan struct{}),
 	}
 	go d.pollCacheDepth()
 	return d
 }
 
 func (d *trackDistributor) pollCacheDepth() {
-	trackName := string(d.name)
-	defer metricBufferDepthGroups.DeleteLabelValues(trackName)
+	defer metricBufferDepthGroups.DeleteLabelValues(d.trackID)
 
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
@@ -331,7 +341,7 @@ func (d *trackDistributor) pollCacheDepth() {
 			if head >= earliest {
 				depth = int(head - earliest + 1)
 			}
-			metricBufferDepthGroups.WithLabelValues(trackName).Set(float64(depth))
+			metricBufferDepthGroups.WithLabelValues(d.trackID).Set(float64(depth))
 		}
 	}
 }
@@ -385,31 +395,16 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 				return
 			}
 			start := time.Now()
-
-			slog.Debug("egress starting group",
-				"track_name", tw.TrackName,
-				"broadcast_path", tw.BroadcastPath,
-				"group_sequence", cache.seq,
-				"latest_available", latest,
-				"earliest_available", earliest,
-			)
-
-			// Incrementally send frames as they become available
 			frameIdx := 0
+
 			for {
 				frame := cache.next(frameIdx)
 				if frame != nil {
-					if frameIdx == 0 {
-						slog.Debug("egress writing first frame of group",
-							"track_name", tw.TrackName,
-							"broadcast_path", tw.BroadcastPath,
-							"group_sequence", cache.seq,
-						)
-					}
 					if err := gw.WriteFrame(frame); err != nil {
 						_ = gw.Close()
 						return
 					}
+					d.egressCounter.Add(float64(frame.Len()))
 					frameIdx++
 					continue
 				}
@@ -475,18 +470,22 @@ func (d *trackDistributor) unsubscribe(ch chan struct{}) {
 }
 
 func (d *trackDistributor) ingest(ctx context.Context, src *moqt.TrackReader) {
-	defer d.manager.remove(d.name, d)
+	defer d.manager.remove(d.trackID, d)
 	defer close(d.done)
 
 	for {
 		gr, err := src.AcceptGroup(ctx)
 		if err != nil {
-			slog.Debug("ingest stopped", "error", err)
 			return
 		}
 
-		d.ring.add(gr, d.broadcast)
+		d.addGroup(gr)
 	}
+}
+
+func (d *trackDistributor) addGroup(group *moqt.GroupReader) {
+	totalBytes := d.ring.add(group, d.broadcast)
+	d.ingressCounter.Add(float64(totalBytes))
 }
 
 // broadcast notifies all subscribers that new data is available.
