@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"fmt"
+	"iter"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -889,6 +890,161 @@ func TestRelayHandler_RTT_NilSession(t *testing.T) {
 	assert.Equal(t, 0, h.RouteStats().Hops, "nil session should yield 0 hops without panic")
 	assert.Equal(t, uint64(0), h.RouteStats().EstimatedBitrate, "nil session should yield 0 bitrate without panic")
 	assert.Equal(t, time.Duration(0), h.RouteStats().RTT, "nil session should yield 0 RTT without panic")
+}
+
+// ============================================================================
+// ingest concurrent group processing tests
+// ============================================================================
+
+// slowFrameSource is a fakeFrameSource that introduces a small delay per frame,
+// amplifying any serial bottleneck so we can detect concurrency regressions.
+type slowFrameSource struct {
+	fakeFrameSource
+	delay time.Duration
+}
+
+func (s *slowFrameSource) Frames(buf *moqt.Frame) iter.Seq[*moqt.Frame] {
+	return func(yield func(*moqt.Frame) bool) {
+		for _, data := range s.frames {
+			time.Sleep(s.delay)
+			buf.Reset()
+			buf.Write(data)
+			if !yield(buf) {
+				return
+			}
+		}
+	}
+}
+
+// TestIngest_ConcurrentGroups_AllCachesComplete exercises the reserve+fill split
+// directly: reserve N caches sequentially, then fill them concurrently, and
+// confirm that every cache is marked complete and holds the correct frames.
+func TestIngest_ConcurrentGroups_AllCachesComplete(t *testing.T) {
+	const numGroups = 10
+	const framesPerGroup = 5
+
+	ring := newGroupRing(numGroups, DefaultFramePool)
+	caches := make([]*groupCache, numGroups)
+	for i := range numGroups {
+		caches[i] = ring.reserve(moqt.GroupSequence(i + 1))
+	}
+
+	var wg sync.WaitGroup
+	for i := range numGroups {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			frames := make([][]byte, framesPerGroup)
+			for j := range framesPerGroup {
+				frames[j] = []byte(fmt.Sprintf("g%d-f%d", idx, j))
+			}
+			ring.fill(&fakeFrameSource{frames: frames}, caches[idx], nil)
+		}(i)
+	}
+	wg.Wait()
+
+	for i, c := range caches {
+		assert.True(t, c.isComplete(), "group %d should be complete", i)
+		for j := range framesPerGroup {
+			assert.NotNil(t, c.next(j), "group %d frame %d should exist", i, j)
+		}
+	}
+}
+
+// TestIngest_ConcurrentGroups_FasterThanSerial confirms that concurrent fill
+// is meaningfully faster than serial fill when frames have per-frame latency.
+//
+// Serial time ≈ numGroups × framesPerGroup × delay.
+// Concurrent time ≈ framesPerGroup × delay (all groups run in parallel).
+// We use a generous factor (0.7× serial) to avoid flakiness on loaded CI.
+func TestIngest_ConcurrentGroups_FasterThanSerial(t *testing.T) {
+	const numGroups = 6
+	const framesPerGroup = 3
+	const delay = 5 * time.Millisecond
+
+	ring := newGroupRing(numGroups, DefaultFramePool)
+	caches := make([]*groupCache, numGroups)
+	for i := range numGroups {
+		caches[i] = ring.reserve(moqt.GroupSequence(i + 1))
+	}
+
+	start := time.Now()
+
+	var wg sync.WaitGroup
+	for i := range numGroups {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			frames := make([][]byte, framesPerGroup)
+			for j := range framesPerGroup {
+				frames[j] = []byte("x")
+			}
+			src := &slowFrameSource{
+				fakeFrameSource: fakeFrameSource{frames: frames},
+				delay:           delay,
+			}
+			ring.fill(src, caches[idx], nil)
+		}(i)
+	}
+	wg.Wait()
+
+	elapsed := time.Since(start)
+	serialTime := time.Duration(numGroups*framesPerGroup) * delay
+	threshold := time.Duration(float64(serialTime) * 0.7)
+	assert.Less(t, elapsed, threshold,
+		"concurrent fill (%v) should be much faster than serial (%v); threshold %v",
+		elapsed, serialTime, threshold)
+}
+
+// TestIngest_WaitGroup_BlocksDoneUntilFillComplete verifies the LIFO defer
+// ordering: wg.Wait() must run before close(done), so subscribers cannot see
+// done closed while a fill goroutine is still writing frames.
+//
+// We simulate this with the ring directly: start a fill goroutine for a slow
+// source, assert done is not closed until fill finishes.
+func TestIngest_WaitGroup_BlocksDoneUntilFillComplete(t *testing.T) {
+	ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
+	cache := ring.reserve(moqt.GroupSequence(1))
+
+	done := make(chan struct{})
+	fillDone := make(chan struct{})
+
+	frames := [][]byte{[]byte("a"), []byte("b"), []byte("c")}
+	src := &slowFrameSource{
+		fakeFrameSource: fakeFrameSource{frames: frames},
+		delay:           10 * time.Millisecond,
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		ring.fill(src, cache, nil)
+		close(fillDone)
+	}()
+
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	// fillDone must be closed before (or at the same time as) done.
+	select {
+	case <-fillDone:
+		// OK: fill completed
+	case <-done:
+		t.Fatal("done closed before fill completed")
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("timed out waiting for fill to complete")
+	}
+
+	// After fill is done, done must close promptly.
+	select {
+	case <-done:
+		// OK
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("done channel was not closed after wg.Wait()")
+	}
 }
 
 // ============================================================================

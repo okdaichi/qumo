@@ -1,12 +1,19 @@
 package relay
 
 import (
+	"iter"
 	"log/slog"
 	"sync"
 	"sync/atomic"
 
 	"github.com/qumo-dev/gomoqt/moqt"
 )
+
+// frameSource is satisfied by *moqt.GroupReader and can be implemented by
+// test fakes to exercise fill without a real MoQT connection.
+type frameSource interface {
+	Frames(buf *moqt.Frame) iter.Seq[*moqt.Frame]
+}
 
 const DefaultGroupCacheSize = 8
 
@@ -117,7 +124,7 @@ func (ring *groupRing) reserve(seq moqt.GroupSequence) *groupCache {
 // fill reads all frames from group into cache, calling onFrame after each frame
 // and once more when the group is complete.
 // It is safe to call fill concurrently for different groups.
-func (ring *groupRing) fill(group *moqt.GroupReader, cache *groupCache, onFrame func()) {
+func (ring *groupRing) fill(group frameSource, cache *groupCache, onFrame func()) {
 	frame := ring.pool.Get()
 	frameCount := 0
 	for frame := range group.Frames(frame) {
