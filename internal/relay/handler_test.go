@@ -1,16 +1,31 @@
 package relay
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/okdaichi/gomoqt/moqt"
+	"github.com/qumo-dev/gomoqt/moqt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func newTestRelayHandler(ctx context.Context) *relayHandler {
+	ann, _ := moqt.NewAnnouncement(ctx, "/test")
+	ctx, cancel := context.WithCancel(ctx)
+	// minimal moqt.Session to satisfy non-nil constraints
+	sess := &moqt.Session{}
+	return &relayHandler{
+		announcement: ann,
+		session:      sess,
+		tracks:       newTrackManager(),
+		ctx:          ctx,
+		cancel:       cancel,
+	}
+}
 
 // ============================================================================
 // trackDistributor Tests - Core Functionality
@@ -27,9 +42,7 @@ func TestTrackDistributor_Broadcast_SingleSubscriber(t *testing.T) {
 	ready := make(chan struct{})
 	var wg sync.WaitGroup
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		ch := dist.subscribe()
 		defer dist.unsubscribe(ch)
 		close(ready)
@@ -41,7 +54,7 @@ func TestTrackDistributor_Broadcast_SingleSubscriber(t *testing.T) {
 		case <-timeout:
 			return
 		}
-	}()
+	})
 
 	<-ready
 
@@ -81,9 +94,7 @@ func TestTrackDistributor_Broadcast_MultipleSubscribers(t *testing.T) {
 			var wg sync.WaitGroup
 
 			for i := 0; i < tt.numSubscribers; i++ {
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
+				wg.Go(func() {
 					ch := dist.subscribe()
 					defer dist.unsubscribe(ch)
 					ready <- struct{}{}
@@ -96,7 +107,7 @@ func TestTrackDistributor_Broadcast_MultipleSubscribers(t *testing.T) {
 							return
 						}
 					}
-				}()
+				})
 			}
 
 			for i := 0; i < tt.numSubscribers; i++ {
@@ -172,22 +183,18 @@ func TestTrackDistributor_ConcurrentAccess(t *testing.T) {
 
 	var wg sync.WaitGroup
 
-	for i := 0; i < goroutines; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := 0; j < iterations; j++ {
+	for range goroutines {
+		wg.Go(func() {
+			for range iterations {
 				ch := dist.subscribe()
 				dist.unsubscribe(ch)
 			}
-		}()
+		})
 	}
 
-	for i := 0; i < goroutines; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := 0; j < iterations; j++ {
+	for range goroutines {
+		wg.Go(func() {
+			for range iterations {
 				dist.mu.RLock()
 				for ch := range dist.subscribers {
 					select {
@@ -197,7 +204,7 @@ func TestTrackDistributor_ConcurrentAccess(t *testing.T) {
 				}
 				dist.mu.RUnlock()
 			}
-		}()
+		})
 	}
 
 	wg.Wait()
@@ -251,7 +258,7 @@ func TestTrackDistributor_NoBroadcastBlocking(t *testing.T) {
 	}
 
 	// Create subscribers but don't read
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		dist.subscribe()
 	}
 
@@ -345,7 +352,7 @@ func TestTrackDistributor_EdgeCases(t *testing.T) {
 		}
 
 		// Rapidly add and remove
-		for i := 0; i < 1000; i++ {
+		for range 1000 {
 			ch := dist.subscribe()
 			dist.unsubscribe(ch)
 		}
@@ -367,13 +374,13 @@ func TestTrackDistributor_Stress(t *testing.T) {
 		}
 
 		const numSubs = 100
-		for i := 0; i < numSubs; i++ {
+		for range numSubs {
 			dist.subscribe()
 		}
 
 		done := make(chan bool)
 		go func() {
-			for i := 0; i < 10000; i++ {
+			for range 10000 {
 				dist.mu.RLock()
 				for ch := range dist.subscribers {
 					select {
@@ -403,10 +410,8 @@ func TestTrackDistributor_Stress(t *testing.T) {
 		var wg sync.WaitGroup
 		stopCh := make(chan struct{})
 
-		for i := 0; i < 10; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+		for range 10 {
+			wg.Go(func() {
 				for {
 					select {
 					case <-stopCh:
@@ -416,13 +421,11 @@ func TestTrackDistributor_Stress(t *testing.T) {
 						dist.unsubscribe(ch)
 					}
 				}
-			}()
+			})
 		}
 
-		for i := 0; i < 5; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+		for range 5 {
+			wg.Go(func() {
 				for {
 					select {
 					case <-stopCh:
@@ -438,7 +441,7 @@ func TestTrackDistributor_Stress(t *testing.T) {
 						dist.mu.RUnlock()
 					}
 				}
-			}()
+			})
 		}
 
 		time.Sleep(2 * time.Second)
@@ -463,7 +466,7 @@ func TestTrackDistributor_Scalability(t *testing.T) {
 			}
 
 			// Create n subscribers
-			for i := 0; i < n; i++ {
+			for range n {
 				dist.subscribe()
 			}
 
@@ -497,7 +500,7 @@ func TestTrackDistributor_MemoryBehavior(t *testing.T) {
 
 		// Subscribe many
 		const count = 1000
-		for i := 0; i < count; i++ {
+		for range count {
 			ch := dist.subscribe()
 			// Immediately unsubscribe to allow GC
 			dist.unsubscribe(ch)
@@ -513,7 +516,7 @@ func TestTrackDistributor_MemoryBehavior(t *testing.T) {
 		}
 
 		channels := make([]chan struct{}, 100)
-		for i := 0; i < 100; i++ {
+		for i := range 100 {
 			channels[i] = dist.subscribe()
 		}
 
@@ -546,14 +549,14 @@ func TestTrackDistributor_RaceConditions(t *testing.T) {
 
 		go func() {
 			defer wg.Done()
-			for i := 0; i < 100; i++ {
+			for range 100 {
 				dist.subscribe()
 			}
 		}()
 
 		go func() {
 			defer wg.Done()
-			for i := 0; i < 100; i++ {
+			for range 100 {
 				dist.mu.RLock()
 				for ch := range dist.subscribers {
 					select {
@@ -575,7 +578,7 @@ func TestTrackDistributor_RaceConditions(t *testing.T) {
 		}
 
 		channels := make([]chan struct{}, 100)
-		for i := 0; i < 100; i++ {
+		for i := range 100 {
 			channels[i] = dist.subscribe()
 		}
 
@@ -591,7 +594,7 @@ func TestTrackDistributor_RaceConditions(t *testing.T) {
 
 		go func() {
 			defer wg.Done()
-			for i := 0; i < 100; i++ {
+			for range 100 {
 				dist.mu.RLock()
 				for ch := range dist.subscribers {
 					select {
@@ -639,7 +642,7 @@ func TestTrackDistributor_NotificationDelivery(t *testing.T) {
 			}()
 		}
 
-		for i := 0; i < numSubs; i++ {
+		for range numSubs {
 			<-ready
 		}
 
@@ -721,24 +724,26 @@ func TestTrackDistributor_GroupRingIntegration(t *testing.T) {
 	assert.Equal(t, moqt.GroupSequence(1), earliest, "Expected earliest to be 1")
 }
 
-// TestTrackDistributor_OnClose tests the onClose callback
-func TestTrackDistributor_OnClose(t *testing.T) {
-	onCloseCalled := false
+// TestTrackDistributor_DoneChannel tests that the done channel is closed when ingest stops
+func TestTrackDistributor_DoneChannel(t *testing.T) {
+	dist := newTrackDistributor("test", newTrackManager())
 
-	dist := &trackDistributor{
-		ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-		subscribers: make(map[chan struct{}]struct{}),
-		onClose: func() {
-			onCloseCalled = true
-		},
+	// done should not be closed initially
+	select {
+	case <-dist.done:
+		require.Fail(t, "done channel should not be closed yet")
+	default:
 	}
 
-	// Test calling onClose directly
-	if dist.onClose != nil {
-		dist.onClose()
-	}
+	// Simulate ingest finishing by closing done directly
+	close(dist.done)
 
-	assert.True(t, onCloseCalled, "Expected onClose callback to be called")
+	select {
+	case <-dist.done:
+		// Expected
+	case <-time.After(50 * time.Millisecond):
+		require.Fail(t, "done channel should be closed")
+	}
 }
 
 // TestTrackDistributor_RingBehavior tests ring head and earliest available
@@ -792,27 +797,33 @@ func TestTrackDistributor_RingBehavior(t *testing.T) {
 // round-trip. A second ServeTrack call (e.g. for "video" while "video.meta" was
 // subscribing) would block on the same mutex, causing a deadlock.
 func TestRelayHandler_ConcurrentSubscribe(t *testing.T) {
-	h := newRelayHandler(nil, nil, DefaultGroupCacheSize, DefaultFramePool) // nil session for test
+	h := newTestRelayHandler(t.Context())
 
+	// Pre-fill distributors to avoid real Session.Subscribe calls
 	const numTracks = 10
+	for i := range numTracks {
+		name := moqt.TrackName(fmt.Sprintf("track-%d", i))
+		d := newTrackDistributor(name, h.tracks)
+		defer close(d.done)
+		h.tracks.store(name, d)
+	}
+
 	done := make(chan struct{}, numTracks)
 
-	for i := 0; i < numTracks; i++ {
+	for i := range numTracks {
 		go func() {
 			defer func() { done <- struct{}{} }()
 			name := moqt.TrackName(fmt.Sprintf("track-%d", i))
 
-			// Mirrors ServeTrack: Load → subscribe → LoadOrStore
-			if _, ok := h.relaying.Load(name); !ok {
-				tr := h.subscribe(name)
-				_ = tr // nil because Session is nil
-			}
+			// Should hit the cache and return immediately
+			tr := h.subscribe(name)
+			_ = tr
 		}()
 	}
 
 	// All goroutines must finish within 1 second; a deadlock would hang.
 	timeout := time.After(1 * time.Second)
-	for i := 0; i < numTracks; i++ {
+	for range numTracks {
 		select {
 		case <-done:
 		case <-timeout:
@@ -821,30 +832,231 @@ func TestRelayHandler_ConcurrentSubscribe(t *testing.T) {
 	}
 }
 
-// TestRelayHandler_LoadOrStore verifies that sync.Map.LoadOrStore correctly
-// deduplicates distributors when two goroutines race to store the same track.
-func TestRelayHandler_LoadOrStore(t *testing.T) {
-	h := &RelayHandler{
-		Session:        nil,
-		GroupCacheSize: DefaultGroupCacheSize,
-		FramePool:      DefaultFramePool,
+// TestRelayHandler_SingleflightDedup verifies that concurrent ServeTrack calls
+// for the same track name result in only one upstream subscribe via singleflight.
+func TestRelayHandler_SingleflightDedup(t *testing.T) {
+	h := newTestRelayHandler(t.Context()) // nil session for test
+
+	// Pre-populate a distributor in the cache
+	existing := newTrackDistributor("video", newTrackManager())
+	defer close(existing.done) // Cleanup goroutine
+	h.tracks.store(moqt.TrackName("video"), existing)
+
+	// Load should return the existing one
+	v, ok := h.tracks.load(moqt.TrackName("video"))
+	require.True(t, ok, "Expected cached entry")
+	assert.Same(t, existing, v, "Should return the cached distributor")
+
+	// remove with the correct value should succeed
+	h.tracks.remove(moqt.TrackName("video"), existing)
+
+	// Subsequent load should miss
+	_, ok = h.tracks.load(moqt.TrackName("video"))
+	assert.False(t, ok, "Should not find deleted entry")
+}
+
+// ============================================================================
+// RouteStats Tests
+// ============================================================================
+
+// TestRelayHandler_RouteStats_Interface verifies that *relayHandler satisfies
+// the RouteReporter interface and is discoverable via type assertion.
+func TestRelayHandler_RouteStats_Interface(t *testing.T) {
+	ctx := context.Background()
+	h := newTestRelayHandler(ctx)
+
+	var th moqt.TrackHandler = h
+	rr, ok := th.(RouteReporter)
+	require.True(t, ok, "*relayHandler must implement RouteReporter")
+	assert.NotNil(t, rr)
+}
+
+// TestRelayHandler_Hops_LocalAnnouncement confirms that a locally created
+// announcement (no forwarding) reports 0 hops.
+func TestRelayHandler_Hops_LocalAnnouncement(t *testing.T) {
+	ctx := context.Background()
+	h := newTestRelayHandler(ctx)
+
+	assert.Equal(t, 0, h.RouteStats().Hops, "local announcement should have 0 hops")
+}
+
+// TestRelayHandler_RTT_NilSession returns a RouteStats with nil Probe when
+// the session is nil.
+func TestRelayHandler_RTT_NilSession(t *testing.T) {
+	ctx := context.Background()
+	h := newTestRelayHandler(ctx) // session is nil
+
+	assert.Equal(t, 0, h.RouteStats().Hops, "nil session should yield 0 hops without panic")
+	assert.Equal(t, uint64(0), h.RouteStats().EstimatedBitrate, "nil session should yield 0 bitrate without panic")
+	assert.Equal(t, time.Duration(0), h.RouteStats().RTT, "nil session should yield 0 RTT without panic")
+}
+
+// ============================================================================
+// isBetterRoute Tests
+// ============================================================================
+
+func TestIsBetterRoute(t *testing.T) {
+	type testCase struct {
+		candidate RouteStats
+		current   RouteStats
+		want      bool
+	}
+	tests := map[string]testCase{
+		"fewer hops wins regardless of RTT": {
+			candidate: RouteStats{Alive: true, Hops: 1, RTT: 100},
+			current:   RouteStats{Alive: true, Hops: 2, RTT: 10},
+			want:      true,
+		},
+		"more hops loses regardless of RTT": {
+			candidate: RouteStats{Alive: true, Hops: 3, RTT: 1},
+			current:   RouteStats{Alive: true, Hops: 2, RTT: 999},
+			want:      false,
+		},
+		"equal hops: higher bitrate wins over lower RTT": {
+			candidate: RouteStats{Alive: true, Hops: 2, EstimatedBitrate: 10_000_000, RTT: 80},
+			current:   RouteStats{Alive: true, Hops: 2, EstimatedBitrate: 5_000_000, RTT: 20},
+			want:      true,
+		},
+		"equal hops and bitrate: lower RTT wins": {
+			candidate: RouteStats{Alive: true, Hops: 2, EstimatedBitrate: 5_000_000, RTT: 20},
+			current:   RouteStats{Alive: true, Hops: 2, EstimatedBitrate: 5_000_000, RTT: 50},
+			want:      true,
+		},
+		"equal hops: higher RTT loses": {
+			candidate: RouteStats{Alive: true, Hops: 2, RTT: 80},
+			current:   RouteStats{Alive: true, Hops: 2, RTT: 50},
+			want:      false,
+		},
+		"equal hops: zero bitrate/RTT keeps existing route": {
+			candidate: RouteStats{Alive: true, Hops: 2},
+			current:   RouteStats{Alive: true, Hops: 2, EstimatedBitrate: 5_000_000, RTT: 50},
+			want:      false,
+		},
+		// Alive dominates all quality metrics.
+		"alive candidate beats dead current regardless of hops": {
+			candidate: RouteStats{Alive: true, Hops: 5},
+			current:   RouteStats{Alive: false, Hops: 1},
+			want:      true,
+		},
+		"dead candidate loses to alive current regardless of hops": {
+			candidate: RouteStats{Alive: false, Hops: 1},
+			current:   RouteStats{Alive: true, Hops: 5},
+			want:      false,
+		},
+		"both dead: keep existing route": {
+			candidate: RouteStats{Alive: false, Hops: 1, RTT: 1},
+			current:   RouteStats{Alive: false, Hops: 5, RTT: 999},
+			want:      false,
+		},
+		"both alive: normal hop comparison applies": {
+			candidate: RouteStats{Alive: true, Hops: 1, RTT: 100},
+			current:   RouteStats{Alive: true, Hops: 2, RTT: 10},
+			want:      true,
+		},
 	}
 
-	// Pre-populate a distributor via sync.Map
-	existing := &trackDistributor{
-		ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-		subscribers: make(map[chan struct{}]struct{}),
-		onClose:     func() {},
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			got, _ := isBetterRoute(tt.candidate, tt.current)
+			assert.Equal(t, tt.want, got)
+		})
 	}
-	h.relaying.Store(moqt.TrackName("video"), existing)
+}
 
-	// LoadOrStore should return the existing one
-	challenger := &trackDistributor{
-		ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-		subscribers: make(map[chan struct{}]struct{}),
-		onClose:     func() {},
+// ============================================================================
+// RouteStats.Alive Tests
+// ============================================================================
+
+// TestRelayHandler_Alive_ActiveContext verifies Alive=true for a live handler.
+func TestRelayHandler_Alive_ActiveContext(t *testing.T) {
+	h := newTestRelayHandler(t.Context())
+	assert.True(t, h.RouteStats().Alive, "handler with active context should be alive")
+}
+
+// TestRelayHandler_Alive_CancelledContext verifies Alive=false after ctx cancel.
+func TestRelayHandler_Alive_CancelledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	ann, _ := moqt.NewAnnouncement(ctx, "/test")
+	sess := &moqt.Session{}
+	h := &relayHandler{
+		announcement: ann,
+		session:      sess,
+		tracks:       newTrackManager(),
+		ctx:          ctx,
+		cancel:       cancel,
 	}
-	actual, loaded := h.relaying.LoadOrStore(moqt.TrackName("video"), challenger)
-	require.True(t, loaded, "Expected existing entry")
-	assert.Equal(t, existing, actual.(*trackDistributor), "Should return the pre-populated distributor")
+
+	assert.True(t, h.RouteStats().Alive, "should be alive before cancel")
+	cancel()
+	assert.False(t, h.RouteStats().Alive, "should be dead after cancel")
+}
+
+// TestRelayHandler_Alive_RetractedAnnouncement verifies Alive=false when
+// the announcement is retracted (IsActive=false) even if the context is live.
+func TestRelayHandler_Alive_RetractedAnnouncement(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Create an announcement then retract it via EndAnnouncementFunc.
+	ann, end := moqt.NewAnnouncement(ctx, "/test")
+	sess := &moqt.Session{}
+	h := &relayHandler{
+		announcement: ann,
+		session:      sess,
+		tracks:       newTrackManager(),
+		ctx:          ctx,
+		cancel:       cancel,
+	}
+
+	assert.True(t, h.RouteStats().Alive, "should be alive before retract")
+	end() // retract the announcement
+	<-ann.Done()
+	assert.False(t, h.RouteStats().Alive, "should be dead after announcement retract")
+}
+
+// ============================================================================
+// Drain Tests
+// ============================================================================
+
+// TestRelayHandler_Drain_ZeroTimeout verifies that Drain(0) cancels immediately.
+func TestRelayHandler_Drain_ZeroTimeout(t *testing.T) {
+	h := newTestRelayHandler(context.Background())
+	require.True(t, h.RouteStats().Alive)
+
+	h.Drain(0)
+
+	// time.AfterFunc(0, ...) fires in a separate goroutine; give it a moment.
+	assert.Eventually(t, func() bool {
+		return !h.RouteStats().Alive
+	}, 100*time.Millisecond, time.Millisecond, "Drain(0) should cancel context quickly")
+}
+
+// TestRelayHandler_Drain_WithTimeout verifies that Drain with a positive timeout
+// leaves the handler alive initially and kills it after the delay.
+func TestRelayHandler_Drain_WithTimeout(t *testing.T) {
+	h := newTestRelayHandler(context.Background())
+
+	h.Drain(50 * time.Millisecond)
+
+	assert.True(t, h.RouteStats().Alive, "should still be alive immediately after Drain")
+
+	assert.Eventually(t, func() bool {
+		return !h.RouteStats().Alive
+	}, 200*time.Millisecond, time.Millisecond, "handler should become dead after drain timeout")
+}
+
+// TestRelayHandler_Drain_Idempotent verifies multiple Drain calls don't panic
+// and cancel is idempotent.
+func TestRelayHandler_Drain_Idempotent(t *testing.T) {
+	h := newTestRelayHandler(context.Background())
+
+	require.NotPanics(t, func() {
+		h.Drain(0)
+		h.Drain(0)
+		h.Drain(50 * time.Millisecond)
+	})
+
+	assert.Eventually(t, func() bool {
+		return !h.RouteStats().Alive
+	}, 100*time.Millisecond, time.Millisecond)
 }

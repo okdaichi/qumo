@@ -1,8 +1,8 @@
 {
 	"imports": {
-		"@okdaichi/av-nodes": "jsr:@okdaichi/av-nodes@^0.9.1",
-		"@okdaichi/golikejs": "jsr:@okdaichi/golikejs@^0.8.0",
-		"@okdaichi/moq": "jsr:@okdaichi/moq@^0.10.5"
+		"@okdaichi/av-nodes": "jsr:@okdaichi/av-nodes@0.10.1",
+		"@okdaichi/golikejs": "jsr:@okdaichi/golikejs@0.9.0",
+		"@qumo/moq": "jsr:@qumo/moq@^0.15.0"
 	},
 	"fmt": {
 		"useTabs": true,

@@ -4,14 +4,17 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/okdaichi/qumo/internal/cli"
-	"github.com/okdaichi/qumo/internal/version"
+	"github.com/qumo-dev/qumo/internal/bootstrap"
+	"github.com/qumo-dev/qumo/internal/ingest"
+	"github.com/qumo-dev/qumo/internal/relay"
+	"github.com/qumo-dev/qumo/internal/version"
 )
 
 var (
 	// overridable command handlers for easier unit-testing
-	runRelay = cli.RunRelay
-	runSDN   = cli.RunSDN
+	runRelay     = relay.Run
+	runRTMP      = ingest.RunRTMP
+	runBootstrap = bootstrap.Run
 )
 
 func main() {
@@ -39,8 +42,10 @@ func run(args []string) int {
 	switch cmd {
 	case "relay":
 		err = runRelay(cmdArgs)
-	case "sdn":
-		err = runSDN(cmdArgs)
+	case "rtmp":
+		err = runRTMP(cmdArgs)
+	case "bootstrap":
+		err = runBootstrap(cmdArgs)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n", cmd)
 		printUsage()
@@ -55,14 +60,15 @@ func run(args []string) int {
 }
 
 func printUsage() {
-	fmt.Fprintf(os.Stderr, "Usage: qumo <command> [flags]  (%s)\n", version.Short())
+	fmt.Fprintf(os.Stderr, "Usage: qumo <command>  (%s)\n", version.Short())
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Commands:")
-	fmt.Fprintln(os.Stderr, "  relay    Start the MoQ relay server")
-	fmt.Fprintln(os.Stderr, "  sdn      Start the SDN controller")
-	fmt.Fprintln(os.Stderr, "  version  Print version information")
+	fmt.Fprintln(os.Stderr, "  relay      Start the MoQ relay server")
+	fmt.Fprintln(os.Stderr, "  rtmp       Start the RTMP ingest server")
+	fmt.Fprintln(os.Stderr, "  bootstrap  Start the bootstrap discovery server")
+	fmt.Fprintln(os.Stderr, "  version    Print version information")
 	fmt.Fprintln(os.Stderr, "")
-	fmt.Fprintln(os.Stderr, "Flags:")
-	fmt.Fprintln(os.Stderr, "  -config string   path to config file")
-	fmt.Fprintln(os.Stderr, "                   defaults: config.relay.yaml (relay), config.sdn.yaml (sdn)")
+	fmt.Fprintln(os.Stderr, "Configuration:")
+	fmt.Fprintln(os.Stderr, "  All commands are configured via environment variables.")
+	fmt.Fprintln(os.Stderr, "  See relay-config.example.env and bootstrap-config.example.env for details.")
 }

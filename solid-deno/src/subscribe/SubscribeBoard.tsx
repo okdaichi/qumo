@@ -1,39 +1,38 @@
-import { createEffect, createSignal, onCleanup, onMount, Show } from "solid-js";
-import { VideoContext, VideoDecodeNode } from "@okdaichi/av-nodes";
-import { type Session, SubscribeErrorCode } from "@okdaichi/moq";
+import { createSignal, onCleanup, onMount, Show } from "solid-js";
+import { AudioDecodeNode, VideoContext, VideoDecodeNode } from "@okdaichi/av-nodes";
+import { type Session, SubscribeErrorCode } from "@qumo/moq";
+import { parseCatalog } from "@qumo/moq/msf";
 import { deserializeMediaFrame } from "../publish/media_frame.ts";
-import { useBroadcastPath } from "../useBroadcastPath.ts";
 import { background, withCancel } from "@okdaichi/golikejs/context";
-import type { VideoMetadata } from "../metadata/mod.ts";
+import type { BroadcastPath } from "@qumo/moq";
 
 export function SubscribeBoard(props: { session: Promise<Session> }) {
 	const [isSubscribed, setIsSubscribed] = createSignal(false);
 	const [error, setError] = createSignal<string | null>(null);
 	const [canvasWidth, setCanvasWidth] = createSignal(1280);
 	const [canvasHeight, setCanvasHeight] = createSignal(720);
-	// Signal for the latest VideoMetadata received over the video.meta MoQ track.
-	const [decoderConfig, setDecoderConfig] = createSignal<VideoMetadata | undefined>();
 
-	const broadcastPath = useBroadcastPath();
+	// Editable broadcast path — defaults to /live/demo for RTMP ingest demo.
+	const [broadcastPathInput, setBroadcastPathInput] = createSignal("/live/demo");
+	const broadcastPath = (): BroadcastPath => broadcastPathInput() as BroadcastPath;
 
 	let canvasEle: HTMLCanvasElement | undefined;
 	let videoContext: VideoContext | undefined;
 	let videoDecodeNode: VideoDecodeNode | undefined;
-
-	// Track current cancel function for cleanup
+	let audioContext: AudioContext | undefined;
+	let audioDecodeNode: AudioDecodeNode | undefined;
 	let currentCancel: (() => void) | null = null;
 
 	onMount(() => {
 		if (canvasEle) {
 			videoContext = new VideoContext({ canvas: canvasEle });
 			videoDecodeNode = new VideoDecodeNode(videoContext);
-
-			// Connect VideoDecodeNode to destination
 			videoDecodeNode.connect(videoContext.destination);
 
-			// Set canvas size from VideoContext
-			setCanvasWidth(videoContext.destination.canvas.width);
-			setCanvasHeight(videoContext.destination.canvas.height);
+			// AudioContext for playback of the subscribed audio track.
+			audioContext = new AudioContext();
+			audioDecodeNode = new AudioDecodeNode(audioContext);
+			audioDecodeNode.connect(audioContext.destination);
 		}
 	});
 
@@ -41,18 +40,7 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 		stopSubscribing();
 	});
 
-	// MoQ reactive: whenever video.meta delivers new codec params, reconfigure the decoder
-	// through the SolidJS reactive graph instead of calling configure() imperatively.
-	createEffect(() => {
-		const config = decoderConfig();
-		if (config) {
-			videoDecodeNode?.configure(config);
-			console.log("[Subscribe] VideoDecoder reactively configured:", config.codec);
-		}
-	});
-
 	const startSubscribing = async () => {
-		// Create fresh context for each subscription
 		const [ctx, cancel] = withCancel(background());
 		currentCancel = cancel;
 
@@ -64,52 +52,92 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 			}
 
 			const session = await props.session;
+			const subscribePath = broadcastPath(); // snapshot at subscription start
 
-			// Configure decoder immediately with a known-good default so frames
-			// are never fed into an unconfigured VideoDecoder.  video.meta will
-			// reconfigure with exact publisher settings when it arrives.
-			const defaultDecoderConfig: VideoMetadata = {
-				codec: "vp09.00.10.08",
-				codedWidth: canvasWidth(),
-				codedHeight: canvasHeight(),
-				startGroup: 0,
-			};
-			// Signal update triggers createEffect → videoDecodeNode.configure() reactively.
-			setDecoderConfig(defaultDecoderConfig);
+			// Gate: the video loop awaits this before feeding any frames to the decoder.
+			// Resolved the moment the first catalog group is received.
+			let resolveFirstConfig!: () => void;
+			const firstConfigReady = new Promise<void>((r) => {
+				resolveFirstConfig = r;
+			});
+			let firstConfigReceived = false;
 
-			// Subscribe to video.meta: loop on acceptGroup so every new group
-			// (e.g. encoder reconfigure, resolution change) reconfigures the decoder.
-			session.subscribe(broadcastPath, "video.meta").then(
-				async ([videoMetaTrack, videoMetaErr]) => {
-					if (videoMetaErr) {
-						if (!isSubscribed()) return; // expected during shutdown
-						console.warn("[Subscribe] video.meta subscribe failed:", videoMetaErr);
+			// Subscribe to catalog: each new group updates the reactive signal,
+			// which triggers createEffect → videoDecodeNode.configure() automatically.
+			session.subscribe(subscribePath, "catalog").then(
+				async ([catalogTrack, catalogErr]) => {
+					if (catalogErr) {
+						if (!isSubscribed()) return;
+						console.warn("[Subscribe] catalog subscribe failed:", catalogErr);
 						return;
 					}
 
-					// Loop: receive every video.meta group published by the encoder.
-					// Each new group calls setDecoderConfig → createEffect → decoder.configure().
 					while (isSubscribed()) {
-						const [group, groupErr] = await videoMetaTrack.acceptGroup(ctx.done());
+						const [group, groupErr] = await catalogTrack.acceptGroup(ctx.done());
 						if (groupErr) {
-							if (!isSubscribed()) break; // expected during shutdown
-							console.warn("[Subscribe] video.meta acceptGroup:", groupErr);
+							if (!isSubscribed()) break;
+							console.warn("[Subscribe] catalog acceptGroup:", groupErr);
 							break;
 						}
 
 						for await (const frame of group.frames()) {
-							const meta = JSON.parse(new TextDecoder().decode(frame.bytes)) as VideoMetadata;
-							setDecoderConfig(meta); // → createEffect → videoDecodeNode.configure(meta)
-							console.log("[Subscribe] video.meta group received, codec:", meta.codec);
+							const catalog = parseCatalog(frame.bytes);
+							const videoTrack = catalog.tracks?.find((t) => t.role === "video");
+							if (videoTrack?.codec) {
+								// Decode Base64 initData → ArrayBuffer description (for avc1.* AVCC streams).
+								let description: ArrayBuffer | undefined;
+								if (videoTrack.initData) {
+									const binary = atob(videoTrack.initData);
+									const bytes = new Uint8Array(binary.length);
+									for (let i = 0; i < binary.length; i++) {
+										bytes[i] = binary.charCodeAt(i);
+									}
+									description = bytes.buffer;
+								}
+								const cfg: VideoDecoderConfig = {
+									codec: videoTrack.codec,
+									codedWidth: videoTrack.width,
+									codedHeight: videoTrack.height,
+									hardwareAcceleration: "prefer-software",
+									optimizeForLatency: true,
+									...(description ? { description } : {}),
+								};
+								videoDecodeNode!.configure(cfg);
+								console.log("[Subscribe] VideoDecoder configured:", cfg.codec);
+								// Update canvas bitmap dimensions to match the actual video so portrait
+								// (or any non-default-aspect) streams are not stretched.
+								if (videoTrack.width) setCanvasWidth(videoTrack.width);
+								if (videoTrack.height) setCanvasHeight(videoTrack.height);
+								console.log(
+									"[Subscribe] catalog received, video codec:",
+									videoTrack.codec,
+								);
+								if (!firstConfigReceived) {
+									firstConfigReceived = true;
+									resolveFirstConfig();
+								}
+							}
+							const audioTrack = catalog.tracks?.find((t) => t.role === "audio");
+							if (audioTrack?.codec && audioDecodeNode) {
+								audioDecodeNode.configure({
+									codec: audioTrack.codec,
+									sampleRate: audioTrack.samplerate ?? 48000,
+									numberOfChannels: parseInt(audioTrack.channelConfig ?? "2", 10),
+								});
+								console.log(
+									"[Subscribe] audio decoder configured:",
+									audioTrack.codec,
+								);
+							}
 						}
 					}
 				},
 			);
 
-			session.subscribe(broadcastPath, "video").then(
+			session.subscribe(subscribePath, "video").then(
 				([videoTrack, videoErr]) => {
 					if (videoErr) {
-						if (!isSubscribed()) return; // expected during shutdown
+						if (!isSubscribed()) return;
 						console.warn("[Subscribe] video subscribe failed:", videoErr);
 						return;
 					}
@@ -117,23 +145,45 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 					const videoStream = new ReadableStream<EncodedVideoChunk>({
 						async start(controller) {
 							try {
+								// Wait for the first catalog before feeding any frames.
+								await firstConfigReady;
+								console.log(
+									"[Subscribe] video: catalog ready, starting decode loop",
+								);
+
+								let frameCount = 0;
 								while (isSubscribed()) {
 									const [group, groupErr] = await videoTrack.acceptGroup(
 										ctx.done(),
 									);
 									if (groupErr) {
-										if (!isSubscribed()) break; // expected during shutdown
+										if (!isSubscribed()) break;
 										console.error(
-											"moq: Error accepting video group:",
+											"[Subscribe] video acceptGroup error:",
 											groupErr,
 										);
 										break;
 									}
 
 									let isKey = true;
-
 									for await (const frame of group.frames()) {
-										const { timestamp, data } = deserializeMediaFrame(frame.bytes);
+										const { timestamp, data } = deserializeMediaFrame(
+											frame.bytes,
+										);
+
+										// Log first 10 frames for diagnostics.
+										if (frameCount < 10) {
+											const hex = Array.from(data.slice(0, 48))
+												.map((b: number) => b.toString(16).padStart(2, "0"))
+												.join(" ");
+											console.log(
+												`[Subscribe] video #${frameCount}: type=${
+													isKey ? "key" : "delta"
+												} ts=${timestamp} len=${data.byteLength} hex=[${hex}]`,
+											);
+											frameCount++;
+										}
+
 										const chunk = new EncodedVideoChunk({
 											type: isKey ? "key" : "delta",
 											timestamp,
@@ -146,7 +196,7 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 								controller.close();
 							} catch (err) {
 								if (isSubscribed()) {
-									console.error("Video track error:", err);
+									console.error("[Subscribe] video track error:", err);
 									controller.error(err);
 								} else {
 									controller.close();
@@ -157,8 +207,66 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 						},
 					});
 
-					// Decode from stream (decoder already pre-configured with default VP9)
 					videoDecodeNode?.decodeFrom(videoStream);
+				},
+			);
+
+			// Subscribe to audio — gracefully skipped if the publisher has no audio track.
+			session.subscribe(subscribePath, "audio").then(
+				async ([audioMoqTrack, audioMoqErr]) => {
+					if (audioMoqErr) {
+						if (!isSubscribed()) return;
+						console.warn("[Subscribe] audio subscribe failed:", audioMoqErr);
+						return;
+					}
+					if (!audioDecodeNode || !audioContext) return;
+
+					// Resume audio context — we are in a user-gesture-triggered async chain.
+					await audioContext.resume();
+
+					const audioStream = new ReadableStream<EncodedAudioChunk>({
+						async start(controller) {
+							try {
+								await firstConfigReady;
+								while (isSubscribed()) {
+									const [group, groupErr] = await audioMoqTrack.acceptGroup(
+										ctx.done(),
+									);
+									if (groupErr) {
+										if (!isSubscribed()) break;
+										console.error(
+											"moq: Error accepting audio group:",
+											groupErr,
+										);
+										break;
+									}
+									for await (const frame of group.frames()) {
+										const { timestamp, data } = deserializeMediaFrame(
+											frame.bytes,
+										);
+										const chunk = new EncodedAudioChunk({
+											type: "key", // Opus frames are all independently decodable
+											timestamp,
+											data,
+										});
+										controller.enqueue(chunk);
+									}
+								}
+								controller.close();
+							} catch (err) {
+								if (isSubscribed()) {
+									console.error("Audio track error:", err);
+									controller.error(err);
+								} else {
+									controller.close();
+								}
+							} finally {
+								audioMoqTrack.closeWithError(SubscribeErrorCode.InternalError);
+							}
+						},
+					});
+
+					audioDecodeNode.decodeFrom(audioStream);
 				},
 			);
 
@@ -176,8 +284,8 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 			currentCancel();
 			currentCancel = null;
 		}
+		audioContext?.suspend().catch(() => {});
 		setIsSubscribed(false);
-		console.log("Stopped subscribing");
 	};
 
 	return (
@@ -187,7 +295,14 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 			<div class="controls">
 				<div class="path-input">
 					<label>Broadcast Path:</label>
-					<span>{broadcastPath}</span>
+					<input
+						type="text"
+						value={broadcastPathInput()}
+						onInput={(e) => setBroadcastPathInput(e.currentTarget.value)}
+						disabled={isSubscribed()}
+						placeholder="/live/demo"
+						style={{ "font-family": "monospace", padding: "4px 8px" }}
+					/>
 				</div>
 
 				<div class="stream-controls">
@@ -214,7 +329,7 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 
 			<Show when={isSubscribed()}>
 				<div class="status-message">
-					Subscribing to: {broadcastPath}
+					Subscribing to: {broadcastPath()}
 				</div>
 			</Show>
 
@@ -224,9 +339,10 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 					width={canvasWidth()}
 					height={canvasHeight()}
 					style={{
+						display: "block",
 						width: "100%",
-						"max-width": "800px",
-						height: "auto",
+						"max-width": `${canvasWidth()}px`,
+						"aspect-ratio": `${canvasWidth()} / ${canvasHeight()}`,
 						border: "1px solid #ccc",
 						"border-radius": "8px",
 						background: "#000",

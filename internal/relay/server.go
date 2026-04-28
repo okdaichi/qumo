@@ -2,156 +2,392 @@ package relay
 
 import (
 	"context"
-	"crypto/tls"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"sync"
+	"time"
 
-	"github.com/okdaichi/gomoqt/moqt"
-	"github.com/okdaichi/gomoqt/quic"
+	"github.com/qumo-dev/gomoqt/moqt"
+	"github.com/qumo-dev/qumo/internal/bootstrap"
 )
 
 type Server struct {
-	Addr       string
-	TLSConfig  *tls.Config
-	QUICConfig *quic.Config
-	Config     *Config
+	// MOQServer is the underlying MoQT server. The caller is responsible for
+	// setting Addr, TLSConfig (must include all accepted ALPNs, e.g. ["h3", "moqt"]),
+	// QUICConfig, and WebTransportServer. Handler and TrackMux are wired by init().
+	MOQServer *moqt.Server
+	// MOQDialer is used for outbound peer connections. The caller must set
+	// TLSConfig with NextProtos: []string{moqt.NextProtoMOQ} only, so that
+	// ALPN negotiation does not accidentally select "h3".
+	MOQDialer *moqt.Dialer
+	Config    *Config
+	TrackMux  *moqt.TrackMux
 
-	CheckHTTPOrigin func(r *http.Request) bool
+	webtransportHandler *moqt.WebTransportHandler
+	statusHandler       *statusHandler
+	initOnce            sync.Once
 
-	TrackMux *moqt.TrackMux
+	// connectedMu guards connected, which tracks peer addresses already dialing
+	// or connected to prevent duplicate maintainPeer goroutines.
+	connectedMu sync.Mutex
+	connected   map[string]struct{}
+}
 
-	// AnnounceRegistrar pushes announcements to the SDN controller.
-	// If nil, auto-announce is disabled.
-	AnnounceRegistrar AnnounceRegistrar
+func (s *Server) ServeHealth(w http.ResponseWriter, r *http.Request) {
+	s.init()
+	if s.statusHandler == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+	s.statusHandler.ServeHTTP(w, r)
+}
 
-	server *moqt.Server
-
-	initOnce sync.Once
-
-	statusHandler *statusHandler
-	peerRegistry  *peerRegistry
+func (s *Server) HandleWebTransport(w http.ResponseWriter, r *http.Request) {
+	s.init()
+	if s.webtransportHandler == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+	s.webtransportHandler.ServeHTTP(w, r)
 }
 
 func (s *Server) init() {
 	s.initOnce.Do(func() {
 		if s.TrackMux == nil {
-			s.TrackMux = moqt.DefaultMux
+			s.TrackMux = moqt.NewTrackMux(0)
 		}
 
-		s.statusHandler = newStatusHandler()
-		s.peerRegistry = newPeerRegistry()
+		if s.statusHandler == nil {
+			s.statusHandler = newStatusHandler()
+		}
+
+		// Wire relay-specific fields into the caller-provided MoQServer.
+		if s.MOQServer.Handler != nil {
+			slog.Warn("relay.Server: overriding MOQServer.Handler set by caller")
+		}
+		s.MOQServer.Handler = moqt.HandleFunc(s.Relay)
+		if s.MOQServer.TrackMux != nil {
+			slog.Warn("relay.Server: overriding MOQServer.TrackMux set by caller")
+		}
+		s.MOQServer.TrackMux = s.TrackMux
+
+		s.webtransportHandler = &moqt.WebTransportHandler{
+			TrackMux: s.TrackMux,
+			Handler:  moqt.HandleFunc(s.Relay),
+			Logger:   s.MOQServer.Logger,
+		}
+
+		// ConnContext intercepts each accepted QUIC connection before the MOQ
+		// handshake. For native QUIC connections the underlying type satisfies
+		// connStatsProvider, so we launch a polling goroutine to collect
+		// connection-level stats (RTT, packet loss). WebTransport connections
+		// do not satisfy the interface and are silently skipped.
+		s.MOQServer.ConnContext = func(ctx context.Context, conn moqt.StreamConn) context.Context {
+			if provider, ok := conn.(connStatsProvider); ok {
+				addr := conn.RemoteAddr().String()
+				go pollConnStats(conn.Context(), provider, addr)
+			}
+			return ctx
+		}
+
+		if s.connected == nil {
+			s.connected = make(map[string]struct{})
+		}
 	})
-}
-
-func (s *Server) Status() Status {
-	s.init()
-
-	return s.statusHandler.getStatus()
 }
 
 // ListenAndServe starts the relay server.
 func (s *Server) ListenAndServe() error {
-	if s.TLSConfig == nil {
-		panic("relay.Server: TLSConfig is required")
+	if s.MOQServer == nil {
+		panic("relay.Server: MoQServer is required")
+	}
+	if s.MOQDialer == nil {
+		panic("relay.Server: MoQDialer is required")
 	}
 
 	s.init()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	s.server = &moqt.Server{
-		Addr:            s.Addr,
-		TLSConfig:       s.TLSConfig,
-		QUICConfig:      s.QUICConfig,
-		CheckHTTPOrigin: s.CheckHTTPOrigin,
-		SetupHandler: moqt.SetupHandlerFunc(func(w moqt.SetupResponseWriter, r *moqt.SetupRequest) {
-			downstream, err := moqt.Accept(w, r, s.TrackMux)
-			if err != nil {
-				slog.Error("failed to accept connection", "err", err)
-				return
-			}
-
-			defer downstream.CloseWithError(moqt.NoError, moqt.SessionErrorText(moqt.NoError))
-
-			err = s.relay(ctx, downstream)
-
-			if err != nil {
-				slog.Warn("relay session ended", "err", err)
-				return
-			}
-		}),
-	}
 
 	// Start server - this will block until server closes
-	return s.server.ListenAndServe()
-}
-
-func (s *Server) HandleWebTransport(w http.ResponseWriter, r *http.Request) error {
-	s.init()
-
-	if s.server == nil {
-		return fmt.Errorf("relay.Server: ListenAndServe has not been called")
-	}
-
-	return s.server.HandleWebTransport(w, r)
+	return s.MOQServer.ListenAndServe()
 }
 
 func (s *Server) Close() error {
-	s.init()
-
-	if s.server != nil {
-		_ = s.server.Close()
+	if s.MOQServer != nil {
+		_ = s.MOQServer.Close()
 	}
 
 	return nil
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
-	s.init()
-
-	if s.server != nil {
-		// s.server.Shutdown already respects ctx cancellation.
-		return s.server.Shutdown(ctx)
+	if s.MOQServer != nil {
+		return s.MOQServer.Shutdown(ctx)
 	}
 
 	return nil
 }
 
-func (s *Server) relay(ctx context.Context, sess *moqt.Session) error {
-	slog.Info("session established", "remote", sess.RemoteAddr())
-	defer slog.Info("session closed", "remote", sess.RemoteAddr())
+// ConnectPeers dials configured peer relays and discovers their announcements
+// via ANNOUNCE_PLEASE. Received announcements are registered on the local
+// TrackMux so that subscribers can transparently access remote content.
+// It also starts bootstrap clients for each configured bootstrap server.
+// It blocks until ctx is cancelled.
+func (s *Server) ConnectPeers(ctx context.Context) {
+	s.init()
+	var wg sync.WaitGroup
 
-	if s.statusHandler != nil {
-		s.statusHandler.incrementConnections()
-		defer s.statusHandler.decrementConnections()
+	// Static peers from config.
+	for _, peer := range s.Config.Peers {
+		if !s.markConnected(peer.Address) {
+			continue
+		}
+		wg.Go(func() {
+			s.maintainPeer(ctx, peer)
+			s.markUnconnected(peer.Address)
+		})
 	}
 
-	// Register peer for topology tracking
-	if s.peerRegistry != nil {
-		peerID := s.peerRegistry.register(sess)
-		defer s.peerRegistry.deregister(peerID)
+	// Dynamic peers from bootstrap servers.
+	for _, bsCfg := range s.Config.Bootstraps {
+		wg.Go(func() {
+			client := bootstrap.NewClient(bsCfg, s.Config.NodeID, s.Config.AdvertiseAddr, s.Config.Region, s.Config.Role)
+			// Heartbeat goroutine.
+			wg.Go(func() {
+				client.Run(ctx)
+			})
+			// Topology-aware peer discovery goroutine.
+			s.discoverPeers(ctx, &wg, bsCfg.Interval, client)
+		})
 	}
 
-	// TODO: measure accept time
-	peer, err := sess.AcceptAnnounce("/")
-	if err != nil {
-		return err
+	wg.Wait()
+}
+
+// filterPeersByAddr removes peers whose addresses are present in the exclude map.
+func filterPeersByAddr(peers []bootstrap.Node, exclude map[string]struct{}) []bootstrap.Node {
+	filtered := make([]bootstrap.Node, 0, len(peers))
+	for _, p := range peers {
+		if _, ok := exclude[p.Addr]; ok {
+			continue
+		}
+		filtered = append(filtered, p)
+	}
+	return filtered
+}
+
+// discoverPeers runs the role-aware peer discovery loop for a single bootstrap client.
+// It builds topology connections according to the node's role (edge/hub/default)
+// and re-checks at interval. Already-connected peers are skipped.
+func (s *Server) discoverPeers(ctx context.Context, wg *sync.WaitGroup, interval time.Duration, client *bootstrap.Client) {
+	// connect dials each peer not already connected (server-wide dedup by address).
+	connect := func(peers []bootstrap.Node) {
+		for _, p := range peers {
+			if !s.markConnected(p.Addr) {
+				continue
+			}
+			p := p
+			wg.Go(func() {
+				s.maintainPeer(ctx, Peer{Address: p.Addr})
+				s.markUnconnected(p.Addr)
+			})
+		}
 	}
 
-	for ann := range peer.Announcements(ctx) {
-		// Push to SDN announce table if configured
-		if s.AnnounceRegistrar != nil {
-			s.AnnounceRegistrar.Register(string(ann.BroadcastPath()))
+	// connectFirst dials only the first peer from the slice.
+	connectFirst := func(peers []bootstrap.Node) {
+		if len(peers) > 0 {
+			connect(peers[:1])
+		}
+	}
+
+	tick := func() {
+		region := s.Config.Region
+		switch s.Config.Role {
+		case "edge":
+			// 2 local edges + 1 hub.
+			if peers, err := client.FetchPeers(ctx, bootstrap.PeerQuery{PreferredRegion: region, Role: "edge", Limit: 2}); err == nil {
+				connect(peers)
+			}
+			if peers, err := client.FetchPeers(ctx, bootstrap.PeerQuery{PreferredRegion: region, Role: "hub", Limit: 2}); err == nil {
+				connectFirst(peers)
+			}
+
+		case "hub":
+			// 2 local peers + 2 same-region hubs + 1 cross-region hub.
+			// Avoid wasting the same-region hub limit on nodes already selected as local peers.
+			var localPeers []bootstrap.Node
+			if peers, err := client.FetchPeers(ctx, bootstrap.PeerQuery{PreferredRegion: region, Limit: 2}); err == nil {
+				connect(peers)
+				localPeers = peers
+			}
+			if peers, err := client.FetchPeers(ctx, bootstrap.PeerQuery{PreferredRegion: region, Role: "hub", Limit: 2}); err == nil {
+				exclude := make(map[string]struct{}, len(localPeers))
+				for _, p := range localPeers {
+					exclude[p.Addr] = struct{}{}
+				}
+				connect(filterPeersByAddr(peers, exclude))
+			}
+			// Cross-region: fetch hubs from any region, then client-side filter to other regions.
+			if all, err := client.FetchPeers(ctx, bootstrap.PeerQuery{Role: "hub", AllowRemote: true, Limit: 5}); err == nil {
+				var remote []bootstrap.Node
+				for _, p := range all {
+					if p.Region != region {
+						remote = append(remote, p)
+					}
+				}
+				connectFirst(remote)
+			}
+
+		default:
+			// Flat discovery: any peers in the preferred region.
+			if peers, err := client.FetchPeers(ctx, bootstrap.PeerQuery{PreferredRegion: region, Limit: 5}); err == nil {
+				connect(peers)
+			}
+		}
+	}
+
+	tick()
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			tick()
+		}
+	}
+}
+
+// markConnected records addr as connected and returns true if it was not already present.
+// It is safe for concurrent use.
+func (s *Server) markConnected(addr string) bool {
+	s.connectedMu.Lock()
+	defer s.connectedMu.Unlock()
+	if _, ok := s.connected[addr]; ok {
+		return false
+	}
+	s.connected[addr] = struct{}{}
+	metricPeersConnected.Inc()
+	return true
+}
+
+// markUnconnected removes addr from the connected set.
+// It is safe for concurrent use.
+func (s *Server) markUnconnected(addr string) {
+	s.connectedMu.Lock()
+	defer s.connectedMu.Unlock()
+	delete(s.connected, addr)
+	metricPeersConnected.Dec()
+	metricSessionRTTMilliseconds.DeleteLabelValues(addr)
+	metricSessionEstimatedBitrate.DeleteLabelValues(addr)
+}
+
+func (s *Server) maintainPeer(ctx context.Context, peer Peer) {
+	for {
+		if ctx.Err() != nil {
+			return
 		}
 
-		handler := newRelayHandler(ann, sess, DefaultGroupCacheSize, DefaultFramePool)
-		// Announcement is already provided above; other fields defaulted appropriately.
+		sess, err := s.MOQDialer.DialQUIC(ctx, peer.Address, s.TrackMux)
+		if err != nil {
+			metricPeerDialAttempts.WithLabelValues(peer.Address, "error").Inc()
+			slog.Warn("failed to dial peer", "address", peer.Address, "error", err)
+			if !waitRetry(ctx, 5*time.Second) {
+				return
+			}
+			continue
+		}
+		metricPeerDialAttempts.WithLabelValues(peer.Address, "ok").Inc()
+
+		s.Relay(sess)
+
+		<-sess.Context().Done()
+
+		slog.Info("peer disconnected", "address", peer.Address)
+
+		if !waitRetry(ctx, 5*time.Second) {
+			return
+		}
+	}
+}
+
+// waitRetry waits for the specified duration or until ctx is cancelled.
+// Returns false if ctx was cancelled.
+func waitRetry(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
+	}
+}
+
+func (s *Server) Relay(sess *moqt.Session) {
+	s.init()
+	defer sess.CloseWithError(moqt.NoError, moqt.NoError.String())
+
+	metricSessionsActive.Inc()
+	defer metricSessionsActive.Dec()
+
+	addr := sess.RemoteAddr().String()
+	go pollSessionStats(sess, addr)
+
+	slog.Info("relay: new session", "remote", addr)
+
+	announced, err := sess.AcceptAnnounce("/")
+	if err != nil {
+		slog.Warn("failed to accept announcement", "error", err)
+		return
+	}
+	for {
+		ann, err := announced.ReceiveAnnouncement(sess.Context())
+		if err != nil {
+			slog.Warn("relay: announcements loop ended",
+				"remote", sess.RemoteAddr(),
+				"error", err,
+				"reader_ctx_err", announced.Context().Err(),
+				"sess_ctx_err", sess.Context().Err())
+			return
+		}
+
+		handler := newRelayHandler(ann, sess)
+
+		// Route selection: only replace an existing active handler if the new
+		// route is strictly better. This is evaluated once per new candidate to
+		// preserve group-cache hit rates and playback continuity.
+		if _, existing := s.TrackMux.TrackHandler(ann.BroadcastPath()); existing != nil {
+			if rr, ok := existing.(RouteReporter); ok {
+				better, reason := isBetterRoute(handler.RouteStats(), rr.RouteStats())
+				if !better {
+					slog.Debug("relay: skipping inferior route",
+						"path", ann.BroadcastPath(),
+						"reason", reason,
+					)
+					metricRouteRejections.WithLabelValues(string(reason)).Inc()
+					handler.cancel()
+					continue
+				}
+				metricRouteReplacements.Inc()
+				// Gracefully drain the displaced handler.
+				if dr, ok := existing.(Drainable); ok {
+					dr.Drain(DrainTimeout)
+				}
+			}
+		}
+
+		// Track the broadcast route and release it when the handler's context
+		// is cancelled (covers both normal session end and drain expiry).
+		metricBroadcastsActive.Inc()
+		context.AfterFunc(handler.ctx, func() { metricBroadcastsActive.Dec() })
+
+		// Ensure handler.cancel is called when the session ends to release
+		// the child context from the parent's internal children list.
+		context.AfterFunc(sess.Context(), handler.cancel)
 
 		s.TrackMux.Announce(ann, handler)
 	}
-
-	return nil
 }

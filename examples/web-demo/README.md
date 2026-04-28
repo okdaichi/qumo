@@ -36,7 +36,7 @@ mage web:clean
 ## Stack
 
 - **Frontend**: Vite + TypeScript
-- **Protocol**: [@okdaichi/moq](https://jsr.io/@okdaichi/moq) from JSR
+- **Protocol**: [@qumo/moq](https://jsr.io/@qumo/moq) from JSR
 - **Relay**: qumo (QUIC/MoQ relay server)
 
 ## Architecture

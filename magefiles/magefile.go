@@ -5,14 +5,21 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/hex"
 	"encoding/pem"
 	"fmt"
+	"math/big"
+	"net"
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -23,7 +30,7 @@ import (
 	"github.com/magefile/mage/sh"
 )
 
-const versionPkg = "github.com/okdaichi/qumo/internal/version"
+const versionPkg = "github.com/qumo-dev/qumo/internal/version"
 
 // Default target to run when none is specified
 var Default = Help
@@ -55,7 +62,7 @@ func gitCommit() string {
 
 // Help displays available mage targets
 func Help() error {
-	fmt.Println("📖 qumo - MoQT Relay & SDN Controller")
+	fmt.Println("📖 qumo - MoQT Relay")
 	fmt.Printf("   Platform: %s/%s\n", runtime.GOOS, runtime.GOARCH)
 	fmt.Println()
 	fmt.Println("Available targets:")
@@ -76,8 +83,7 @@ func Help() error {
 	fmt.Println()
 	fmt.Println("  🚀 Runtime:")
 	fmt.Println("    mage relay        - Start relay server")
-	fmt.Println("    mage sdn          - Start SDN controller")
-	fmt.Println("    mage dev          - Start relay + SDN in dev mode")
+	fmt.Println("    mage dev          - Start relay in dev mode")
 	fmt.Println()
 	fmt.Println("  🌐 Web Demo:")
 	fmt.Println("    mage web          - Start web demo (Vite dev server)")
@@ -99,13 +105,9 @@ func Help() error {
 	fmt.Println("    mage docker:down  - Stop services")
 	fmt.Println("    mage docker:logs  - View service logs")
 	fmt.Println("    mage docker:ps    - List running containers")
+	fmt.Println("    mage smoke      - Run cross-region streaming smoke test")
 	fmt.Println()
-	fmt.Println("  🎮 Demo:")
-	fmt.Println("    mage demo:up      - Start demo environment (3 relays + SDN)")
-	fmt.Println("    mage demo:setup   - Configure demo network topology")
-	fmt.Println("    mage demo:down    - Stop demo environment")
-	fmt.Println("    mage demo:status  - Check demo status")
-	fmt.Println()
+
 	fmt.Println("  �🔧 Utilities:")
 	fmt.Println("    mage cert         - Generate TLS certificates using mkcert")
 	fmt.Println("    mage hash         - Compute/write TLS cert SHA-256")
@@ -157,8 +159,8 @@ func Install() error {
 	}
 
 	fmt.Println("✅ Installed: qumo")
-	fmt.Println("   Run with: qumo relay -config config.relay.yaml")
-	fmt.Println("            qumo sdn -config config.sdn.yaml")
+	fmt.Println("   Configure relay with environment variables (see relay-config.example.env).")
+	fmt.Println("   Run with: qumo relay")
 	return nil
 }
 
@@ -246,7 +248,7 @@ func Check() error {
 // Relay starts the qumo-relay server
 func Relay() error {
 	fmt.Println("📡 Starting qumo relay server...")
-	fmt.Println("   Config: ./config.relay.yaml")
+	fmt.Println("   Config: via Docker environment (see docker/docker-compose.topology.yml)")
 	fmt.Println("   Certs: certs/server.crt, certs/server.key (run 'mage cert')")
 	fmt.Println("   Host: https://localhost:4433 (WebTransport/QUIC)")
 	fmt.Println()
@@ -265,7 +267,9 @@ func Relay() error {
 		}
 	}()
 
-	cmd := exec.CommandContext(ctx, "go", "run", ".", "relay", "-config", "config.relay.yaml")
+	// Config is read from environment variables.
+	// For local dev, set env vars or source relay-config.example.env.
+	cmd := exec.CommandContext(ctx, "go", "run", ".", "relay")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	// On Windows, exec.CommandContext only kills the direct process (go run),
@@ -288,48 +292,192 @@ func Relay() error {
 	return err
 }
 
-// SDN starts the SDN controller
-func SDN() error {
-	fmt.Println("🎛️  Starting SDN controller...")
-	fmt.Println("   Config: ./config.sdn.yaml")
-	fmt.Println("   HTTP: http://localhost:8090")
-	fmt.Println()
-	fmt.Println("   Available endpoints:")
-	fmt.Println("     PUT/DELETE /relay/<name>       - Register/deregister relay")
-	fmt.Println("     GET /route?from=A&to=B         - Query shortest path")
-	fmt.Println("     GET /graph                     - Get topology graph")
-	fmt.Println("     PUT/DELETE /announce/<relay>/<path> - Announce content")
-	fmt.Println("     GET /announce/lookup?broadcast_path=X - Find content providers")
-	fmt.Println("     GET /announce                  - List all announcements")
-	fmt.Println()
-
-	cmd := exec.Command("go", "run", ".", "sdn", "-config", "config.sdn.yaml")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
-}
-
-// Dev starts relay and SDN in development mode (parallel)
+// Dev starts the relay in development mode.
 func Dev() error {
 	fmt.Println("🚀 Starting development environment...")
-	fmt.Println("   This will start both relay and SDN controller")
-	fmt.Println("   Press Ctrl+C to stop all services")
+	fmt.Println("   Press Ctrl+C to stop")
 	fmt.Println()
-
-	// Note: This is a simple implementation that runs them sequentially.
-	// For true parallel execution, users should run in separate terminals:
-	//   Terminal 1: mage sdn
-	//   Terminal 2: mage relay
-	//   Terminal 3: mage web
 
 	fmt.Println("💡 For better development experience, run in separate terminals:")
-	fmt.Println("   Terminal 1: mage sdn")
-	fmt.Println("   Terminal 2: mage relay")
-	fmt.Println("   Terminal 3: mage web")
+	fmt.Println("   Terminal 1: mage relay")
+	fmt.Println("   Terminal 2: mage web")
 	fmt.Println()
-	fmt.Println("Starting SDN controller...")
 
-	return SDN()
+	return Relay()
+}
+
+// Rtmp provides RTMP ingest commands.
+type Rtmp mg.Namespace
+
+// Serve starts the RTMP ingest server (RTMP → MoQT bridge).
+func (Rtmp) Serve() error {
+	fmt.Println("📡 Starting RTMP ingest server...")
+	fmt.Println("   Config: via -config flag")
+	fmt.Println("   RTMP:   rtmp://localhost:1935/live/<stream-key>")
+	fmt.Println("   MoQT:   https://localhost:4433 (WebTransport/QUIC)")
+	fmt.Println()
+	fmt.Println("💡 Push a stream with ffmpeg:")
+	fmt.Println("   mage rtmp:stream")
+	fmt.Println()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+	go func() {
+		select {
+		case <-sigCh:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+
+	cmd := exec.CommandContext(ctx, "go", "run", ".", "rtmp", "-config", "config.rtmp.yaml")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return nil
+		}
+		if runtime.GOOS == "windows" {
+			return exec.Command("taskkill", "/F", "/T", "/PID",
+				strconv.Itoa(cmd.Process.Pid)).Run()
+		}
+		return cmd.Process.Kill()
+	}
+
+	err := cmd.Run()
+	if ctx.Err() != nil {
+		return nil
+	}
+	return err
+}
+
+// Stream pushes a test stream via ffmpeg to the RTMP ingest server.
+// Generates a 720p color-bar pattern with a 440 Hz sine tone.
+//
+// Environment variables:
+//
+//	APP=live       RTMP application name (default: live)
+//	KEY=demo       Stream key           (default: demo)
+//	RTMP_ADDR=host:port                (default: localhost:1935)
+func (Rtmp) Stream() error {
+	app := envOrDefault("APP", "live")
+	key := envOrDefault("KEY", "demo")
+	addr := envOrDefault("RTMP_ADDR", "localhost:1935")
+
+	broadcastPath := "/" + app + "/" + key
+	rtmpURL := "rtmp://" + addr + "/" + app + "/" + key
+
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		fmt.Println("❌ ffmpeg is not installed!")
+		fmt.Println()
+		fmt.Println("Please install ffmpeg:")
+		fmt.Println("  Windows: winget install Gyan.FFmpeg")
+		fmt.Println("  macOS:   brew install ffmpeg")
+		fmt.Println("  Linux:   apt install ffmpeg")
+		return fmt.Errorf("ffmpeg not found")
+	}
+
+	fmt.Println("🎬 Pushing test stream via ffmpeg...")
+	fmt.Println("   RTMP URL:       ", rtmpURL)
+	fmt.Println("   Broadcast Path: ", broadcastPath)
+	fmt.Println("   Tracks:          catalog, video, audio")
+	fmt.Println("   Video:           1280x720 30fps (H.264 baseline)")
+	fmt.Println("   Audio:           AAC 48kHz stereo")
+	fmt.Println()
+	fmt.Println("📺 To watch in browser:")
+	fmt.Println("   1. Open http://localhost:5173")
+	fmt.Println("   2. Set Broadcast Path to:", broadcastPath)
+	fmt.Println("   3. Click 'Start Subscribing'")
+	fmt.Println()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+	go func() {
+		select {
+		case <-sigCh:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+
+	cmd := exec.CommandContext(ctx, "ffmpeg",
+		"-re",
+		"-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30",
+		"-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000",
+		"-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
+		"-profile:v", "baseline", "-g", "60",
+		"-c:a", "aac", "-ar", "48000", "-ac", "2",
+		"-f", "flv", rtmpURL,
+	)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return nil
+		}
+		if runtime.GOOS == "windows" {
+			return exec.Command("taskkill", "/F", "/T", "/PID",
+				strconv.Itoa(cmd.Process.Pid)).Run()
+		}
+		return cmd.Process.Kill()
+	}
+
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+// Demo prints instructions to run the full RTMP→MoQT demo pipeline.
+func (Rtmp) Demo() {
+	fmt.Println("╔══════════════════════════════════════════════════════════════╗")
+	fmt.Println("║                    RTMP → MoQT Demo                        ║")
+	fmt.Println("╚══════════════════════════════════════════════════════════════╝")
+	fmt.Println()
+	fmt.Println("Run each command in a separate terminal:")
+	fmt.Println()
+	fmt.Println("  Terminal 1 — Start the RTMP→MoQT server:")
+	fmt.Println("    $ mage rtmp:serve")
+	fmt.Println()
+	fmt.Println("  Terminal 2 — Start the web subscriber:")
+	fmt.Println("    $ mage web")
+	fmt.Println()
+	fmt.Println("  Terminal 3 — Push a test stream via ffmpeg:")
+	fmt.Println("    $ mage rtmp:stream")
+	fmt.Println()
+	fmt.Println("  Then open http://localhost:5173 in your browser,")
+	fmt.Println("  set Broadcast Path to /live/demo, and click 'Start Subscribing'.")
+	fmt.Println()
+	fmt.Println("┌──────────────────────────────────────────────────────────────┐")
+	fmt.Println("│  ffmpeg ──RTMP──▶ qumo (:1935)                              │")
+	fmt.Println("│                    │                                         │")
+	fmt.Println("│                    ▼                                         │")
+	fmt.Println("│                  MoQT/QUIC (:4433)                           │")
+	fmt.Println("│                    │                                         │")
+	fmt.Println("│                    ▼                                         │")
+	fmt.Println("│              Browser (:5173)                                 │")
+	fmt.Println("│         /live/demo → catalog, video, audio                   │")
+	fmt.Println("└──────────────────────────────────────────────────────────────┘")
+	fmt.Println()
+	fmt.Println("💡 Custom stream key:  APP=myapp KEY=mystream mage rtmp:stream")
+}
+
+func envOrDefault(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }
 
 // Web starts the web demo application (Vite dev server only)
@@ -368,60 +516,86 @@ func WebClean() error {
 	return sh.Rm("solid-deno/dist")
 }
 
-// Cert generates TLS certificates using mkcert
+// Cert generates a short-lived self-signed ECDSA certificate for WebTransport development.
+// Chrome's serverCertificateHashes requires the certificate validity to be ≤14 days.
+// The SHA-256 fingerprint is automatically written to solid-deno/.env as VITE_CERT_HASH.
 func Cert() error {
-	fmt.Println("🔐 Generating TLS certificates...")
+	fmt.Println("🔐 Generating WebTransport-compatible TLS certificate...")
 
-	// Check if mkcert is installed
-	if err := exec.Command("mkcert", "-version").Run(); err != nil {
-		fmt.Println("❌ mkcert is not installed!")
-		fmt.Println()
-		fmt.Println("Please install mkcert:")
-		fmt.Println("  Windows: winget install FiloSottile.mkcert")
-		fmt.Println("  macOS:   brew install mkcert")
-		fmt.Println("  Linux:   See https://github.com/FiloSottile/mkcert#installation")
-		return fmt.Errorf("mkcert not found")
-	}
-
-	// Ensure certs directory exists
 	if err := os.MkdirAll("certs", 0755); err != nil {
 		return err
 	}
 
-	// Install local CA if not already installed
-	fmt.Println("📦 Setting up local CA...")
-	installCmd := exec.Command("mkcert", "-install")
-	installCmd.Stdout = os.Stdout
-	installCmd.Stderr = os.Stderr
-	if err := installCmd.Run(); err != nil {
-		fmt.Println("⚠️  Warning: Failed to install CA, continuing anyway...")
-	}
-
-	// Generate certificates for localhost
-	fmt.Println("📝 Generating certificates for localhost...")
-	certCmd := exec.Command("mkcert",
-		"-cert-file", "certs/server.crt",
-		"-key-file", "certs/server.key",
-		"localhost", "127.0.0.1", "::1")
-	certCmd.Stdout = os.Stdout
-	certCmd.Stderr = os.Stderr
-	if err := certCmd.Run(); err != nil {
-		return fmt.Errorf("failed to generate certificates: %w", err)
-	}
-
-	// Compute SHA-256 of the generated certificate and write to certs/server.crt.sha256
-	err := Hash()
+	// Generate ECDSA P-256 key
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		fmt.Println("⚠️  Warning: failed to compute cert hash:", err)
+		return fmt.Errorf("failed to generate key: %w", err)
+	}
+
+	// Self-signed certificate, valid for 14 days (Chrome WebTransport limit)
+	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return fmt.Errorf("failed to generate serial: %w", err)
+	}
+
+	notBefore := time.Now()
+	notAfter := notBefore.Add(14 * 24 * time.Hour)
+
+	template := &x509.Certificate{
+		SerialNumber: serialNumber,
+		Subject:      pkix.Name{Organization: []string{"qumo dev"}},
+		NotBefore:    notBefore,
+		NotAfter:     notAfter,
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		DNSNames:     []string{"localhost"},
+		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")},
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		return fmt.Errorf("failed to create certificate: %w", err)
+	}
+
+	// Write certificate PEM
+	certFile, err := os.Create(filepath.Join("certs", "server.crt"))
+	if err != nil {
+		return err
+	}
+	defer certFile.Close()
+	if err := pem.Encode(certFile, &pem.Block{Type: "CERTIFICATE", Bytes: certDER}); err != nil {
+		return err
+	}
+
+	// Write key PEM
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		return err
+	}
+	keyFile, err := os.Create(filepath.Join("certs", "server.key"))
+	if err != nil {
+		return err
+	}
+	defer keyFile.Close()
+	if err := pem.Encode(keyFile, &pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}); err != nil {
+		return err
+	}
+
+	// Compute SHA-256 fingerprint and write to solid-deno/.env
+	fingerprint := sha256.Sum256(certDER)
+	hexStr := hex.EncodeToString(fingerprint[:])
+
+	if err := writeCertHashToEnv(hexStr); err != nil {
+		fmt.Println("⚠️  Warning: failed to write cert hash to .env:", err)
 	}
 
 	fmt.Println()
-	fmt.Println("✅ Certificates generated successfully!")
-	fmt.Println("   📄 certs/server.crt")
+	fmt.Println("✅ Certificate generated (valid 14 days)!")
+	fmt.Printf("   📄 certs/server.crt  (expires %s)\n", notAfter.Format("2006-01-02"))
 	fmt.Println("   🔑 certs/server.key")
+	fmt.Println("   🔐 VITE_CERT_HASH written to solid-deno/.env")
 	fmt.Println()
-	fmt.Println("💡 These certificates are trusted by your system")
-	fmt.Println("   You can now use WebTransport without certificate errors!")
+	fmt.Println("💡 Re-run 'mage cert' when the certificate expires")
 	return nil
 }
 
@@ -443,6 +617,39 @@ func computeCertHash() (string, error) {
 	sha := sha256.Sum256(cert.Raw)
 	hexStr := hex.EncodeToString(sha[:])
 	return hexStr, nil
+}
+
+// writeCertHashToEnv writes or updates the VITE_CERT_HASH entry in solid-deno/.env.
+// Other existing entries in the file are preserved.
+func writeCertHashToEnv(hash string) error {
+	envPath := filepath.Join("solid-deno", ".env")
+	lines := []string{}
+	found := false
+
+	if data, err := os.ReadFile(envPath); err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			if strings.HasPrefix(line, "VITE_CERT_HASH=") {
+				lines = append(lines, "VITE_CERT_HASH="+hash)
+				found = true
+			} else {
+				lines = append(lines, line)
+			}
+		}
+	}
+
+	if !found {
+		if len(lines) == 0 {
+			// Start from .env.example if .env doesn't exist
+			if tpl, err := os.ReadFile(filepath.Join("solid-deno", ".env.example")); err == nil {
+				lines = strings.Split(string(tpl), "\n")
+			}
+		}
+		lines = append(lines, "", "# Certificate hash for WebTransport (auto-generated by mage cert)")
+		lines = append(lines, "VITE_CERT_HASH="+hash)
+	}
+
+	content := strings.Join(lines, "\n")
+	return os.WriteFile(envPath, []byte(content), 0644)
 }
 
 // copyToClipboard attempts to copy the provided text to the system clipboard
@@ -570,7 +777,7 @@ func (Nomad) Build() error {
 	}
 
 	fmt.Println("✅ Built: bin/" + binaryName)
-	fmt.Println("   Run with: ./bin/qumo relay -config config.relay.yaml")
+	fmt.Println("   Run with: ./bin/qumo relay -config <your-config.yaml>")
 	return nil
 }
 
@@ -628,7 +835,7 @@ type Docker mg.Namespace
 func (Docker) Pull() error {
 	fmt.Println("🐳 Pulling latest qumo image from GitHub Container Registry...")
 
-	cmd := exec.Command("docker", "pull", "ghcr.io/okdaichi/qumo:latest")
+	cmd := exec.Command("docker", "pull", "ghcr.io/qumo-dev/qumo:latest")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -636,7 +843,7 @@ func (Docker) Pull() error {
 	}
 
 	fmt.Println("✅ Image pulled successfully!")
-	fmt.Println("   Tag: ghcr.io/okdaichi/qumo:latest")
+	fmt.Println("   Tag: ghcr.io/qumo-dev/qumo:latest")
 	return nil
 }
 
@@ -679,7 +886,6 @@ func (Docker) Up() error {
 
 	fmt.Println()
 	fmt.Println("✅ Services started!")
-	fmt.Println("   SDN Controller: http://localhost:8090")
 	fmt.Println("   Relay Health:   http://localhost:4433/health")
 	fmt.Println()
 	fmt.Println("💡 View logs: mage docker:logs")
@@ -726,49 +932,28 @@ func (Docker) Restart() error {
 	return cmd.Run()
 }
 
-// Demo provides demo environment commands
-type Demo mg.Namespace
-
-// Up starts the demo environment with 3 relays and SDN
-func (Demo) Up() error {
-	fmt.Println("🎮 Starting demo environment...")
-	fmt.Println("   1 SDN Controller + 3 Relay Servers")
-	fmt.Println("   (Tokyo, London, New York)")
-	fmt.Println()
-	fmt.Println("   Network topology will be auto-configured!")
-	fmt.Println()
-
-	cmd := exec.Command("docker", "compose", "-f", "docker/docker-compose.simple.yml", "up")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
-}
-
-// Down stops the demo environment
-func (Demo) Down() error {
-	fmt.Println("🛑 Stopping demo environment...")
-
-	cmd := exec.Command("docker", "compose", "-f", "docker/docker-compose.simple.yml", "down")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
-}
-
-// Status shows the status of demo services
-func (Demo) Status() error {
-	fmt.Println("📊 Demo Environment Status:")
-	fmt.Println()
-
-	cmd := exec.Command("docker", "compose", "-f", "docker/docker-compose.simple.yml", "ps")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return err
+// Smoke runs a cross-region streaming smoke test against the topology.
+// Smoke runs a streaming smoke test that publishes to one relay and subscribes from another.
+// Defaults: pub=moqt://localhost:9002, sub=moqt://localhost:9006.
+func Smoke(pub *string, sub *string) error { // pub: publisher relay URL, sub: subscriber relay URL
+	pubURL := "moqt://localhost:9002"
+	if pub != nil {
+		pubURL = *pub
+	}
+	subURL := "moqt://localhost:9006"
+	if sub != nil {
+		subURL = *sub
 	}
 
+	fmt.Println("💨 Running streaming smoke test...")
+	fmt.Printf("   Publish:   %s\n", pubURL)
+	fmt.Printf("   Subscribe: %s\n", subURL)
 	fmt.Println()
-	fmt.Println("💡 Try these commands:")
-	fmt.Println("   curl http://localhost:8090/graph | jq")
-	fmt.Println("   curl \"http://localhost:8090/route?from=relay-tokyo&to=relay-newyork\"")
-	return nil
+
+	cmd := exec.Command("go", "run", "./internal/smoketest",
+		"-pub", pubURL,
+		"-sub", subURL)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }

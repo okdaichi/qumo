@@ -3,7 +3,7 @@ package relay
 import (
 	"sync"
 
-	"github.com/okdaichi/gomoqt/moqt"
+	"github.com/qumo-dev/gomoqt/moqt"
 )
 
 const DefaultNewFrameCapacity int = 1500
@@ -34,6 +34,5 @@ func (fp *FramePool) Get() *moqt.Frame {
 }
 
 func (fp *FramePool) Put(f *moqt.Frame) {
-	f.Reset()
 	fp.pool.Put(f)
 }

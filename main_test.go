@@ -11,44 +11,25 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestPrintUsage_WritesHelpToStderr(t *testing.T) {
-	// Capture stderr
-	saved := os.Stderr
-	r, w, err := os.Pipe()
-	require.NoError(t, err)
-	os.Stderr = w
-
-	printUsage()
-
-	w.Close()
-	var buf bytes.Buffer
-	_, err = buf.ReadFrom(r)
-	require.NoError(t, err)
-	os.Stderr = saved
-
-	out := buf.String()
-	assert.Contains(t, out, "Usage: qumo <command> [flags]")
-	assert.Contains(t, out, "Commands:")
-	assert.Contains(t, out, "relay")
-	assert.Contains(t, out, "Flags:")
-}
-
 // Test cases that exercise main() by re-executing the test binary in a child
 // process. The child path is selected with -test.run and an env var toggles
 // child behavior. This avoids calling os.Exit() in the test process.
 
 func TestRun_Unit(t *testing.T) {
 	origRelay := runRelay
-	origSDN := runSDN
+	origRTMP := runRTMP
+	origBootstrap := runBootstrap
 	defer func() {
 		runRelay = origRelay
-		runSDN = origSDN
+		runRTMP = origRTMP
+		runBootstrap = origBootstrap
 	}()
 
 	tests := map[string]struct {
 		args               []string
 		stubRelay          func([]string) error
-		stubSDN            func([]string) error
+		stubRTMP           func([]string) error
+		stubBootstrap      func([]string) error
 		wantCode           int
 		wantStderrContains []string
 	}{
@@ -74,23 +55,34 @@ func TestRun_Unit(t *testing.T) {
 			wantStderrContains: []string{"error: boom"},
 		},
 		"relay passes args": {
-			args: []string{"relay", "-config", "x"},
+			args: []string{"relay", "extra"},
 			stubRelay: func(a []string) error {
-				assert.Equal(t, []string{"-config", "x"}, a)
+				assert.Equal(t, []string{"extra"}, a)
 				return nil
 			},
 			wantCode: 0,
 		},
-		"sdn success": {
-			args:     []string{"sdn"},
-			stubSDN:  func(_ []string) error { return nil },
+		"rtmp success": {
+			args:     []string{"rtmp"},
+			stubRTMP: func(_ []string) error { return nil },
 			wantCode: 0,
 		},
-		"sdn error": {
-			args:               []string{"sdn"},
-			stubSDN:            func(_ []string) error { return fmt.Errorf("sdn-fail") },
+		"rtmp error": {
+			args:               []string{"rtmp"},
+			stubRTMP:           func(_ []string) error { return fmt.Errorf("rtmp-fail") },
 			wantCode:           1,
-			wantStderrContains: []string{"error: sdn-fail"},
+			wantStderrContains: []string{"error: rtmp-fail"},
+		},
+		"bootstrap success": {
+			args:          []string{"bootstrap"},
+			stubBootstrap: func(_ []string) error { return nil },
+			wantCode:      0,
+		},
+		"bootstrap error": {
+			args:               []string{"bootstrap"},
+			stubBootstrap:      func(_ []string) error { return fmt.Errorf("boot-fail") },
+			wantCode:           1,
+			wantStderrContains: []string{"error: boot-fail"},
 		},
 	}
 
@@ -101,10 +93,15 @@ func TestRun_Unit(t *testing.T) {
 			} else {
 				runRelay = func([]string) error { return nil }
 			}
-			if tt.stubSDN != nil {
-				runSDN = tt.stubSDN
+			if tt.stubRTMP != nil {
+				runRTMP = tt.stubRTMP
 			} else {
-				runSDN = func([]string) error { return nil }
+				runRTMP = func([]string) error { return nil }
+			}
+			if tt.stubBootstrap != nil {
+				runBootstrap = tt.stubBootstrap
+			} else {
+				runBootstrap = func([]string) error { return nil }
 			}
 
 			// capture stderr
@@ -115,7 +112,7 @@ func TestRun_Unit(t *testing.T) {
 
 			code := run(tt.args)
 
-			w.Close()
+			_ = w.Close()
 			var buf bytes.Buffer
 			_, err = buf.ReadFrom(r)
 			require.NoError(t, err)
@@ -150,11 +147,11 @@ func TestMain_Subprocess(t *testing.T) {
 			wantExitNonZero:    true,
 			wantOutputContains: []string{"unknown command", "Usage: qumo"},
 		},
-		"relay missing config file": {
-			// cli.RunRelay will attempt to load the provided config file and fail
-			args:               []string{"relay", "-config", "does-not-exist.yaml"},
+		"relay env validation error": {
+			// cli.RunRelay validates env vars; default wildcard addr requires ADVERTISE_ADDR
+			args:               []string{"relay"},
 			wantExitNonZero:    true,
-			wantOutputContains: []string{"failed to load config", "error:"},
+			wantOutputContains: []string{"ADVERTISE_ADDR is required", "error:"},
 		},
 	}
 
@@ -181,9 +178,13 @@ func TestMain_Subprocess(t *testing.T) {
 // runChildMain re-executes the test binary in a special child mode that calls
 // main(). It returns combined stdout+stderr and any exec error.
 func runChildMain(t *testing.T, args ...string) (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
 	// Use the current test binary and ask it to run only the helper test.
 	cmdArgs := append([]string{"-test.run=TestMain_ChildProcess", "--"}, args...)
-	cmd := exec.Command(os.Args[0], cmdArgs...)
+	cmd := exec.Command(exe, cmdArgs...)
 	// Signal to the child that it should execute main().
 	cmd.Env = append(os.Environ(), "QUOMO_TEST_MAIN=1")
 	b, err := cmd.CombinedOutput()

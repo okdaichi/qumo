@@ -1,40 +1,21 @@
 version: '3.8'
 
 services:
-  # SDN Controller
-  sdn:
-    image: ghcr.io/okdaichi/qumo:latest
-    container_name: qumo-sdn
-    command: ["sdn", "-config", "config.sdn.yaml"]
-    ports:
-      - "8090:8090"
-    volumes:
-      - ../config.sdn.yaml:/app/config.sdn.yaml:ro
-      - ../data:/app/data
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8090/graph"]
-      interval: 30s
-      timeout: 3s
-      retries: 3
-      start_period: 5s
-    networks:
-      - qumo-net
-
-  # Relay Server
+  # Relay Server (pre-built image)
   relay:
-    image: ghcr.io/okdaichi/qumo:latest
+    image: ghcr.io/qumo-dev/qumo:latest
     container_name: qumo-relay
-    command: ["relay", "-config", "config.relay.yaml"]
+    command: ["relay"]
     ports:
       - "4433:4433/udp"  # MoQT (QUIC)
       - "8080:4433"      # host 8080 -> container 4433 (HTTP health/metrics)
+    environment:
+      RELAY_ADDR: "0.0.0.0:4433"
+      ADVERTISE_ADDR: "relay:4433"
+      INSECURE: "true"
+      RELAY_NAME: "relay-1"
     volumes:
-      - ../config.relay.yaml:/app/config.relay.yaml:ro
       - ../certs:/app/certs:ro
-    depends_on:
-      sdn:
-        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:4433/health"]
@@ -48,6 +29,3 @@ services:
 networks:
   qumo-net:
     driver: bridge
-
-volumes:
-  data:

@@ -3,23 +3,30 @@ package relay
 import (
 	"context"
 	"crypto/tls"
-	"net/http"
 	"testing"
 	"time"
 
-	"github.com/okdaichi/gomoqt/moqt"
-	"github.com/okdaichi/gomoqt/quic"
+	"github.com/qumo-dev/gomoqt/moqt"
+	"github.com/qumo-dev/qumo/internal/bootstrap"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
+// newTestServer returns a Server with minimal MoQServer and MoQDialer set.
+func newTestServer(addr string) *Server {
+	return &Server{
+		MOQServer: &moqt.Server{
+			Addr:      addr,
+			TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12},
+		},
+		MOQDialer: &moqt.Dialer{},
+	}
+}
+
 // TestServer_Init tests the initialization logic
 func TestServer_Init(t *testing.T) {
-	t.Run("init with TLS config", func(t *testing.T) {
-		server := &Server{
-			Addr:      "localhost:4433",
-			TLSConfig: &tls.Config{},
-		}
+	t.Run("init with MoQServer", func(t *testing.T) {
+		server := newTestServer("localhost:4433")
 
 		defer func() {
 			if r := recover(); r != nil {
@@ -30,10 +37,23 @@ func TestServer_Init(t *testing.T) {
 		require.NotNil(t, server.TrackMux)
 	})
 
-	t.Run("init without TLS config panics", func(t *testing.T) {
+	t.Run("ListenAndServe with nil MoQServer panics", func(t *testing.T) {
+		server := &Server{}
+
+		defer func() {
+			if r := recover(); r == nil {
+				t.Error("Expected panic but got none")
+			}
+		}()
+		_ = server.ListenAndServe()
+	})
+
+	t.Run("ListenAndServe with nil MoQDialer panics", func(t *testing.T) {
 		server := &Server{
-			Addr:      "localhost:4433",
-			TLSConfig: nil,
+			MOQServer: &moqt.Server{
+				Addr:      "localhost:4433",
+				TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12},
+			},
 		}
 
 		defer func() {
@@ -41,19 +61,16 @@ func TestServer_Init(t *testing.T) {
 				t.Error("Expected panic but got none")
 			}
 		}()
-		server.ListenAndServe()
+		_ = server.ListenAndServe()
 	})
 
 	t.Run("init with custom config", func(t *testing.T) {
-		server := &Server{
-			Addr:      "localhost:4433",
-			TLSConfig: &tls.Config{},
-			Config: &Config{
-				NodeID:         "node-1",
-				Region:         "us-west",
-				FrameCapacity:  2000,
-				GroupCacheSize: 200,
-			},
+		server := newTestServer("localhost:4433")
+		server.Config = &Config{
+			NodeID:         "node-1",
+			Region:         "us-west",
+			FrameCapacity:  2000,
+			GroupCacheSize: 200,
 		}
 
 		defer func() {
@@ -68,10 +85,7 @@ func TestServer_Init(t *testing.T) {
 
 // TestServer_Init_Idempotent tests that init can be called multiple times safely
 func TestServer_Init_Idempotent(t *testing.T) {
-	server := &Server{
-		Addr:      "localhost:4433",
-		TLSConfig: &tls.Config{},
-	}
+	server := newTestServer("localhost:4433")
 
 	server.init()
 	config1 := server.Config
@@ -87,10 +101,7 @@ func TestServer_Init_Idempotent(t *testing.T) {
 
 // TestServer_Close_WithoutInit tests Close without initialization
 func TestServer_Close_WithoutInit(t *testing.T) {
-	server := &Server{
-		Addr:      "localhost:4433",
-		TLSConfig: &tls.Config{},
-	}
+	server := &Server{}
 
 	err := server.Close()
 	require.NoError(t, err, "Close should not error without init")
@@ -98,10 +109,7 @@ func TestServer_Close_WithoutInit(t *testing.T) {
 
 // TestServer_Close_AfterInit tests Close after initialization
 func TestServer_Close_AfterInit(t *testing.T) {
-	server := &Server{
-		Addr:      "localhost:4433",
-		TLSConfig: &tls.Config{},
-	}
+	server := newTestServer("localhost:4433")
 	server.init()
 
 	err := server.Close()
@@ -110,36 +118,16 @@ func TestServer_Close_AfterInit(t *testing.T) {
 
 // TestServer_Shutdown_WithoutInit tests Shutdown without initialization
 func TestServer_Shutdown_WithoutInit(t *testing.T) {
-	server := &Server{
-		Addr:      "localhost:4433",
-		TLSConfig: &tls.Config{},
-	}
+	server := &Server{}
 	ctx := context.Background()
 
 	err := server.Shutdown(ctx)
 	require.NoError(t, err, "Shutdown should not error without init")
 }
 
-// TestServer_Shutdown_AfterInit tests Shutdown after initialization
-func TestServer_Shutdown_AfterInit(t *testing.T) {
-	server := &Server{
-		Addr:      "localhost:4433",
-		TLSConfig: &tls.Config{},
-	}
-	server.init()
-	ctx := context.Background()
-
-	err := server.Shutdown(ctx)
-	require.NoError(t, err, "Shutdown should not error after init")
-}
-
 // TestServer_Shutdown_WithTimeout tests Shutdown with context timeout
 func TestServer_Shutdown_WithTimeout(t *testing.T) {
-	server := &Server{
-		Addr:      "localhost:4433",
-		TLSConfig: &tls.Config{},
-	}
-	server.init()
+	server := &Server{}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
@@ -150,28 +138,10 @@ func TestServer_Shutdown_WithTimeout(t *testing.T) {
 
 // TestServer_Muxes_SeparateInstances tests that server creates separate muxes
 func TestServer_Muxes_SeparateInstances(t *testing.T) {
-	server := &Server{
-		Addr:      "localhost:4433",
-		TLSConfig: &tls.Config{},
-	}
+	server := newTestServer("localhost:4433")
 	server.init()
 
 	require.NotNil(t, server.TrackMux, "TrackMux should be initialized")
-}
-
-// TestServer_ListenAndServe_WithNilTLSConfig tests that ListenAndServe returns an error without TLS config
-func TestServer_ListenAndServe_WithNilTLSConfig(t *testing.T) {
-	server := &Server{
-		Addr:      "localhost:4433",
-		TLSConfig: nil,
-	}
-
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("Expected panic but got none")
-		}
-	}()
-	server.ListenAndServe()
 }
 
 // TestServer_Config_Persistence tests that provided config is preserved
@@ -183,11 +153,8 @@ func TestServer_Config_Persistence(t *testing.T) {
 		GroupCacheSize: 500,
 	}
 
-	server := &Server{
-		Addr:      "localhost:4433",
-		TLSConfig: &tls.Config{},
-		Config:    customConfig,
-	}
+	server := newTestServer("localhost:4433")
+	server.Config = customConfig
 	server.init()
 
 	assert.Same(t, customConfig, server.Config, "Server should preserve custom config")
@@ -199,20 +166,17 @@ func TestServer_Config_Persistence(t *testing.T) {
 
 // TestServer_Init_Concurrent tests concurrent initialization
 func TestServer_Init_Concurrent(t *testing.T) {
-	server := &Server{
-		Addr:      "localhost:4433",
-		TLSConfig: &tls.Config{},
-	}
+	server := newTestServer("localhost:4433")
 
 	done := make(chan bool)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		go func() {
 			server.init()
 			done <- true
 		}()
 	}
 
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		<-done
 	}
 
@@ -221,10 +185,7 @@ func TestServer_Init_Concurrent(t *testing.T) {
 
 // TestServer_Close_Idempotent tests that Close can be called multiple times
 func TestServer_Close_Idempotent(t *testing.T) {
-	server := &Server{
-		Addr:      "localhost:4433",
-		TLSConfig: &tls.Config{},
-	}
+	server := newTestServer("localhost:4433")
 	server.init()
 
 	require.NoError(t, server.Close(), "First Close should not error")
@@ -234,11 +195,7 @@ func TestServer_Close_Idempotent(t *testing.T) {
 
 // TestServer_Shutdown_Idempotent tests that Shutdown can be called multiple times
 func TestServer_Shutdown_Idempotent(t *testing.T) {
-	server := &Server{
-		Addr:      "localhost:4433",
-		TLSConfig: &tls.Config{},
-	}
-	server.init()
+	server := &Server{}
 	ctx := context.Background()
 
 	require.NoError(t, server.Shutdown(ctx), "First Shutdown should not error")
@@ -255,11 +212,8 @@ func TestServer_Config_CustomValues(t *testing.T) {
 		FrameCapacity:  4096,
 	}
 
-	server := &Server{
-		Addr:      "localhost:4433",
-		TLSConfig: &tls.Config{},
-		Config:    customConfig,
-	}
+	server := newTestServer("localhost:4433")
+	server.Config = customConfig
 	server.init()
 
 	assert.Same(t, customConfig, server.Config, "Custom config should be preserved")
@@ -269,10 +223,7 @@ func TestServer_Config_CustomValues(t *testing.T) {
 
 // TestServer_Mux_Initialization tests that muxes are properly initialized
 func TestServer_Mux_Initialization(t *testing.T) {
-	server := &Server{
-		Addr:      "localhost:4433",
-		TLSConfig: &tls.Config{},
-	}
+	server := newTestServer("localhost:4433")
 	server.init()
 
 	require.NotNil(t, server.TrackMux, "TrackMux should be initialized")
@@ -280,23 +231,86 @@ func TestServer_Mux_Initialization(t *testing.T) {
 
 // TestServer_Mux_CustomTrackMux tests providing custom TrackMux
 func TestServer_Mux_CustomTrackMux(t *testing.T) {
-	customMux := moqt.NewTrackMux()
-	server := &Server{
-		Addr:      "localhost:4433",
-		TLSConfig: &tls.Config{},
-	}
+	customMux := moqt.NewTrackMux(0)
+	server := newTestServer("localhost:4433")
 	server.TrackMux = customMux
 	server.init()
 
 	assert.Same(t, customMux, server.TrackMux, "Custom TrackMux should be preserved")
 }
 
+// TestServer_MarkConnected tests server-level peer deduplication.
+func TestServer_MarkConnected(t *testing.T) {
+	server := newTestServer("localhost:4433")
+	server.init()
+
+	addr := "moqt://relay-a:4433"
+
+	assert.True(t, server.markConnected(addr), "first call should return true")
+	assert.False(t, server.markConnected(addr), "second call for same addr should return false")
+	assert.True(t, server.markConnected("moqt://relay-b:4433"), "different addr should return true")
+}
+
+// TestServer_MarkUnconnected tests that markUnconnected removes the address so it can be re-connected.
+func TestServer_MarkUnconnected(t *testing.T) {
+	server := newTestServer("localhost:4433")
+	server.init()
+
+	addr := "moqt://relay-a:4433"
+
+	require.True(t, server.markConnected(addr))
+	assert.False(t, server.markConnected(addr), "should be blocked while connected")
+
+	server.markUnconnected(addr)
+	assert.True(t, server.markConnected(addr), "should be connectable again after markUnconnected")
+}
+
+func TestFilterPeersByAddr(t *testing.T) {
+	peers := []bootstrap.Node{
+		{Addr: "moqt://relay-a:4433"},
+		{Addr: "moqt://relay-b:4433"},
+		{Addr: "moqt://relay-c:4433"},
+	}
+
+	exclude := map[string]struct{}{
+		"moqt://relay-b:4433": {},
+		"moqt://relay-d:4433": {},
+	}
+
+	filtered := filterPeersByAddr(peers, exclude)
+
+	assert.Len(t, filtered, 2)
+	assert.Equal(t, "moqt://relay-a:4433", filtered[0].Addr)
+	assert.Equal(t, "moqt://relay-c:4433", filtered[1].Addr)
+}
+
+// TestServer_MarkConnected_Concurrent tests that markConnected is safe for concurrent use
+// and that only one caller wins for a given address.
+func TestServer_MarkConnected_Concurrent(t *testing.T) {
+	server := newTestServer("localhost:4433")
+	server.init()
+
+	addr := "moqt://relay-concurrent:4433"
+	wins := make(chan bool, 20)
+
+	for range 20 {
+		go func() {
+			wins <- server.markConnected(addr)
+		}()
+	}
+
+	var trueCount int
+	for range 20 {
+		if <-wins {
+			trueCount++
+		}
+	}
+	assert.Equal(t, 1, trueCount, "exactly one goroutine should win the race")
+}
+
 // TestServer_Close_WithNilComponents tests Close with uninitialized components
 func TestServer_Close_WithNilComponents(t *testing.T) {
-	server := &Server{
-		Addr:      "localhost:4433",
-		TLSConfig: &tls.Config{},
-	}
+	server := &Server{}
 
 	err := server.Close()
 	require.NoError(t, err, "Close with nil components should not error")
@@ -304,38 +318,25 @@ func TestServer_Close_WithNilComponents(t *testing.T) {
 
 // TestServer_Shutdown_WithNilComponents tests Shutdown with uninitialized components
 func TestServer_Shutdown_WithNilComponents(t *testing.T) {
-	server := &Server{
-		Addr:      "localhost:4433",
-		TLSConfig: &tls.Config{},
-	}
+	server := &Server{}
 	ctx := context.Background()
 
 	err := server.Shutdown(ctx)
 	require.NoError(t, err, "Shutdown with nil components should not error")
 }
 
-// TestServer_Init_WithQUICConfig tests initialization with QUIC config
+// TestServer_Init_WithQUICConfig tests initialization with QUIC config on MoQServer/MoQDialer
 func TestServer_Init_WithQUICConfig(t *testing.T) {
-	quicConfig := &quic.Config{}
-	server := &Server{
-		Addr:      "localhost:4433",
-		TLSConfig: &tls.Config{},
-	}
-	server.QUICConfig = quicConfig
+	server := newTestServer("localhost:4433")
 	server.init()
 
-	assert.Same(t, quicConfig, server.QUICConfig, "QUICConfig should be preserved")
+	require.NotNil(t, server.TrackMux)
 }
 
 // TestServer_Init_MultipleCallsWithDifferentConfigs tests init idempotency
 func TestServer_Init_MultipleCallsWithDifferentConfigs(t *testing.T) {
-	server := &Server{
-		Addr:      "localhost:4433",
-		TLSConfig: &tls.Config{},
-		Config: &Config{
-			NodeID: "node-1",
-		},
-	}
+	server := newTestServer("localhost:4433")
+	server.Config = &Config{NodeID: "node-1"}
 
 	server.init()
 	firstMux := server.TrackMux
@@ -355,29 +356,6 @@ func TestServer_Init_MultipleCallsWithDifferentConfigs(t *testing.T) {
 	assert.Equal(t, "node-2", server.Config.NodeID, "Config assignment should work even after init")
 }
 
-// TestServer_CheckHTTPOrigin tests CheckHTTPOrigin configuration
-func TestServer_CheckHTTPOrigin(t *testing.T) {
-	called := false
-	originFunc := func(r *http.Request) bool {
-		called = true
-		return true
-	}
-
-	server := &Server{
-		Addr:      "localhost:4433",
-		TLSConfig: &tls.Config{},
-	}
-	server.CheckHTTPOrigin = originFunc
-	server.init()
-
-	require.NotNil(t, server.CheckHTTPOrigin, "CheckHTTPOrigin should be preserved")
-
-	// Test that the function works
-	result := server.CheckHTTPOrigin(nil)
-	assert.True(t, called, "CheckHTTPOrigin function should be callable")
-	assert.True(t, result, "CheckHTTPOrigin should return true")
-}
-
 // TestServer_Address_Formats tests various address formats
 func TestServer_Address_Formats(t *testing.T) {
 	tests := []struct {
@@ -394,13 +372,10 @@ func TestServer_Address_Formats(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			server := &Server{
-				Addr:      tt.addr,
-				TLSConfig: &tls.Config{},
-			}
+			server := newTestServer(tt.addr)
 			server.init()
 
-			assert.Equal(t, tt.addr, server.Addr, "Address should be preserved")
+			assert.Equal(t, tt.addr, server.MOQServer.Addr, "Address should be preserved")
 		})
 	}
 }

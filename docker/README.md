@@ -1,54 +1,76 @@
 # Docker — qumo
 
 This directory consolidates the project's Dockerfiles, compose manifests, and Docker-related usage.
+All configuration is driven by **environment variables** — no config YAML files are needed at the repo root.
 
 Files
 - `Dockerfile` — image build used by CI (GHCR)
-- `docker-entrypoint.sh` — entrypoint used in the image
-- `docker-compose.yml` — local build + compose example
-- `docker-compose.external.yml` — compose for external deployment
-- `docker-compose.simple.yml` — demo environment (SDN + 3 relays)
+- `docker-compose.yml` — single relay (local build)
+- `docker-compose.external.yml` — single relay (pre-built image)
+- `docker-compose.topology.yml` — **full 3-region topology** (bootstrap + hub + edge per region)
 
-Quick start (demo)
+Quick start (3-region topology)
 
 ```bash
-# Start demo (SDN + 3 relays)
-docker compose -f docker/docker-compose.simple.yml up
+# Start the full topology: 3 bootstraps + 3 hubs + 3 edges
+docker compose -f docker/docker-compose.topology.yml up --build
 
-# View topology
-curl http://localhost:8090/graph | jq
+# Check a bootstrap
+curl http://localhost:8091/peers
 
-# Stop demo
-docker compose -f docker/docker-compose.simple.yml down
+# Check a relay
+curl http://localhost:9001/health
+
+# Stop
+docker compose -f docker/docker-compose.topology.yml down
 ```
 
 Run pre-built image (GHCR)
 
 ```bash
 # Pull image
-docker pull ghcr.io/okdaichi/qumo:latest
+docker pull ghcr.io/qumo-dev/qumo:latest
 
-# Run relay
+# Run relay (config generated from env vars)
 docker run -d \
   --name qumo-relay \
   -p 4433:4433/udp \
   -p 8080:4433 \
-  -v $(pwd)/certs:/app/certs:ro \
-  ghcr.io/okdaichi/qumo:latest relay -config config.relay.yaml
+  -e INSECURE=true \
+  -e RELAY_NAME=relay-1 \
+  -e REGION=asia \
+  -e ROLE=hub \
+  ghcr.io/qumo-dev/qumo:latest relay
 ```
+
+Environment variables (relay)
+
+| Variable | Default | Description |
+|---|---|---|
+| `RELAY_ADDR` | `0.0.0.0:4433` | Bind address |
+| `RELAY_NAME` | `relay-$HOSTNAME` | Node ID |
+| `REGION` | (empty) | Region label |
+| `ROLE` | (empty) | `hub` or `edge` |
+| `ADVERTISE_ADDR` | (empty) | Public address for peers |
+| `INSECURE` | `false` | Auto-generate self-signed certs |
+| `BOOTSTRAP_URLS` | (empty) | Comma-separated bootstrap URLs |
+| `BOOTSTRAP_INTERVAL` | `15s` | Bootstrap poll interval |
+| `PEERS` | (empty) | Comma-separated static peer addresses |
+
+Environment variables (bootstrap)
+
+| Variable | Default | Description |
+|---|---|---|
+| `BOOTSTRAP_ADDR` | `:8080` | Bind address |
+| `BOOTSTRAP_TTL` | `30s` | Node TTL before expiration |
+| `BOOTSTRAP_MAX_PEERS` | `20` | Max peers returned per query |
 
 Build locally
 
 ```bash
-# Build using relocated Dockerfile (build context must be repo root)
 docker build -f docker/Dockerfile -t qumo:local .
 ```
 
-CI / GHCR
-
-- GitHub Actions (release) builds & pushes multi-arch images to `ghcr.io/okdaichi/qumo`.
-- The release workflow has been updated to use `docker/Dockerfile`.
-
 Notes
-- The container listens on port `4433` for QUIC (UDP) and also serves HTTP health/metrics on the same port (TCP). Demo compose files map host ports `8080/8081/8082` to container `4433` for convenience.
-- If you previously used `docker-compose*.yml` at the repo root, use the files in `docker/` going forward.
+- The container listens on port `4433` for QUIC (UDP) and also serves HTTP health/metrics on the same port (TCP).
+- If you previously used `config.relay.yaml` at the repo root, configuration is now driven entirely by environment variables — the binary reads env vars directly.

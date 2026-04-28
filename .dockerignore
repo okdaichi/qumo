@@ -50,9 +50,6 @@ magefiles/
 # Nomad
 *.nomad
 
-# Deployment configs
-deploy/
-
 # Examples and demos
 examples/
 benchmarks/

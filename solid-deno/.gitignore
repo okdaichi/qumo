@@ -25,3 +25,6 @@ dist-ssr
 
 # Vite temp files
 vite.config.ts.timestamp-*
+
+# Local environment (contains machine-specific cert hash)
+.env
