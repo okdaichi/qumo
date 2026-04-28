@@ -31,7 +31,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Rejections are logged and tracked via the `qumo_relay_route_rejections_total` metric.
 - **Health check refinement (`internal/relay`):** `statusHandler` no longer tracks
   active connections manually; it now relies on Prometheus gauges for session counts.
-- **Dependency upgrade:** `gomoqt` upgraded to v0.15.0.
 - **Bootstrap API authentication (`internal/bootstrap`, `internal/cli`):** The `/register`
   and `/peers` endpoints now support optional bearer token authentication. Set
   `BOOTSTRAP_AUTH_TOKEN` on both the bootstrap server and relay nodes to require an
@@ -81,6 +80,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Dependency upgrades and project-wide refactoring:**
+  - Upgraded MoQ dependencies (Go `gomoqt` and JS/Deno `@qumo/moq`) to v0.15.0.
+  - Migrated frontend MoQ dependency from `@okdaichi/moq` to `@qumo/moq`.
+  - Updated all frontend import paths to use the new `@qumo/moq` package.
+  - Upgraded frontend dependencies: `solid-js` to v1.9.12, `vite` to v7.3.2, `@types/node` to v25.6.0, and `vite-plugin-solid` to v2.11.12.
+  - Refactored SVG assets (`vite.svg`, `solid.svg`) for improved formatting and readability.
 - **Repository ownership transferred:** Project ownership moved from `okdaichi` personal account to the `qumo-dev` organization.
 - **`discoverPeers` deduplication unified (`internal/relay`):** The per-`discoverPeers`
   local `map[string]struct{}` and its mutex have been removed. Deduplication is now handled
