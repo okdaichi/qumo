@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/qumo-dev/gomoqt/moqt"
 	"golang.org/x/sync/singleflight"
 )
@@ -297,6 +298,10 @@ type trackDistributor struct {
 	manager *trackManager
 	nodeID  string
 
+	// Pre-bound Prometheus counters to avoid per-frame label lookups in hot paths.
+	ingressCounter prometheus.Counter
+	egressCounter  prometheus.Counter
+
 	mu          sync.RWMutex
 	subscribers map[chan struct{}]struct{}
 
@@ -305,12 +310,14 @@ type trackDistributor struct {
 
 func newTrackDistributor(name moqt.TrackName, manager *trackManager, nodeID string) *trackDistributor {
 	d := &trackDistributor{
-		name:        name,
-		ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-		manager:     manager,
-		nodeID:      nodeID,
-		subscribers: make(map[chan struct{}]struct{}),
-		done:        make(chan struct{}),
+		name:           name,
+		ring:           newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
+		manager:        manager,
+		nodeID:         nodeID,
+		ingressCounter: metricRelayIngressBytesTotal.WithLabelValues(nodeID),
+		egressCounter:  metricRelayEgressBytesTotal.WithLabelValues(nodeID),
+		subscribers:    make(map[chan struct{}]struct{}),
+		done:           make(chan struct{}),
 	}
 	go d.pollCacheDepth()
 	return d
@@ -397,7 +404,7 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 						_ = gw.Close()
 						return
 					}
-					reportEgressBytes(d.nodeID, frame.Len())
+					d.egressCounter.Add(float64(frame.Len()))
 					frameIdx++
 					continue
 				}
@@ -478,7 +485,7 @@ func (d *trackDistributor) ingest(ctx context.Context, src *moqt.TrackReader) {
 
 func (d *trackDistributor) addGroup(group *moqt.GroupReader) {
 	totalBytes := d.ring.add(group, d.broadcast)
-	reportIngressBytes(d.nodeID, totalBytes)
+	d.ingressCounter.Add(float64(totalBytes))
 }
 
 // broadcast notifies all subscribers that new data is available.

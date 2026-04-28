@@ -29,15 +29,21 @@ func newTestRelayHandler(ctx context.Context) *relayHandler {
 	}
 }
 
-func TestRelayByteCounters_IngressAndEgress(t *testing.T) {
+func TestTrackDistributor_ByteCounters(t *testing.T) {
+	// Use a unique nodeID per run so parallel tests don't share counter state.
 	nodeID := fmt.Sprintf("node-%d", time.Now().UnixNano())
 
-	reportIngressBytes(nodeID, 100)
-	reportEgressBytes(nodeID, 125)
-	reportEgressBytes(nodeID, 125)
+	dist := newTrackDistributor("video", newTrackManager(), nodeID)
+	defer close(dist.done)
 
-	assert.Equal(t, 100.0, testutil.ToFloat64(metricRelayIngressBytesTotal.WithLabelValues(nodeID)))
-	assert.Equal(t, 250.0, testutil.ToFloat64(metricRelayEgressBytesTotal.WithLabelValues(nodeID)))
+	// Verify the counters are wired to the correct Prometheus metric+label.
+	// Simulate what addGroup and egress would do internally.
+	dist.ingressCounter.Add(200)
+	dist.ingressCounter.Add(100)
+	dist.egressCounter.Add(150)
+
+	assert.Equal(t, 300.0, testutil.ToFloat64(metricRelayIngressBytesTotal.WithLabelValues(nodeID)))
+	assert.Equal(t, 150.0, testutil.ToFloat64(metricRelayEgressBytesTotal.WithLabelValues(nodeID)))
 }
 
 // ============================================================================

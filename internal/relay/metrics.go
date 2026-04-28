@@ -207,11 +207,3 @@ var (
 		[]string{"code"},
 	)
 )
-
-func reportIngressBytes(nodeID string, bytes int) {
-	metricRelayIngressBytesTotal.WithLabelValues(nodeID).Add(float64(bytes))
-}
-
-func reportEgressBytes(nodeID string, bytes int) {
-	metricRelayEgressBytesTotal.WithLabelValues(nodeID).Add(float64(bytes))
-}
