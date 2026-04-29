@@ -126,9 +126,10 @@ func (ring *groupRing) reserve(seq moqt.GroupSequence) *groupCache {
 // and once more when the group is complete.
 // It is safe to call fill concurrently for different groups.
 func (ring *groupRing) fill(group frameSource, cache *groupCache, onFrame func()) {
-	frame := ring.pool.Get()
+	buf := ring.pool.Get()
+	defer ring.pool.Put(buf)
 	frameCount := 0
-	for frame := range group.Frames(frame) {
+	for frame := range group.Frames(buf) {
 		frameCount++
 		cache.append(frame)
 		if onFrame != nil {
