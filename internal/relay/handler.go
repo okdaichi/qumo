@@ -346,7 +346,7 @@ func newTrackDistributor(manager *trackManager, trackID string) *trackDistributo
 		fillSem:        make(chan struct{}, maxGroupFillsInFlightOrPanic()),
 		subscribers:    make(map[chan struct{}]struct{}),
 
-		done:           make(chan struct{}),
+		done: make(chan struct{}),
 	}
 	go d.pollCacheDepth()
 	return d
