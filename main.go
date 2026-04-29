@@ -14,6 +14,7 @@ var (
 	// overridable command handlers for easier unit-testing
 	runRelay     = relay.Run
 	runRTMP      = ingest.RunRTMP
+	runRTSP      = ingest.RunRTSP
 	runBootstrap = bootstrap.Run
 )
 
@@ -44,6 +45,8 @@ func run(args []string) int {
 		err = runRelay(cmdArgs)
 	case "rtmp":
 		err = runRTMP(cmdArgs)
+	case "rtsp":
+		err = runRTSP(cmdArgs)
 	case "bootstrap":
 		err = runBootstrap(cmdArgs)
 	default:
