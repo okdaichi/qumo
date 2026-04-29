@@ -78,38 +78,6 @@ type groupRing struct {
 	pos    atomic.Uint64
 }
 
-// add ingests all frames from group into the ring cache.
-// notify is called after each frame and once more when the group is complete,
-// allowing subscribers to wake up incrementally.
-// It returns the total number of bytes ingested.
-func (ring *groupRing) add(group *moqt.GroupReader, notify func()) int {
-	cache := &groupCache{
-		seq:    group.GroupSequence(),
-		frames: make([]*moqt.Frame, 0, 1),
-	}
-
-	idx := int(ring.pos.Add(1) % uint64(ring.size))
-	ring.caches[idx].Store(cache)
-
-	frame := ring.pool.Get()
-
-	totalBytes := 0
-	for frame := range group.Frames(frame) {
-		totalBytes += frame.Len()
-		cache.append(frame)
-		if notify != nil {
-			notify()
-		}
-	}
-
-	cache.markComplete()
-	if notify != nil {
-		notify()
-	}
-
-	return totalBytes
-}
-
 // reserve atomically allocates a ring slot for seq and returns the new cache.
 // It must be called from the ingest goroutine (single writer) to preserve group ordering.
 func (ring *groupRing) reserve(seq moqt.GroupSequence) *groupCache {

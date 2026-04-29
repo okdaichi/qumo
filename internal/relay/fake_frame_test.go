@@ -11,7 +11,6 @@ import (
 // It yields a fixed set of pre-built payloads in order, simulating a fully
 // received MoQT group without requiring a real network connection.
 type fakeFrameSource struct {
-	seq    moqt.GroupSequence
 	frames [][]byte
 }
 
