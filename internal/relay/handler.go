@@ -511,29 +511,39 @@ func (d *trackDistributor) ingest(ctx context.Context, src *moqt.TrackReader) {
 		if err != nil {
 			return
 		}
-
-		// Acquire a fill semaphore slot before reserving the ring slot.
-		// This bounds in-flight goroutines to MaxGroupFillsInFlight and
-		// prevents unbounded goroutine growth. The semaphore is acquired
-		// after AcceptGroup returns, not before — it does not gate AcceptGroup.
-		select {
-		case d.fillSem <- struct{}{}:
-		case <-ctx.Done():
+		if !d.processGroup(ctx, &wg, gr.GroupSequence(), gr) {
 			return
 		}
-
-		// Reserve a ring slot synchronously to preserve group ordering,
-		// then fill frames concurrently so the next AcceptGroup is not blocked.
-		cache := d.ring.reserve(gr.GroupSequence())
-		metricGroupFillsInflight.Inc()
-		wg.Go(func() {
-			defer func() {
-				<-d.fillSem
-				metricGroupFillsInflight.Dec()
-			}()
-			d.ring.fill(gr, cache, d.broadcast)
-		})
 	}
+}
+
+// processGroup acquires a semaphore slot and launches a fill goroutine for the
+// given group. It is separated from ingest so that tests can drive it directly
+// with a fakeFrameSource without needing a real *moqt.TrackReader.
+// Returns false if ctx is cancelled while waiting for a semaphore slot.
+func (d *trackDistributor) processGroup(ctx context.Context, wg *sync.WaitGroup, seq moqt.GroupSequence, src frameSource) bool {
+	// Acquire a fill semaphore slot before reserving the ring slot.
+	// This bounds in-flight goroutines to MaxGroupFillsInFlight and
+	// prevents unbounded goroutine growth. The semaphore is acquired
+	// after AcceptGroup returns, not before — it does not gate AcceptGroup.
+	select {
+	case d.fillSem <- struct{}{}:
+	case <-ctx.Done():
+		return false
+	}
+
+	// Reserve a ring slot synchronously to preserve group ordering,
+	// then fill frames concurrently so the next AcceptGroup is not blocked.
+	cache := d.ring.reserve(seq)
+	metricGroupFillsInflight.Inc()
+	wg.Go(func() {
+		defer func() {
+			<-d.fillSem
+			metricGroupFillsInflight.Dec()
+		}()
+		d.ring.fill(src, cache, d.broadcast)
+	})
+	return true
 }
 
 // broadcast notifies all subscribers that new data is available.
