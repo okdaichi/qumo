@@ -21,13 +21,13 @@ var NotifyTimeout = 1 * time.Millisecond
 // can finish reading in-flight groups before the upstream subscription stops.
 var DrainTimeout = 30 * time.Second
 
-// MaxConcurrentGroupFills is the maximum number of fill goroutines that a
+// MaxGroupFillsInFlight is the maximum number of fill goroutines that a
 // single trackDistributor may run simultaneously. It acts as a backpressure
 // valve: when the limit is reached, ingest blocks on AcceptGroup until a fill
 // slot becomes available, preventing unbounded goroutine growth under bursty
 // or slow-consumer conditions.
 // The default is max(32, 2×GOMAXPROCS); override before calling Relay.
-var MaxConcurrentGroupFills = max(32, 2*runtime.GOMAXPROCS(0))
+var MaxGroupFillsInFlight = max(32, 2*runtime.GOMAXPROCS(0))
 
 var errTrackNotFound = errors.New("track not found")
 
@@ -315,7 +315,7 @@ type trackDistributor struct {
 
 	// fillSem is a buffered-channel semaphore that limits the number of
 	// concurrently running fill goroutines. Its capacity is set to
-	// MaxConcurrentGroupFills at construction time.
+	// MaxGroupFillsInFlight at construction time.
 	fillSem chan struct{}
 
 	mu          sync.RWMutex
@@ -331,7 +331,7 @@ func newTrackDistributor(manager *trackManager, trackID string) *trackDistributo
 		manager:        manager,
 		ingressCounter: metricRelayIngressBytesTotal.WithLabelValues(trackID),
 		egressCounter:  metricRelayEgressBytesTotal.WithLabelValues(trackID),
-		fillSem:        make(chan struct{}, MaxConcurrentGroupFills),
+		fillSem:        make(chan struct{}, MaxGroupFillsInFlight),
 		subscribers:    make(map[chan struct{}]struct{}),
 		done:           make(chan struct{}),
 	}
@@ -500,7 +500,7 @@ func (d *trackDistributor) ingest(ctx context.Context, src *moqt.TrackReader) {
 		}
 
 		// Acquire a fill semaphore slot before reserving the ring slot.
-		// This bounds in-flight goroutines to MaxConcurrentGroupFills and
+			// This bounds in-flight goroutines to MaxGroupFillsInFlight and
 		// applies natural backpressure: when all slots are busy the ingest
 		// loop blocks here rather than spawning unboundedly.
 		select {

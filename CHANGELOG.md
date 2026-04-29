@@ -11,11 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Concurrent group fill limiting (`internal/relay`):** A buffered-channel semaphore
   (`fillSem`) now bounds the number of in-flight fill goroutines per `trackDistributor`
-  to `MaxConcurrentGroupFills` (default `max(32, 2×GOMAXPROCS)`). When all slots are
+  to `MaxGroupFillsInFlight` (default `max(32, 2×GOMAXPROCS)`). When all slots are
   occupied, `ingest` blocks on the semaphore rather than spawning unboundedly, providing
   natural backpressure against bursty or slow-consumer ingest. A new Prometheus gauge
   `qumo_relay_group_fills_inflight` exposes the current in-flight count for observability.
-  `MaxConcurrentGroupFills` is a package-level variable and can be overridden before
+  `MaxGroupFillsInFlight` is a package-level variable and can be overridden before
   calling `Relay` for environment-specific tuning.
 
 - **Concurrent frame filling in group cache (`internal/relay`):** `trackDistributor.ingest`
