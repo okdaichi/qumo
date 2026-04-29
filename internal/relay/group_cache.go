@@ -1,11 +1,19 @@
 package relay
 
 import (
+	"iter"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 
 	"github.com/qumo-dev/gomoqt/moqt"
 )
+
+// frameSource is satisfied by *moqt.GroupReader and can be implemented by
+// test fakes to exercise fill without a real MoQT connection.
+type frameSource interface {
+	Frames(buf *moqt.Frame) iter.Seq[*moqt.Frame]
+}
 
 const DefaultGroupCacheSize = 8
 
@@ -70,36 +78,37 @@ type groupRing struct {
 	pos    atomic.Uint64
 }
 
-// add ingests all frames from group into the ring cache.
-// notify is called after each frame and once more when the group is complete,
-// allowing subscribers to wake up incrementally.
-// It returns the total number of bytes ingested.
-func (ring *groupRing) add(group *moqt.GroupReader, notify func()) int {
+// reserve atomically allocates a ring slot for seq and returns the new cache.
+// It must be called from the ingest goroutine (single writer) to preserve group ordering.
+func (ring *groupRing) reserve(seq moqt.GroupSequence) *groupCache {
 	cache := &groupCache{
-		seq:    group.GroupSequence(),
+		seq:    seq,
 		frames: make([]*moqt.Frame, 0, 1),
 	}
-
 	idx := int(ring.pos.Add(1) % uint64(ring.size))
 	ring.caches[idx].Store(cache)
+	return cache
+}
 
-	frame := ring.pool.Get()
-
-	totalBytes := 0
-	for frame := range group.Frames(frame) {
-		totalBytes += frame.Len()
+// fill reads all frames from group into cache, calling onFrame after each frame
+// and once more when the group is complete.
+// It is safe to call fill concurrently for different groups.
+func (ring *groupRing) fill(group frameSource, cache *groupCache, onFrame func()) {
+	buf := ring.pool.Get()
+	defer ring.pool.Put(buf)
+	frameCount := 0
+	for frame := range group.Frames(buf) {
+		frameCount++
 		cache.append(frame)
-		if notify != nil {
-			notify()
+		if onFrame != nil {
+			onFrame()
 		}
 	}
-
+	slog.Debug("group cached", "seq", cache.seq, "frames", frameCount)
 	cache.markComplete()
-	if notify != nil {
-		notify()
+	if onFrame != nil {
+		onFrame()
 	}
-
-	return totalBytes
 }
 
 func (ring *groupRing) get(seq moqt.GroupSequence) *groupCache {

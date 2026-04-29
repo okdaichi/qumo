@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -910,6 +911,154 @@ func TestRelayHandler_RTT_NilSession(t *testing.T) {
 	assert.Equal(t, 0, h.RouteStats().Hops, "nil session should yield 0 hops without panic")
 	assert.Equal(t, uint64(0), h.RouteStats().EstimatedBitrate, "nil session should yield 0 bitrate without panic")
 	assert.Equal(t, time.Duration(0), h.RouteStats().RTT, "nil session should yield 0 RTT without panic")
+}
+
+// ============================================================================
+// ingest concurrent group processing tests
+// ============================================================================
+
+// TestIngest_ConcurrentGroups_AllCachesComplete exercises the reserve+fill split
+// directly: reserve N caches sequentially, then fill them concurrently, and
+// confirm that every cache is marked complete and holds the correct frames.
+func TestIngest_ConcurrentGroups_AllCachesComplete(t *testing.T) {
+	const numGroups = 10
+	const framesPerGroup = 5
+
+	ring := newGroupRing(numGroups, DefaultFramePool)
+	caches := make([]*groupCache, numGroups)
+	for i := range numGroups {
+		caches[i] = ring.reserve(moqt.GroupSequence(i + 1))
+	}
+
+	var wg sync.WaitGroup
+	for i := range numGroups {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			frames := make([][]byte, framesPerGroup)
+			for j := range framesPerGroup {
+				frames[j] = []byte(fmt.Sprintf("g%d-f%d", idx, j))
+			}
+			ring.fill(&fakeFrameSource{frames: frames}, caches[idx], nil)
+		}(i)
+	}
+	wg.Wait()
+
+	for i, c := range caches {
+		assert.True(t, c.isComplete(), "group %d should be complete", i)
+		for j := range framesPerGroup {
+			assert.NotNil(t, c.next(j), "group %d frame %d should exist", i, j)
+		}
+	}
+}
+
+// TestIngest_ConcurrentGroups_FasterThanSerial confirms that concurrent fill
+// completes in roughly framesPerGroup×delay time, not numGroups×framesPerGroup×delay.
+// Uses testing/synctest so time advances deterministically.
+func TestIngest_ConcurrentGroups_FasterThanSerial(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		const numGroups = 6
+		const framesPerGroup = 3
+		const delay = 10 * time.Millisecond
+
+		ring := newGroupRing(numGroups, DefaultFramePool)
+		caches := make([]*groupCache, numGroups)
+		for i := range numGroups {
+			caches[i] = ring.reserve(moqt.GroupSequence(i + 1))
+		}
+
+		allDone := make(chan struct{})
+		var wg sync.WaitGroup
+		for i := range numGroups {
+			wg.Add(1)
+			go func(idx int) {
+				defer wg.Done()
+				frames := make([][]byte, framesPerGroup)
+				for j := range framesPerGroup {
+					frames[j] = []byte("x")
+				}
+				src := &slowFrameSource{
+					fakeFrameSource: fakeFrameSource{frames: frames},
+					delay:           delay,
+				}
+				ring.fill(src, caches[idx], nil)
+			}(i)
+		}
+		go func() {
+			wg.Wait()
+			close(allDone)
+		}()
+
+		// All goroutines sleep concurrently for framesPerGroup×delay.
+		// Advance time just past that to confirm they all complete.
+		serialTime := time.Duration(numGroups*framesPerGroup) * delay
+		concurrentTime := time.Duration(framesPerGroup) * delay
+
+		time.Sleep(concurrentTime + delay)
+		synctest.Wait()
+
+		select {
+		case <-allDone:
+			// good: completed in roughly framesPerGroup×delay
+		default:
+			t.Fatalf("fills should complete within %v, not the serial %v", concurrentTime+delay, serialTime)
+		}
+	})
+}
+
+// TestIngest_WaitGroup_BlocksDoneUntilFillComplete verifies the LIFO defer
+// ordering: wg.Wait() must run before close(done), so subscribers cannot see
+// done closed while a fill goroutine is still writing frames.
+func TestIngest_WaitGroup_BlocksDoneUntilFillComplete(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
+		cache := ring.reserve(moqt.GroupSequence(1))
+
+		done := make(chan struct{})
+		fillDone := make(chan struct{})
+
+		frames := [][]byte{[]byte("a"), []byte("b"), []byte("c")}
+		src := &slowFrameSource{
+			fakeFrameSource: fakeFrameSource{frames: frames},
+			delay:           10 * time.Millisecond,
+		}
+
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ring.fill(src, cache, nil)
+			close(fillDone)
+		}()
+		go func() {
+			wg.Wait()
+			close(done)
+		}()
+
+		synctest.Wait()
+
+		// Before time advances: fill should not be done yet.
+		select {
+		case <-fillDone:
+			t.Fatal("fill should not be done before time advances")
+		default:
+		}
+
+		// Advance past all frame sleeps (3 × 10ms).
+		time.Sleep(50 * time.Millisecond)
+		synctest.Wait()
+
+		select {
+		case <-fillDone:
+		default:
+			t.Fatal("fill should have completed after 50ms")
+		}
+		select {
+		case <-done:
+		default:
+			t.Fatal("done should be closed after fill completed")
+		}
+	})
 }
 
 // ============================================================================

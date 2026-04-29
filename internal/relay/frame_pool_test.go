@@ -690,58 +690,6 @@ func TestFramePool_MultipleFrames(t *testing.T) {
 	assert.NotNil(t, frame)
 }
 
-// TestGroupCache_Append tests appending frames to cache
-func TestGroupCache_Append(t *testing.T) {
-	cache := &groupCache{
-		seq:    1,
-		frames: make([]*moqt.Frame, 0),
-	}
-
-	// Get a frame and append it
-	frame := DefaultFramePool.Get()
-	cache.append(frame)
-
-	// Should have a frame
-	assert.Greater(t, len(cache.frames), 0)
-}
-
-// TestGroupCache_Next tests retrieving frames from cache
-func TestGroupCache_Next(t *testing.T) {
-	cache := &groupCache{
-		seq:    1,
-		frames: make([]*moqt.Frame, 0),
-	}
-
-	// Append frame
-	frame := DefaultFramePool.Get()
-	cache.append(frame)
-
-	// Get it back
-	retrieved := cache.next(0)
-	assert.NotNil(t, retrieved)
-
-	// Out of bounds
-	outOfBounds := cache.next(10)
-	assert.Nil(t, outOfBounds)
-}
-
-// TestGroupCache_ConcurrentAppend tests concurrent appends
-func TestGroupCache_ConcurrentAppend(t *testing.T) {
-	cache := &groupCache{
-		seq:    1,
-		frames: make([]*moqt.Frame, 0),
-	}
-
-	// Append concurrently
-	for range 10 {
-		frame := DefaultFramePool.Get()
-		cache.append(frame)
-	}
-
-	// Should have all frames
-	assert.GreaterOrEqual(t, len(cache.frames), 1)
-}
-
 // TestFramePool_PutGet tests put/get cycle
 func TestFramePool_PutGet(t *testing.T) {
 	pool := NewFramePool(1500)

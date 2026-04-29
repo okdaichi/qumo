@@ -473,19 +473,24 @@ func (d *trackDistributor) ingest(ctx context.Context, src *moqt.TrackReader) {
 	defer d.manager.remove(d.trackID, d)
 	defer close(d.done)
 
+	// wg tracks in-flight fill goroutines so we can wait for them before
+	// closing d.done (which signals egress goroutines to stop).
+	var wg sync.WaitGroup
+	defer wg.Wait()
+
 	for {
 		gr, err := src.AcceptGroup(ctx)
 		if err != nil {
 			return
 		}
 
-		d.addGroup(gr)
+		// Reserve a ring slot synchronously to preserve group ordering,
+		// then fill frames concurrently so the next AcceptGroup is not blocked.
+		cache := d.ring.reserve(gr.GroupSequence())
+		wg.Go(func() {
+			d.ring.fill(gr, cache, d.broadcast)
+		})
 	}
-}
-
-func (d *trackDistributor) addGroup(group *moqt.GroupReader) {
-	totalBytes := d.ring.add(group, d.broadcast)
-	d.ingressCounter.Add(float64(totalBytes))
 }
 
 // broadcast notifies all subscribers that new data is available.

@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Concurrent frame filling in group cache (`internal/relay`):** `trackDistributor.ingest`
+  now reserves a ring slot synchronously (preserving group ordering) and fills frames
+  concurrently via a `sync.WaitGroup`-guarded goroutine per group. This prevents a slow
+  upstream group from blocking the next `AcceptGroup` call and improves throughput under
+  bursty or high-latency ingest conditions. A `frameSource` interface decouples the ring
+  from `*moqt.GroupReader`, enabling deterministic unit tests without importing unexported
+  upstream types. Frame pool buffers are now correctly returned via `defer ring.pool.Put`
+  after each fill, eliminating a pool-leak under concurrent load.
+
 - **Enhanced Prometheus metrics (`internal/relay`, `internal/ingest`):** Comprehensive
   observability for both relay and ingest subsystems.
   - *Relay metrics*: New gauges for `sessions_active`, `subscribers_active`,
