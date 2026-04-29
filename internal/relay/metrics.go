@@ -172,12 +172,14 @@ var (
 	)
 
 	// metricGroupFillsInflight tracks the number of fill goroutines currently
-	// running across all trackDistributors. It is bounded by MaxGroupFillsInFlight.
+	// running across all trackDistributors. The per-track limit is
+	// MaxGroupFillsInFlight, so the total may exceed it when multiple tracks
+	// are active simultaneously.
 	metricGroupFillsInflight = promauto.NewGauge(prometheus.GaugeOpts{
 		Namespace: "qumo",
 		Subsystem: "relay",
 		Name:      "group_fills_inflight",
-		Help:      "Current number of group fill goroutines in flight (bounded by MaxGroupFillsInFlight).",
+		Help:      "Current number of group fill goroutines in flight across all track distributors.",
 	})
 
 	// metricSessionRTTHistogram tracks the distribution of RTT for all MoQT sessions.
