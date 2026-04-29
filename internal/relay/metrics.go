@@ -71,6 +71,28 @@ var (
 		[]string{"peer", "result"},
 	)
 
+	// metricRelayIngressBytesTotal counts bytes received from upstream publishers.
+	metricRelayIngressBytesTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "qumo",
+			Subsystem: "relay",
+			Name:      "ingress_bytes_total",
+			Help:      "Total bytes received from publishers, keyed by node/broadcast_path/track_name.",
+		},
+		[]string{"track"},
+	)
+
+	// metricRelayEgressBytesTotal counts bytes written to downstream subscribers.
+	metricRelayEgressBytesTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "qumo",
+			Subsystem: "relay",
+			Name:      "egress_bytes_total",
+			Help:      "Total bytes sent to subscribers, keyed by node/broadcast_path/track_name, including fan-out.",
+		},
+		[]string{"track"},
+	)
+
 	// metricRouteReplacements counts how many times an existing broadcast route
 	// was replaced by a strictly better candidate.
 	metricRouteReplacements = promauto.NewCounter(prometheus.CounterOpts{
