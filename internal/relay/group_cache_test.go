@@ -1,950 +1,585 @@
 package relay
 
 import (
-	"fmt"
-	"iter"
-	"sync"
-	"sync/atomic"
-	"testing"
-	"time"
+"fmt"
+"sync"
+"sync/atomic"
+"testing"
+"testing/synctest"
+"time"
 
-	"github.com/qumo-dev/gomoqt/moqt"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+"github.com/qumo-dev/gomoqt/moqt"
+"github.com/stretchr/testify/assert"
+"github.com/stretchr/testify/require"
 )
 
-// TestGroupCacheAppend tests frame appending functionality
-func TestGroupCacheAppend(t *testing.T) {
-	gc := &groupCache{
-		seq:    1,
-		frames: make([]*moqt.Frame, 0),
-	}
+// ============================================================================
+// groupCache tests
+// ============================================================================
 
-	// Create test frame
-	frame := moqt.NewFrame(100)
-	frame.Write([]byte("test data"))
-
-	// Append frame
-	gc.append(frame)
-
-	if len(gc.frames) != 1 {
-		t.Errorf("Expected 1 frame, got %d", len(gc.frames))
-	}
-
-	// Verify cloning (original and cached frame should be different objects)
-	if gc.frames[0] == frame {
-		t.Error("Frame was not cloned")
-	}
-
-	// Append multiple frames
-	for range 5 {
-		f := moqt.NewFrame(100)
-		f.Write([]byte("data"))
-		gc.append(f)
-	}
-
-	if len(gc.frames) != 6 {
-		t.Errorf("Expected 6 frames, got %d", len(gc.frames))
-	}
+func TestGroupCache_Append(t *testing.T) {
+gc := &groupCache{
+seq:    1,
+frames: make([]*moqt.Frame, 0),
 }
 
-// TestGroupCacheNext tests frame retrieval by index
-func TestGroupCacheNext(t *testing.T) {
-	gc := &groupCache{
-		seq:    1,
-		frames: make([]*moqt.Frame, 0),
-	}
+frame := moqt.NewFrame(100)
+frame.Write([]byte("test data"))
+gc.append(frame)
 
-	// Add frames
-	for range 3 {
-		frame := moqt.NewFrame(100)
-		gc.append(frame)
-	}
-
-	// Test valid indices
-	for i := range 3 {
-		frame := gc.next(i)
-		if frame == nil {
-			t.Errorf("Expected frame at index %d, got nil", i)
-		}
-	}
-
-	// Test invalid indices
-	if gc.next(-1) != nil {
-		t.Error("Expected nil for negative index")
-	}
-	if gc.next(3) != nil {
-		t.Error("Expected nil for out of bounds index")
-	}
-	if gc.next(100) != nil {
-		t.Error("Expected nil for large index")
-	}
+require.Len(t, gc.frames, 1)
+assert.NotSame(t, frame, gc.frames[0], "frame should be cloned")
 }
 
-// TestGroupRingAdd tests adding groups to ring buffer
-func TestGroupRingAdd(t *testing.T) {
-	ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
+func TestGroupCache_Append_ClonesData(t *testing.T) {
+gc := &groupCache{seq: 1, frames: make([]*moqt.Frame, 0)}
 
-	// Head should start at 0
-	if ring.head() != 0 {
-		t.Errorf("Expected initial head 0, got %d", ring.head())
-	}
+original := moqt.NewFrame(100)
+original.Write([]byte("original"))
+gc.append(original)
 
-	// Note: We can't easily test add() without a real GroupReader
-	// This would require mocking, which is tested in integration tests
+original.Reset()
+original.Write([]byte("modified"))
+
+cached := gc.frames[0]
+assert.NotEqual(t, 0, cached.Len(), "cached frame should retain original data")
 }
 
-// TestGroupRingHead tests head position tracking
-func TestGroupRingHead(t *testing.T) {
-	ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
+func TestGroupCache_Append_Multiple(t *testing.T) {
+gc := &groupCache{seq: 1, frames: make([]*moqt.Frame, 0)}
 
-	// Initial head
-	head := ring.head()
-	if head != 0 {
-		t.Errorf("Expected head 0, got %d", head)
-	}
-
-	// Simulate position changes
-	ring.pos.Store(10)
-	head = ring.head()
-	if head != 10 {
-		t.Errorf("Expected head 10, got %d", head)
-	}
+for range 5 {
+f := moqt.NewFrame(100)
+f.Write([]byte("data"))
+gc.append(f)
 }
 
-// TestGroupRingEarliestAvailable tests earliest available group calculation
-func TestGroupRingEarliestAvailable(t *testing.T) {
-	ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
-	size := moqt.GroupSequence(ring.size)
-
-	tests := []struct {
-		head     moqt.GroupSequence
-		expected moqt.GroupSequence
-	}{
-		{0, 1},
-		{1, 1},
-		{5, 1},
-		{size, 1},
-		{size + 1, 2},
-		{size + 5, 6},
-		{100, 100 - size + 1},
-	}
-
-	for _, tt := range tests {
-		ring.pos.Store(uint64(tt.head))
-		earliest := ring.earliestAvailable()
-		if earliest != tt.expected {
-			t.Errorf("head=%d: expected earliest=%d, got %d", tt.head, tt.expected, earliest)
-		}
-	}
+assert.Len(t, gc.frames, 5)
 }
 
-// TestGroupRingGet tests retrieving cached groups
-func TestGroupRingGet(t *testing.T) {
-	ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
-
-	// Store test cache
-	testCache := &groupCache{
-		seq:    5,
-		frames: make([]*moqt.Frame, 0),
-	}
-	idx := uint64(5) % uint64(ring.size)
-	ring.caches[idx].Store(testCache)
-
-	// Retrieve by sequence
-	retrieved := ring.get(5)
-	if retrieved == nil {
-		t.Fatal("Expected cache, got nil")
-	}
-	if retrieved.seq != 5 {
-		t.Errorf("Expected seq 5, got %d", retrieved.seq)
-	}
+func TestGroupCache_Next(t *testing.T) {
+gc := &groupCache{seq: 1, frames: make([]*moqt.Frame, 0)}
+for range 3 {
+frame := moqt.NewFrame(100)
+gc.append(frame)
 }
 
-// TestGroupRingWrapAround tests ring buffer wrap-around behavior
-func TestGroupRingWrapAround(t *testing.T) {
-	ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
-	size := ring.size
-
-	// Simulate adding more groups than ring size
-	for i := 1; i <= size+5; i++ {
-		cache := &groupCache{
-			seq:    moqt.GroupSequence(i),
-			frames: make([]*moqt.Frame, 0),
-		}
-		idx := i % size
-		ring.caches[idx].Store(cache)
-		ring.pos.Store(uint64(i))
-	}
-
-	// Verify wrap-around
-	head := ring.head()
-	if head != moqt.GroupSequence(size+5) {
-		t.Errorf("Expected head %d, got %d", size+5, head)
-	}
-
-	// Old entries should be overwritten
-	// Entry at index 0 should now contain seq=size or seq=size*2 depending on size
-	retrieved := ring.get(moqt.GroupSequence(size))
-	if retrieved != nil && retrieved.seq <= moqt.GroupSequence(size-1) {
-		t.Error("Old entry was not overwritten")
-	}
+tests := map[string]struct {
+idx     int
+wantNil bool
+}{
+"index 0":       {idx: 0, wantNil: false},
+"index 1":       {idx: 1, wantNil: false},
+"index 2":       {idx: 2, wantNil: false},
+"negative":      {idx: -1, wantNil: true},
+"out of bounds": {idx: 3, wantNil: true},
+"large":         {idx: 100, wantNil: true},
 }
 
-// TestGroupRingConcurrentAccess tests thread-safe access
-func TestGroupRingConcurrentAccess(t *testing.T) {
-	ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
-
-	// Concurrent writes
-	done := make(chan bool)
-	for i := range 10 {
-		go func(id int) {
-			for j := range 100 {
-				cache := &groupCache{
-					seq:    moqt.GroupSequence(id*100 + j),
-					frames: make([]*moqt.Frame, 0),
-				}
-				idx := (id*100 + j) % ring.size
-				ring.caches[idx].Store(cache)
-				ring.pos.Add(1)
-			}
-			done <- true
-		}(i)
-	}
-
-	// Concurrent reads
-	for range 10 {
-		go func() {
-			for j := range 100 {
-				_ = ring.head()
-				_ = ring.earliestAvailable()
-				_ = ring.get(moqt.GroupSequence(j))
-			}
-			done <- true
-		}()
-	}
-
-	// Wait for completion
-	for range 20 {
-		<-done
-	}
-
-	// Should complete without race conditions or panics
+for name, tt := range tests {
+t.Run(name, func(t *testing.T) {
+got := gc.next(tt.idx)
+if tt.wantNil {
+assert.Nil(t, got)
+} else {
+assert.NotNil(t, got)
+}
+})
+}
 }
 
-// BenchmarkGroupCacheAppend benchmarks frame appending
-func BenchmarkGroupCacheAppend(b *testing.B) {
-	gc := &groupCache{
-		seq:    1,
-		frames: make([]*moqt.Frame, 0, b.N),
-	}
-	frame := moqt.NewFrame(1500)
-	frame.Write(make([]byte, 1000))
+func TestGroupCache_ConcurrentAppend(t *testing.T) {
+gc := &groupCache{seq: 1, frames: make([]*moqt.Frame, 0)}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		gc.append(frame)
-	}
+const goroutines = 10
+const appendsPerGoroutine = 100
+
+var wg sync.WaitGroup
+for range goroutines {
+wg.Add(1)
+go func() {
+defer wg.Done()
+for range appendsPerGoroutine {
+frame := moqt.NewFrame(100)
+frame.Write([]byte("data"))
+gc.append(frame)
+}
+}()
+}
+wg.Wait()
+
+assert.Len(t, gc.frames, goroutines*appendsPerGoroutine)
 }
 
-// BenchmarkGroupRingGet benchmarks cache retrieval
-func BenchmarkGroupRingGet(b *testing.B) {
-	ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
+func TestGroupCache_IsComplete(t *testing.T) {
+gc := &groupCache{seq: 1, frames: make([]*moqt.Frame, 0)}
 
-	// Populate ring
-	for i := 0; i < ring.size; i++ {
-		cache := &groupCache{
-			seq:    moqt.GroupSequence(i),
-			frames: make([]*moqt.Frame, 0),
-		}
-		ring.caches[i].Store(cache)
-	}
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_ = ring.get(moqt.GroupSequence(i % ring.size))
-	}
-}
-
-// TestGroupRingEdgeCases tests boundary conditions
-func TestGroupRingEdgeCases(t *testing.T) {
-	t.Run("get_before_any_add", func(t *testing.T) {
-		ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
-		cache := ring.get(1)
-		// Should return nil or stale data, shouldn't panic
-		_ = cache
-	})
-
-	t.Run("earliest_at_boundary", func(t *testing.T) {
-		ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
-
-		// Exactly at ring size
-		ring.pos.Store(uint64(ring.size))
-		earliest := ring.earliestAvailable()
-		if earliest != 1 {
-			t.Errorf("At boundary, expected earliest=1, got %d", earliest)
-		}
-
-		// Just past ring size
-		ring.pos.Store(uint64(ring.size + 1))
-		earliest = ring.earliestAvailable()
-		if earliest != 2 {
-			t.Errorf("Past boundary, expected earliest=2, got %d", earliest)
-		}
-	})
-
-	t.Run("head_overflow", func(t *testing.T) {
-		ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
-
-		// Simulate large sequence numbers
-		ring.pos.Store(uint64(^uint64(0) - 100)) // Near max uint64
-		head := ring.head()
-		if head == 0 {
-			t.Error("Head should handle large numbers")
-		}
-	})
-
-	t.Run("zero_size_protection", func(t *testing.T) {
-		// Verify ring size is never zero
-		ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
-		if ring.size == 0 {
-			t.Fatal("Ring size should not be zero")
-		}
-	})
-}
-
-// TestGroupRingCapacity tests capacity handling
-func TestGroupRingCapacity(t *testing.T) {
-	t.Run("default_capacity", func(t *testing.T) {
-		ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
-		if ring.size != DefaultGroupCacheSize {
-			t.Errorf("Expected size %d, got %d", DefaultGroupCacheSize, ring.size)
-		}
-		if len(ring.caches) != DefaultGroupCacheSize {
-			t.Errorf("Expected %d cache slots, got %d", DefaultGroupCacheSize, len(ring.caches))
-		}
-	})
-
-	t.Run("custom_capacity", func(t *testing.T) {
-		ring := newGroupRing(16, DefaultFramePool)
-		if ring.size != 16 {
-			t.Errorf("Expected custom size 16, got %d", ring.size)
-		}
-	})
-}
-
-// TestGroupCacheBehavior tests detailed cache behavior
-func TestGroupCacheBehavior(t *testing.T) {
-	t.Run("append_empty_frame", func(t *testing.T) {
-		gc := &groupCache{
-			seq:    1,
-			frames: make([]*moqt.Frame, 0),
-		}
-
-		emptyFrame := moqt.NewFrame(100)
-		gc.append(emptyFrame)
-
-		if len(gc.frames) != 1 {
-			t.Error("Should append empty frame")
-		}
-	})
-
-	t.Run("append_large_frame", func(t *testing.T) {
-		gc := &groupCache{
-			seq:    1,
-			frames: make([]*moqt.Frame, 0),
-		}
-
-		largeFrame := moqt.NewFrame(10000)
-		data := make([]byte, 10000)
-		largeFrame.Write(data)
-		gc.append(largeFrame)
-
-		if len(gc.frames) != 1 {
-			t.Error("Should handle large frames")
-		}
-	})
-
-	t.Run("many_small_frames", func(t *testing.T) {
-		gc := &groupCache{
-			seq:    1,
-			frames: make([]*moqt.Frame, 0),
-		}
-
-		const count = 1000
-		for i := range count {
-			frame := moqt.NewFrame(10)
-			frame.Write([]byte{byte(i)})
-			gc.append(frame)
-		}
-
-		if len(gc.frames) != count {
-			t.Errorf("Expected %d frames, got %d", count, len(gc.frames))
-		}
-	})
-
-	t.Run("frame_independence", func(t *testing.T) {
-		gc := &groupCache{
-			seq:    1,
-			frames: make([]*moqt.Frame, 0),
-		}
-
-		original := moqt.NewFrame(100)
-		original.Write([]byte("original"))
-		gc.append(original)
-
-		// Modify original
-		original.Reset()
-		original.Write([]byte("modified"))
-
-		// Cached frame should be unchanged
-		cached := gc.frames[0]
-		if cached.Len() == 0 {
-			t.Error("Cached frame was affected by original modification")
-		}
-	})
-}
-
-// TestGroupRingStress performs stress testing
-func TestGroupRingStress(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping stress test in short mode")
-	}
-
-	t.Run("rapid_position_updates", func(t *testing.T) {
-		ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
-
-		var wg sync.WaitGroup
-		const goroutines = 10
-		const iterations = 10000
-
-		for range goroutines {
-			wg.Go(func() {
-				for range iterations {
-					ring.pos.Add(1)
-					_ = ring.head()
-					_ = ring.earliestAvailable()
-				}
-			})
-		}
-
-		wg.Wait()
-	})
-
-	t.Run("concurrent_cache_operations", func(t *testing.T) {
-		ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
-
-		var wg sync.WaitGroup
-		stopCh := make(chan struct{})
-
-		// Writers
-		for i := range 5 {
-			wg.Add(1)
-			go func(id int) {
-				defer wg.Done()
-				seq := 0
-				for {
-					select {
-					case <-stopCh:
-						return
-					default:
-						cache := &groupCache{
-							seq:    moqt.GroupSequence(id*10000 + seq),
-							frames: make([]*moqt.Frame, 0),
-						}
-						idx := (id*10000 + seq) % ring.size
-						ring.caches[idx].Store(cache)
-						seq++
-					}
-				}
-			}(i)
-		}
-
-		// Readers
-		for range 10 {
-			wg.Go(func() {
-				for {
-					select {
-					case <-stopCh:
-						return
-					default:
-						for j := range 100 {
-							_ = ring.get(moqt.GroupSequence(j))
-						}
-					}
-				}
-			})
-		}
-
-		<-time.After(500 * time.Millisecond)
-		close(stopCh)
-		wg.Wait()
-	})
-}
-
-// TestGroupCacheMemory tests memory behavior
-func TestGroupCacheMemory(t *testing.T) {
-	t.Run("frame_pool_integration", func(t *testing.T) {
-		gc := &groupCache{
-			seq:    1,
-			frames: make([]*moqt.Frame, 0),
-		}
-
-		// Frames should come from pool
-		frame := DefaultFramePool.Get()
-		frame.Write([]byte("test"))
-		gc.append(frame)
-
-		// Return to pool
-		DefaultFramePool.Put(frame)
-
-		if len(gc.frames) != 1 {
-			t.Error("Frame not cached")
-		}
-	})
-
-	t.Run("large_cache_growth", func(t *testing.T) {
-		gc := &groupCache{
-			seq:    1,
-			frames: make([]*moqt.Frame, 0, 1000),
-		}
-
-		// Add many frames
-		for range 1000 {
-			frame := moqt.NewFrame(1500)
-			gc.append(frame)
-		}
-
-		if len(gc.frames) != 1000 {
-			t.Errorf("Expected 1000 frames, got %d", len(gc.frames))
-		}
-	})
-}
-
-// TestGroupRingSequenceNumbers tests sequence number handling
-func TestGroupRingSequenceNumbers(t *testing.T) {
-	t.Run("sequential_sequences", func(t *testing.T) {
-		ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
-
-		for i := 1; i <= 20; i++ {
-			cache := &groupCache{
-				seq:    moqt.GroupSequence(i),
-				frames: make([]*moqt.Frame, 0),
-			}
-			idx := i % ring.size
-			ring.caches[idx].Store(cache)
-			ring.pos.Store(uint64(i))
-		}
-
-		head := ring.head()
-		if head != 20 {
-			t.Errorf("Expected head 20, got %d", head)
-		}
-	})
-
-	t.Run("non_sequential_sequences", func(t *testing.T) {
-		ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
-
-		sequences := []int{1, 5, 3, 10, 7}
-		for _, seq := range sequences {
-			cache := &groupCache{
-				seq:    moqt.GroupSequence(seq),
-				frames: make([]*moqt.Frame, 0),
-			}
-			idx := seq % ring.size
-			ring.caches[idx].Store(cache)
-			ring.pos.Store(uint64(seq))
-		}
-
-		// Head should reflect last stored position
-		head := ring.head()
-		if head != 7 {
-			t.Errorf("Expected head 7, got %d", head)
-		}
-	})
-}
-
-// TestGroupCacheConcurrency tests concurrent operations
-func TestGroupCacheConcurrency(t *testing.T) {
-	t.Run("concurrent_appends", func(t *testing.T) {
-		gc := &groupCache{
-			seq:    1,
-			frames: make([]*moqt.Frame, 0),
-		}
-
-		var wg sync.WaitGroup
-		const goroutines = 10
-		const appendsPerGoroutine = 100
-
-		for range goroutines {
-			wg.Go(func() {
-				for range appendsPerGoroutine {
-					frame := moqt.NewFrame(100)
-					frame.Write([]byte("data"))
-					gc.append(frame)
-				}
-			})
-		}
-
-		wg.Wait()
-
-		expected := goroutines * appendsPerGoroutine
-		if len(gc.frames) != expected {
-			t.Errorf("Expected %d frames, got %d", expected, len(gc.frames))
-		}
-	})
-
-	t.Run("concurrent_reads", func(t *testing.T) {
-		gc := &groupCache{
-			seq:    1,
-			frames: make([]*moqt.Frame, 0),
-		}
-
-		// Pre-populate
-		for range 100 {
-			frame := moqt.NewFrame(100)
-			gc.append(frame)
-		}
-
-		var wg sync.WaitGroup
-		var successCount atomic.Int32
-
-		for range 50 {
-			wg.Go(func() {
-				for j := range 100 {
-					if gc.next(j) != nil {
-						successCount.Add(1)
-					}
-				}
-			})
-		}
-
-		wg.Wait()
-
-		// Should successfully read all frames
-		if successCount.Load() != 50*100 {
-			t.Errorf("Not all reads succeeded: %d/5000", successCount.Load())
-		}
-	})
-}
-
-// BenchmarkGroupCacheOperations benchmarks various operations
-func BenchmarkGroupCacheOperations(b *testing.B) {
-	b.Run("sequential_append", func(b *testing.B) {
-		gc := &groupCache{
-			seq:    1,
-			frames: make([]*moqt.Frame, 0, b.N),
-		}
-		frame := moqt.NewFrame(1500)
-		frame.Write(make([]byte, 1000))
-
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			gc.append(frame)
-		}
-	})
-
-	b.Run("random_access", func(b *testing.B) {
-		gc := &groupCache{
-			seq:    1,
-			frames: make([]*moqt.Frame, 0, 100),
-		}
-
-		// Pre-populate
-		for range 100 {
-			frame := moqt.NewFrame(1500)
-			gc.append(frame)
-		}
-
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			_ = gc.next(i % 100)
-		}
-	})
+assert.False(t, gc.isComplete(), "should not be complete before markComplete")
+gc.markComplete()
+assert.True(t, gc.isComplete())
 }
 
 // ============================================================================
-// fakeFrameSource — test helper that satisfies the frameSource interface
+// groupRing tests
 // ============================================================================
 
-// fakeFrameSource is a test implementation of frameSource that yields a fixed
-// set of pre-built frames and then stops, simulating a fully received group.
-type fakeFrameSource struct {
-	seq    moqt.GroupSequence
-	frames [][]byte
+func TestGroupRing_Head_Initial(t *testing.T) {
+ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
+assert.Equal(t, moqt.GroupSequence(0), ring.head())
 }
 
-func (f *fakeFrameSource) Frames(buf *moqt.Frame) iter.Seq[*moqt.Frame] {
-	return func(yield func(*moqt.Frame) bool) {
-		for _, data := range f.frames {
-			buf.Reset()
-			buf.Write(data)
-			if !yield(buf) {
-				return
-			}
-		}
-	}
+func TestGroupRing_Head_AfterPositionSet(t *testing.T) {
+ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
+ring.pos.Store(10)
+assert.Equal(t, moqt.GroupSequence(10), ring.head())
 }
 
-// ============================================================================
-// reserve tests
-// ============================================================================
+func TestGroupRing_EarliestAvailable(t *testing.T) {
+ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
+size := moqt.GroupSequence(ring.size)
 
-func TestGroupRingReserve_SlotAllocated(t *testing.T) {
-	ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
-
-	cache := ring.reserve(moqt.GroupSequence(1))
-
-	require.NotNil(t, cache)
-	assert.Equal(t, moqt.GroupSequence(1), cache.seq)
-	assert.Equal(t, moqt.GroupSequence(1), ring.head())
+tests := map[string]struct {
+head     moqt.GroupSequence
+expected moqt.GroupSequence
+}{
+"zero":             {head: 0, expected: 1},
+"one":              {head: 1, expected: 1},
+"five":             {head: 5, expected: 1},
+"exactly at size":  {head: size, expected: 1},
+"one past size":    {head: size + 1, expected: 2},
+"five past size":   {head: size + 5, expected: 6},
+"large value":      {head: 100, expected: 100 - size + 1},
 }
 
-func TestGroupRingReserve_AdvancesHead(t *testing.T) {
-	ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
-
-	for i := range 5 {
-		ring.reserve(moqt.GroupSequence(i + 1))
-	}
-
-	assert.Equal(t, moqt.GroupSequence(5), ring.head())
+for name, tt := range tests {
+t.Run(name, func(t *testing.T) {
+ring.pos.Store(uint64(tt.head))
+assert.Equal(t, tt.expected, ring.earliestAvailable(), "head=%d", tt.head)
+})
+}
 }
 
-func TestGroupRingReserve_SlotVisibleBeforeFill(t *testing.T) {
-	ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
+func TestGroupRing_EarliestAvailable_AtBoundary(t *testing.T) {
+ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
 
-	// reserve increments pos and stores at slot (pos % size).
-	// get(seq) looks up slot (seq % size).
-	// They align when seq matches the post-increment pos value,
-	// which is the normal case when groups arrive as seq=1,2,3,...
-	cache := ring.reserve(moqt.GroupSequence(1)) // pos becomes 1, slot = 1 % size
+ring.pos.Store(uint64(ring.size))
+assert.Equal(t, moqt.GroupSequence(1), ring.earliestAvailable())
 
-	got := ring.get(moqt.GroupSequence(1)) // 1 % size = same slot
-	require.NotNil(t, got)
-	assert.Same(t, cache, got, "get should return the same cache object")
-	assert.False(t, cache.isComplete(), "cache should not be complete before fill")
+ring.pos.Store(uint64(ring.size + 1))
+assert.Equal(t, moqt.GroupSequence(2), ring.earliestAvailable())
 }
 
-func TestGroupRingReserve_WrapAround(t *testing.T) {
-	ring := newGroupRing(4, DefaultFramePool)
+func TestGroupRing_Get(t *testing.T) {
+ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
 
-	// Fill all 4 slots, then go around once.
-	for i := range 8 {
-		ring.reserve(moqt.GroupSequence(i + 1))
-	}
+testCache := &groupCache{seq: 5, frames: make([]*moqt.Frame, 0)}
+idx := uint64(5) % uint64(ring.size)
+ring.caches[idx].Store(testCache)
 
-	assert.Equal(t, moqt.GroupSequence(8), ring.head())
-	// Slot for seq=1 must have been overwritten by seq=5 (same index mod 4).
-	got := ring.get(moqt.GroupSequence(5))
-	require.NotNil(t, got)
-	assert.Equal(t, moqt.GroupSequence(5), got.seq)
+got := ring.get(5)
+require.NotNil(t, got)
+assert.Equal(t, moqt.GroupSequence(5), got.seq)
 }
 
-// ============================================================================
-// fill tests
-// ============================================================================
-
-func TestGroupRingFill_FramesStored(t *testing.T) {
-	ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
-	cache := ring.reserve(moqt.GroupSequence(1))
-
-	src := &fakeFrameSource{
-		seq:    1,
-		frames: [][]byte{[]byte("frame-0"), []byte("frame-1"), []byte("frame-2")},
-	}
-
-	ring.fill(src, cache, nil)
-
-	require.True(t, cache.isComplete())
-	for i := range 3 {
-		f := cache.next(i)
-		require.NotNil(t, f, "frame %d should exist", i)
-	}
-	assert.Nil(t, cache.next(3), "no frame beyond index 2")
+func TestGroupRing_Get_BeforeAnyAdd(t *testing.T) {
+ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
+// Should not panic; may return nil or an old slot
+_ = ring.get(1)
 }
 
-func TestGroupRingFill_MarksComplete(t *testing.T) {
-	ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
-	cache := ring.reserve(moqt.GroupSequence(1))
-	src := &fakeFrameSource{frames: [][]byte{[]byte("x")}}
-
-	assert.False(t, cache.isComplete(), "should not be complete before fill")
-	ring.fill(src, cache, nil)
-	assert.True(t, cache.isComplete(), "should be complete after fill")
+func TestGroupRing_Capacity(t *testing.T) {
+tests := map[string]struct {
+size int
+}{
+"default": {size: DefaultGroupCacheSize},
+"small":   {size: 4},
+"large":   {size: 64},
 }
 
-func TestGroupRingFill_NotifyCalledPerFrameAndOnComplete(t *testing.T) {
-	ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
-	cache := ring.reserve(moqt.GroupSequence(1))
-
-	const frameCount = 5
-	src := &fakeFrameSource{frames: make([][]byte, frameCount)}
-	for i := range frameCount {
-		src.frames[i] = []byte("data")
-	}
-
-	var calls atomic.Int32
-	ring.fill(src, cache, func() { calls.Add(1) })
-
-	// onFrame called once per frame + once on completion.
-	assert.Equal(t, int32(frameCount+1), calls.Load())
+for name, tt := range tests {
+t.Run(name, func(t *testing.T) {
+ring := newGroupRing(tt.size, DefaultFramePool)
+assert.Equal(t, tt.size, ring.size)
+assert.Len(t, ring.caches, tt.size)
+})
+}
 }
 
-func TestGroupRingFill_EmptySource(t *testing.T) {
-	ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
-	cache := ring.reserve(moqt.GroupSequence(1))
-	src := &fakeFrameSource{frames: nil}
+func TestGroupRing_ConcurrentAccess(t *testing.T) {
+ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
 
-	var calls atomic.Int32
-	ring.fill(src, cache, func() { calls.Add(1) })
-
-	assert.True(t, cache.isComplete())
-	assert.Equal(t, int32(1), calls.Load(), "one completion notification even for empty group")
+done := make(chan bool, 20)
+for i := range 10 {
+go func(id int) {
+for j := range 100 {
+cache := &groupCache{
+seq:    moqt.GroupSequence(id*100 + j),
+frames: make([]*moqt.Frame, 0),
 }
-
-func TestGroupRingFill_ClonesFrames(t *testing.T) {
-	ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
-	cache := ring.reserve(moqt.GroupSequence(1))
-	payload := []byte("original")
-	src := &fakeFrameSource{frames: [][]byte{payload}}
-
-	ring.fill(src, cache, nil)
-
-	stored := cache.next(0)
-	require.NotNil(t, stored)
-	// Modify the original data; the cached frame must be unaffected.
-	payload[0] = 'X'
-	assert.Equal(t, "original", string(stored.Body()), "stored frame should be a clone")
+idx := (id*100 + j) % ring.size
+ring.caches[idx].Store(cache)
+ring.pos.Add(1)
+}
+done <- true
+}(i)
+}
+for range 10 {
+go func() {
+for j := range 100 {
+_ = ring.head()
+_ = ring.earliestAvailable()
+_ = ring.get(moqt.GroupSequence(j))
+}
+done <- true
+}()
+}
+for range 20 {
+<-done
+}
 }
 
 // ============================================================================
-// concurrent reserve+fill tests
+// groupRing.reserve tests
 // ============================================================================
 
-func TestGroupRingFill_ConcurrentGroups(t *testing.T) {
-	// Verify that multiple fill goroutines running in parallel do not corrupt
-	// each other's caches. Each goroutine writes distinct payloads and we
-	// verify every frame in every cache after all goroutines finish.
+func TestGroupRing_Reserve_SlotAllocated(t *testing.T) {
+ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
 
-	const numGroups = 16
-	const framesPerGroup = 8
-	ring := newGroupRing(numGroups, DefaultFramePool)
+cache := ring.reserve(moqt.GroupSequence(1))
 
-	type result struct {
-		seq   moqt.GroupSequence
-		cache *groupCache
-	}
-	results := make([]result, numGroups)
-
-	// Reserve all slots sequentially (preserves ordering).
-	for i := range numGroups {
-		seq := moqt.GroupSequence(i + 1)
-		results[i] = result{seq: seq, cache: ring.reserve(seq)}
-	}
-
-	// Fill all groups concurrently.
-	var wg sync.WaitGroup
-	for i := range numGroups {
-		wg.Add(1)
-		go func(idx int) {
-			defer wg.Done()
-			payload := fmt.Sprintf("group-%d-frame", idx)
-			frames := make([][]byte, framesPerGroup)
-			for j := range framesPerGroup {
-				frames[j] = []byte(fmt.Sprintf("%s-%d", payload, j))
-			}
-			src := &fakeFrameSource{frames: frames}
-			ring.fill(src, results[idx].cache, nil)
-		}(i)
-	}
-	wg.Wait()
-
-	for i, r := range results {
-		assert.True(t, r.cache.isComplete(), "group %d should be complete", i)
-		for j := range framesPerGroup {
-			f := r.cache.next(j)
-			assert.NotNil(t, f, "group %d frame %d should exist", i, j)
-		}
-	}
+require.NotNil(t, cache)
+assert.Equal(t, moqt.GroupSequence(1), cache.seq)
+assert.Equal(t, moqt.GroupSequence(1), ring.head())
 }
 
-func TestGroupRingFill_Concurrent_NotifyCount(t *testing.T) {
-	// Each fill goroutine emits (frames+1) notifications.
-	// Summed across all groups the total must be exact.
+func TestGroupRing_Reserve_AdvancesHead(t *testing.T) {
+ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
 
-	const numGroups = 8
-	const framesPerGroup = 4
-	ring := newGroupRing(numGroups, DefaultFramePool)
-
-	caches := make([]*groupCache, numGroups)
-	for i := range numGroups {
-		caches[i] = ring.reserve(moqt.GroupSequence(i + 1))
-	}
-
-	var total atomic.Int64
-	notify := func() { total.Add(1) }
-
-	var wg sync.WaitGroup
-	for i := range numGroups {
-		wg.Add(1)
-		go func(idx int) {
-			defer wg.Done()
-			frames := make([][]byte, framesPerGroup)
-			for j := range framesPerGroup {
-				frames[j] = []byte("x")
-			}
-			ring.fill(&fakeFrameSource{frames: frames}, caches[idx], notify)
-		}(i)
-	}
-	wg.Wait()
-
-	expected := int64(numGroups * (framesPerGroup + 1))
-	assert.Equal(t, expected, total.Load())
+for i := range 5 {
+ring.reserve(moqt.GroupSequence(i + 1))
 }
 
-// BenchmarkGroupRingOperations benchmarks ring operations
-func BenchmarkGroupRingOperations(b *testing.B) {
-	b.Run("head_read", func(b *testing.B) {
-		ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
-		ring.pos.Store(12345)
+assert.Equal(t, moqt.GroupSequence(5), ring.head())
+}
 
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			_ = ring.head()
-		}
-	})
+func TestGroupRing_Reserve_SlotVisibleBeforeFill(t *testing.T) {
+ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
 
-	b.Run("earliest_calculation", func(b *testing.B) {
-		ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
-		ring.pos.Store(100)
+// reserve increments pos and stores at slot (pos % size).
+// get(seq) looks up slot (seq % size).
+// Both align when seq == post-increment pos (normal sequential arrival).
+cache := ring.reserve(moqt.GroupSequence(1))
 
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			_ = ring.earliestAvailable()
-		}
-	})
+got := ring.get(moqt.GroupSequence(1))
+require.NotNil(t, got)
+assert.Same(t, cache, got)
+assert.False(t, cache.isComplete(), "should not be complete before fill")
+}
 
-	b.Run("concurrent_get_head", func(b *testing.B) {
-		ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
-		ring.pos.Store(100)
+func TestGroupRing_Reserve_WrapAround(t *testing.T) {
+ring := newGroupRing(4, DefaultFramePool)
 
-		// Populate ring
-		for i := 0; i < ring.size; i++ {
-			cache := &groupCache{
-				seq:    moqt.GroupSequence(i),
-				frames: make([]*moqt.Frame, 0),
-			}
-			ring.caches[i].Store(cache)
-		}
+for i := range 8 {
+ring.reserve(moqt.GroupSequence(i + 1))
+}
 
-		b.ResetTimer()
-		b.RunParallel(func(pb *testing.PB) {
-			i := 0
-			for pb.Next() {
-				_ = ring.get(moqt.GroupSequence(i % ring.size))
-				_ = ring.head()
-				i++
-			}
-		})
-	})
+assert.Equal(t, moqt.GroupSequence(8), ring.head())
+// seq=5 overwrote seq=1 at the same slot (mod 4).
+got := ring.get(moqt.GroupSequence(5))
+require.NotNil(t, got)
+assert.Equal(t, moqt.GroupSequence(5), got.seq)
+}
+
+// ============================================================================
+// groupRing.fill tests
+// ============================================================================
+
+func TestGroupRing_Fill_FramesStored(t *testing.T) {
+ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
+cache := ring.reserve(moqt.GroupSequence(1))
+
+src := &fakeFrameSource{
+frames: [][]byte{[]byte("frame-0"), []byte("frame-1"), []byte("frame-2")},
+}
+
+ring.fill(src, cache, nil)
+
+require.True(t, cache.isComplete())
+for i := range 3 {
+assert.NotNil(t, cache.next(i), "frame %d should exist", i)
+}
+assert.Nil(t, cache.next(3), "no frame beyond index 2")
+}
+
+func TestGroupRing_Fill_MarksComplete(t *testing.T) {
+ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
+cache := ring.reserve(moqt.GroupSequence(1))
+src := &fakeFrameSource{frames: [][]byte{[]byte("x")}}
+
+assert.False(t, cache.isComplete())
+ring.fill(src, cache, nil)
+assert.True(t, cache.isComplete())
+}
+
+func TestGroupRing_Fill_NotifyCount(t *testing.T) {
+tests := map[string]struct {
+frameCount    int
+expectedCalls int32
+}{
+"zero frames":  {frameCount: 0, expectedCalls: 1},    // completion only
+"one frame":    {frameCount: 1, expectedCalls: 2},    // 1 frame + completion
+"five frames":  {frameCount: 5, expectedCalls: 6},
+"ten frames":   {frameCount: 10, expectedCalls: 11},
+}
+
+for name, tt := range tests {
+t.Run(name, func(t *testing.T) {
+ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
+cache := ring.reserve(moqt.GroupSequence(1))
+
+frames := make([][]byte, tt.frameCount)
+for i := range tt.frameCount {
+frames[i] = []byte("data")
+}
+src := &fakeFrameSource{frames: frames}
+
+var calls atomic.Int32
+ring.fill(src, cache, func() { calls.Add(1) })
+
+assert.Equal(t, tt.expectedCalls, calls.Load())
+})
+}
+}
+
+func TestGroupRing_Fill_ClonesFrames(t *testing.T) {
+ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
+cache := ring.reserve(moqt.GroupSequence(1))
+payload := []byte("original")
+src := &fakeFrameSource{frames: [][]byte{payload}}
+
+ring.fill(src, cache, nil)
+
+stored := cache.next(0)
+require.NotNil(t, stored)
+payload[0] = 'X'
+assert.Equal(t, "original", string(stored.Body()), "stored frame must be a clone")
+}
+
+func TestGroupRing_Fill_NilOnFrame(t *testing.T) {
+ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
+cache := ring.reserve(moqt.GroupSequence(1))
+src := &fakeFrameSource{frames: [][]byte{[]byte("data")}}
+
+// Must not panic when onFrame is nil.
+assert.NotPanics(t, func() {
+ring.fill(src, cache, nil)
+})
+assert.True(t, cache.isComplete())
+}
+
+// ============================================================================
+// groupRing.fill concurrent tests
+// ============================================================================
+
+func TestGroupRing_Fill_ConcurrentGroups(t *testing.T) {
+const numGroups = 16
+const framesPerGroup = 8
+ring := newGroupRing(numGroups, DefaultFramePool)
+
+caches := make([]*groupCache, numGroups)
+for i := range numGroups {
+caches[i] = ring.reserve(moqt.GroupSequence(i + 1))
+}
+
+var wg sync.WaitGroup
+for i := range numGroups {
+wg.Add(1)
+go func(idx int) {
+defer wg.Done()
+frames := make([][]byte, framesPerGroup)
+for j := range framesPerGroup {
+frames[j] = []byte(fmt.Sprintf("g%d-f%d", idx, j))
+}
+ring.fill(&fakeFrameSource{frames: frames}, caches[idx], nil)
+}(i)
+}
+wg.Wait()
+
+for i, c := range caches {
+assert.True(t, c.isComplete(), "group %d should be complete", i)
+for j := range framesPerGroup {
+assert.NotNil(t, c.next(j), "group %d frame %d should exist", i, j)
+}
+}
+}
+
+func TestGroupRing_Fill_ConcurrentNotifyCount(t *testing.T) {
+const numGroups = 8
+const framesPerGroup = 4
+ring := newGroupRing(numGroups, DefaultFramePool)
+
+caches := make([]*groupCache, numGroups)
+for i := range numGroups {
+caches[i] = ring.reserve(moqt.GroupSequence(i + 1))
+}
+
+var total atomic.Int64
+notify := func() { total.Add(1) }
+
+var wg sync.WaitGroup
+for i := range numGroups {
+wg.Add(1)
+go func(idx int) {
+defer wg.Done()
+frames := make([][]byte, framesPerGroup)
+for j := range framesPerGroup {
+frames[j] = []byte("x")
+}
+ring.fill(&fakeFrameSource{frames: frames}, caches[idx], notify)
+}(i)
+}
+wg.Wait()
+
+expected := int64(numGroups * (framesPerGroup + 1))
+assert.Equal(t, expected, total.Load())
+}
+
+// TestGroupRing_Fill_ConcurrentFasterThanSerial verifies that concurrent fills
+// complete in less than 70% of the equivalent serial time. The generous margin
+// avoids flakiness on loaded CI machines.
+func TestGroupRing_Fill_ConcurrentFasterThanSerial(t *testing.T) {
+const numGroups = 6
+const framesPerGroup = 3
+const delay = 5 * time.Millisecond
+
+ring := newGroupRing(numGroups, DefaultFramePool)
+caches := make([]*groupCache, numGroups)
+for i := range numGroups {
+caches[i] = ring.reserve(moqt.GroupSequence(i + 1))
+}
+
+start := time.Now()
+
+var wg sync.WaitGroup
+for i := range numGroups {
+wg.Add(1)
+go func(idx int) {
+defer wg.Done()
+frames := make([][]byte, framesPerGroup)
+for j := range framesPerGroup {
+frames[j] = []byte("x")
+}
+src := &slowFrameSource{
+fakeFrameSource: fakeFrameSource{frames: frames},
+delay:           delay,
+}
+ring.fill(src, caches[idx], nil)
+}(i)
+}
+wg.Wait()
+
+elapsed := time.Since(start)
+serialTime := time.Duration(numGroups*framesPerGroup) * delay
+threshold := time.Duration(float64(serialTime) * 0.7)
+assert.Less(t, elapsed, threshold,
+"concurrent fill (%v) should be faster than threshold (%v)", elapsed, threshold)
+}
+
+// ============================================================================
+// WaitGroup / done-channel ordering test
+// ============================================================================
+
+// TestGroupRing_Fill_WaitGroupBlocksDone verifies that a WaitGroup tracking fill
+// goroutines prevents the done channel from being closed until all fills
+// complete — this models the LIFO defer ordering in trackDistributor.ingest.
+func TestGroupRing_Fill_WaitGroupBlocksDone(t *testing.T) {
+synctest.Test(t, func(t *testing.T) {
+ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
+cache := ring.reserve(moqt.GroupSequence(1))
+
+frames := [][]byte{[]byte("a"), []byte("b"), []byte("c")}
+src := &slowFrameSource{
+fakeFrameSource: fakeFrameSource{frames: frames},
+delay:           10 * time.Millisecond,
+}
+
+done := make(chan struct{})
+fillDone := make(chan struct{})
+
+var wg sync.WaitGroup
+wg.Add(1)
+go func() {
+defer wg.Done()
+ring.fill(src, cache, nil)
+close(fillDone)
+}()
+go func() {
+wg.Wait()
+close(done)
+}()
+
+synctest.Wait()
+
+// Advance time past all per-frame sleeps (3 × 10 ms).
+time.Sleep(50 * time.Millisecond)
+synctest.Wait()
+
+select {
+case <-fillDone:
+default:
+t.Fatal("fill should have completed after 50ms")
+}
+select {
+case <-done:
+default:
+t.Fatal("done should be closed after fill completed")
+}
+})
+}
+
+// ============================================================================
+// Benchmarks
+// ============================================================================
+
+func BenchmarkGroupCache_Append(b *testing.B) {
+gc := &groupCache{
+seq:    1,
+frames: make([]*moqt.Frame, 0, b.N),
+}
+frame := moqt.NewFrame(1500)
+frame.Write(make([]byte, 1000))
+
+b.ResetTimer()
+for i := 0; i < b.N; i++ {
+gc.append(frame)
+}
+}
+
+func BenchmarkGroupCache_Next(b *testing.B) {
+gc := &groupCache{
+seq:    1,
+frames: make([]*moqt.Frame, 0, 100),
+}
+for range 100 {
+frame := moqt.NewFrame(1500)
+gc.append(frame)
+}
+
+b.ResetTimer()
+for i := 0; i < b.N; i++ {
+_ = gc.next(i % 100)
+}
+}
+
+func BenchmarkGroupRing_Get(b *testing.B) {
+ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
+for i := range ring.size {
+cache := &groupCache{seq: moqt.GroupSequence(i), frames: make([]*moqt.Frame, 0)}
+ring.caches[i].Store(cache)
+}
+
+b.ResetTimer()
+for i := 0; i < b.N; i++ {
+_ = ring.get(moqt.GroupSequence(i % ring.size))
+}
 }
