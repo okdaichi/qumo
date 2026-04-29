@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **RTSP Ingest Server (`internal/ingest`, `internal/rtsp`):** Implemented a complete RTSP 1.0 ingest server to bridge IP cameras and traditional encoders to MoQT.
+  - *Protocol Stack*: Custom RTSP implementation including request/response parsing, interleaved binary framing over TCP, and SDP/RTP support.
+  - *Media De-packetization*: RTP de-packetizer for H.264 (supporting FU-A fragmentation) to reconstruct NAL units for MoQT delivery.
+  - *CLI Command*: New `qumo rtsp` command to start a standalone RTSP-to-MoQT bridge.
+  - *Mage Targets*: Added `rtsp:serve` for running the server, `rtsp:stream` for pushing test patterns with ffmpeg, and `rtsp:demo` for quick environment setup.
+
 - **Concurrent group fill limiting (`internal/relay`):** A buffered-channel semaphore
   (`fillSem`) now bounds the number of in-flight fill goroutines per `trackDistributor`
   to `MaxGroupFillsInFlight` (default `max(32, 2×GOMAXPROCS)`). When all slots are
@@ -291,9 +297,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Basic Mage build automation.
 - CI workflow with test coverage.
 
-[Unreleased]: https://github.com/okdaichi/qumo/compare/v0.4.0...HEAD
-[v0.4.0]: https://github.com/okdaichi/qumo/compare/v0.3.1...v0.4.0
-[v0.3.1]: https://github.com/okdaichi/qumo/compare/v0.3.0...v0.3.1
-[v0.3.0]: https://github.com/okdaichi/qumo/compare/v0.2.0...v0.3.0
-[v0.2.0]: https://github.com/okdaichi/qumo/compare/v0.1.0...v0.2.0
-[v0.1.0]: https://github.com/okdaichi/qumo/releases/tag/v0.1.0
+[Unreleased]: https://github.com/qumo-dev/qumo/compare/v0.4.0...HEAD
+[v0.4.0]: https://github.com/qumo-dev/qumo/compare/v0.3.1...v0.4.0
+[v0.3.1]: https://github.com/qumo-dev/qumo/compare/v0.3.0...v0.3.1
+[v0.3.0]: https://github.com/qumo-dev/qumo/compare/v0.2.0...v0.3.0
+[v0.2.0]: https://github.com/qumo-dev/qumo/compare/v0.1.0...v0.2.0
+[v0.1.0]: https://github.com/qumo-dev/qumo/releases/tag/v0.1.0
+
