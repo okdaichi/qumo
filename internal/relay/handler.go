@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"runtime"
 	"sync"
 	"time"
 
@@ -20,7 +21,27 @@ var NotifyTimeout = 1 * time.Millisecond
 // can finish reading in-flight groups before the upstream subscription stops.
 var DrainTimeout = 30 * time.Second
 
+// MaxGroupFillsInFlight is the maximum number of fill goroutines that a
+// single trackDistributor may run simultaneously. It caps concurrent fill
+// work and prevents unbounded goroutine growth under bursty or
+// slow-consumer conditions. If the limit is reached, new fill goroutines wait
+// for a slot after AcceptGroup returns; this does not apply backpressure at
+// AcceptGroup itself.
+// The default is max(32, 2×GOMAXPROCS); override before calling Relay.
+// Must be >= 1; newTrackDistributor panics otherwise.
+var MaxGroupFillsInFlight = max(32, 2*runtime.GOMAXPROCS(0))
+
 var errTrackNotFound = errors.New("track not found")
+
+// maxGroupFillsInFlightOrPanic returns MaxGroupFillsInFlight, panicking if it
+// is less than 1 so that misconfiguration causes an immediate, clear failure
+// rather than a silent deadlock.
+func maxGroupFillsInFlightOrPanic() int {
+	if MaxGroupFillsInFlight < 1 {
+		panic("relay: MaxGroupFillsInFlight must be >= 1")
+	}
+	return MaxGroupFillsInFlight
+}
 
 var _ moqt.TrackHandler = (*relayHandler)(nil)
 var _ RouteReporter = (*relayHandler)(nil)
@@ -304,6 +325,11 @@ type trackDistributor struct {
 	ingressCounter prometheus.Counter
 	egressCounter  prometheus.Counter
 
+	// fillSem is a buffered-channel semaphore that limits the number of
+	// concurrently running fill goroutines. Its capacity is set to
+	// MaxGroupFillsInFlight at construction time.
+	fillSem chan struct{}
+
 	mu          sync.RWMutex
 	subscribers map[chan struct{}]struct{}
 
@@ -317,8 +343,10 @@ func newTrackDistributor(manager *trackManager, trackID string) *trackDistributo
 		manager:        manager,
 		ingressCounter: metricRelayIngressBytesTotal.WithLabelValues(trackID),
 		egressCounter:  metricRelayEgressBytesTotal.WithLabelValues(trackID),
+		fillSem:        make(chan struct{}, maxGroupFillsInFlightOrPanic()),
 		subscribers:    make(map[chan struct{}]struct{}),
-		done:           make(chan struct{}),
+
+		done: make(chan struct{}),
 	}
 	go d.pollCacheDepth()
 	return d
@@ -483,14 +511,39 @@ func (d *trackDistributor) ingest(ctx context.Context, src *moqt.TrackReader) {
 		if err != nil {
 			return
 		}
-
-		// Reserve a ring slot synchronously to preserve group ordering,
-		// then fill frames concurrently so the next AcceptGroup is not blocked.
-		cache := d.ring.reserve(gr.GroupSequence())
-		wg.Go(func() {
-			d.ring.fill(gr, cache, d.broadcast)
-		})
+		if !d.processGroup(ctx, &wg, gr.GroupSequence(), gr) {
+			return
+		}
 	}
+}
+
+// processGroup acquires a semaphore slot and launches a fill goroutine for the
+// given group. It is separated from ingest so that tests can drive it directly
+// with a fakeFrameSource without needing a real *moqt.TrackReader.
+// Returns false if ctx is cancelled while waiting for a semaphore slot.
+func (d *trackDistributor) processGroup(ctx context.Context, wg *sync.WaitGroup, seq moqt.GroupSequence, src frameSource) bool {
+	// Acquire a fill semaphore slot before reserving the ring slot.
+	// This bounds in-flight goroutines to MaxGroupFillsInFlight and
+	// prevents unbounded goroutine growth. The semaphore is acquired
+	// after AcceptGroup returns, not before — it does not gate AcceptGroup.
+	select {
+	case d.fillSem <- struct{}{}:
+	case <-ctx.Done():
+		return false
+	}
+
+	// Reserve a ring slot synchronously to preserve group ordering,
+	// then fill frames concurrently so the next AcceptGroup is not blocked.
+	cache := d.ring.reserve(seq)
+	metricGroupFillsInflight.Inc()
+	wg.Go(func() {
+		defer func() {
+			<-d.fillSem
+			metricGroupFillsInflight.Dec()
+		}()
+		d.ring.fill(src, cache, d.broadcast)
+	})
+	return true
 }
 
 // broadcast notifies all subscribers that new data is available.

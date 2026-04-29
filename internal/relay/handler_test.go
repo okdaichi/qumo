@@ -1062,6 +1062,131 @@ func TestIngest_WaitGroup_BlocksDoneUntilFillComplete(t *testing.T) {
 }
 
 // ============================================================================
+// trackDistributor.processGroup semaphore tests
+// ============================================================================
+
+// TestTrackDistributor_ProcessGroup_SemaphoreLimitsConcurrency verifies that
+// processGroup blocks (semaphore-full) when MaxGroupFillsInFlight goroutines
+// are already in flight, and resumes as soon as a slot is released.
+// Uses testing/synctest for deterministic goroutine scheduling.
+func TestTrackDistributor_ProcessGroup_SemaphoreLimitsConcurrency(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		const limit = 2
+		orig := MaxGroupFillsInFlight
+		t.Cleanup(func() { MaxGroupFillsInFlight = orig })
+		MaxGroupFillsInFlight = limit
+
+		dist := newTrackDistributor(newTrackManager(), "test/sem")
+		t.Cleanup(func() { close(dist.done) }) // stop pollCacheDepth
+		require.Equal(t, limit, cap(dist.fillSem), "fillSem capacity must equal MaxGroupFillsInFlight")
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		// Each slow source blocks indefinitely until the context is cancelled.
+		// This keeps fill goroutines alive so we can count in-flight slots.
+		slowSrc := func() frameSource {
+			return &slowFrameSource{
+				fakeFrameSource: fakeFrameSource{frames: [][]byte{[]byte("x")}},
+				delay:           1 * time.Hour,
+			}
+		}
+
+		var wg sync.WaitGroup
+
+		// Spin up `limit` groups — all should be accepted without blocking.
+		for i := range limit {
+			ok := dist.processGroup(ctx, &wg, moqt.GroupSequence(i+1), slowSrc())
+			require.True(t, ok, "processGroup should succeed while under the limit")
+		}
+
+		// All slots are now occupied. A further processGroup call must block.
+		blocked := make(chan struct{})
+		accepted := make(chan struct{})
+		go func() {
+			close(blocked)
+			ok := dist.processGroup(ctx, &wg, moqt.GroupSequence(limit+1), slowSrc())
+			if ok {
+				close(accepted)
+			}
+		}()
+
+		<-blocked
+		synctest.Wait()
+
+		// Verify it is still blocked (accepted not closed).
+		select {
+		case <-accepted:
+			t.Fatal("processGroup should be blocked when semaphore is full")
+		default:
+		}
+
+		// Advance time past the slow-source delay to let one fill goroutine finish,
+		// which releases a semaphore slot and unblocks the waiting processGroup.
+		time.Sleep(2 * time.Hour)
+		synctest.Wait()
+
+		select {
+		case <-accepted:
+		default:
+			t.Fatal("processGroup should have unblocked after a slot was released")
+		}
+
+		// Drain remaining goroutines.
+		cancel()
+		synctest.Wait()
+		wg.Wait()
+	})
+}
+
+// TestTrackDistributor_ProcessGroup_CtxCancelUnblocks verifies that a
+// processGroup call blocked on a full semaphore returns false when its
+// context is cancelled.
+func TestTrackDistributor_ProcessGroup_CtxCancelUnblocks(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		orig := MaxGroupFillsInFlight
+		t.Cleanup(func() { MaxGroupFillsInFlight = orig })
+		MaxGroupFillsInFlight = 1
+
+		dist := newTrackDistributor(newTrackManager(), "test/cancel")
+		t.Cleanup(func() { close(dist.done) }) // stop pollCacheDepth
+
+		ctx, cancel := context.WithCancel(context.Background())
+
+		var wg sync.WaitGroup
+
+		// Fill the single slot with a goroutine that blocks until cancelled.
+		holdSrc := &slowFrameSource{
+			fakeFrameSource: fakeFrameSource{frames: [][]byte{[]byte("x")}},
+			delay:           1 * time.Hour,
+		}
+		ok := dist.processGroup(ctx, &wg, moqt.GroupSequence(1), holdSrc)
+		require.True(t, ok)
+
+		// Second call must block on the full semaphore.
+		result := make(chan bool, 1)
+		go func() {
+			result <- dist.processGroup(ctx, &wg, moqt.GroupSequence(2), &fakeFrameSource{frames: [][]byte{[]byte("y")}})
+		}()
+
+		synctest.Wait()
+
+		// Cancel the context — the blocked processGroup must return false.
+		cancel()
+		synctest.Wait()
+
+		select {
+		case got := <-result:
+			assert.False(t, got, "processGroup must return false on ctx cancellation")
+		default:
+			t.Fatal("processGroup did not return after ctx cancel")
+		}
+
+		wg.Wait()
+	})
+}
+
+// ============================================================================
 // isBetterRoute Tests
 // ============================================================================
 
