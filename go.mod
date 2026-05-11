@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	github.com/prometheus/client_golang v1.23.2
-	github.com/quic-go/quic-go v0.59.0
+	github.com/quic-go/quic-go v0.59.1
 	github.com/qumo-dev/gomoqt v0.15.0
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/sync v0.20.0
