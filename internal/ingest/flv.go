@@ -99,53 +99,7 @@ func parseAVCDecoderConfigurationRecord(buf []byte) (*AVCConfig, error) {
 	}
 
 	numSPS := int(buf[5] & 0x1F)
-	cfg.SPS = make([][]byte, 0, numSPS)
-
-	// Calculate total bytes needed for all SPS and PPS to allocate a single safe buffer
-	var totalBytes int
 	off := 6
-
-	// First pass: compute size for SPS
-	tmpOff := off
-	for i := 0; i < numSPS; i++ {
-		if tmpOff+2 > len(buf) {
-			return nil, ErrBadAVCConfig
-		}
-		spsLen := int(binary.BigEndian.Uint16(buf[tmpOff:]))
-		tmpOff += 2
-		if tmpOff+spsLen > len(buf) {
-			return nil, ErrBadAVCConfig
-		}
-		totalBytes += spsLen
-		tmpOff += spsLen
-	}
-
-	if tmpOff >= len(buf) {
-		return nil, ErrBadAVCConfig
-	}
-	numPPS := int(buf[tmpOff])
-	cfg.PPS = make([][]byte, 0, numPPS)
-	tmpOff++
-
-	// Compute size for PPS
-	for i := 0; i < numPPS; i++ {
-		if tmpOff+2 > len(buf) {
-			return nil, ErrBadAVCConfig
-		}
-		ppsLen := int(binary.BigEndian.Uint16(buf[tmpOff:]))
-		tmpOff += 2
-		if tmpOff+ppsLen > len(buf) {
-			return nil, ErrBadAVCConfig
-		}
-		totalBytes += ppsLen
-		tmpOff += ppsLen
-	}
-
-	// Allocate a single contiguous byte array to hold all SPS/PPS data
-	backingBytes := make([]byte, totalBytes)
-	backOff := 0
-
-	// Second pass: actually slice from the safe backing buffer
 	for i := range numSPS {
 		_ = i
 		if off+2 > len(buf) {
@@ -156,9 +110,8 @@ func parseAVCDecoderConfigurationRecord(buf []byte) (*AVCConfig, error) {
 		if off+spsLen > len(buf) {
 			return nil, ErrBadAVCConfig
 		}
-		sps := backingBytes[backOff : backOff+spsLen : backOff+spsLen]
+		sps := make([]byte, spsLen)
 		copy(sps, buf[off:off+spsLen])
-		backOff += spsLen
 		cfg.SPS = append(cfg.SPS, sps)
 		off += spsLen
 	}
@@ -166,6 +119,7 @@ func parseAVCDecoderConfigurationRecord(buf []byte) (*AVCConfig, error) {
 	if off >= len(buf) {
 		return nil, ErrBadAVCConfig
 	}
+	numPPS := int(buf[off])
 	off++
 	for i := range numPPS {
 		_ = i
@@ -177,9 +131,8 @@ func parseAVCDecoderConfigurationRecord(buf []byte) (*AVCConfig, error) {
 		if off+ppsLen > len(buf) {
 			return nil, ErrBadAVCConfig
 		}
-		pps := backingBytes[backOff : backOff+ppsLen : backOff+ppsLen]
+		pps := make([]byte, ppsLen)
 		copy(pps, buf[off:off+ppsLen])
-		backOff += ppsLen
 		cfg.PPS = append(cfg.PPS, pps)
 		off += ppsLen
 	}

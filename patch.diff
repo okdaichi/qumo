@@ -1,0 +1,18 @@
+--- internal/ingest/flv.go
++++ internal/ingest/flv.go
+@@ -93,6 +93,7 @@
+	}
+
+	numSPS := int(buf[5] & 0x1F)
++	cfg.SPS = make([][]byte, 0, numSPS)
+	off := 6
+	for i := range numSPS {
+		_ = i
+@@ -113,6 +114,7 @@
+		return nil, ErrBadAVCConfig
+	}
+	numPPS := int(buf[off])
++	cfg.PPS = make([][]byte, 0, numPPS)
+	off++
+	for i := range numPPS {
+		_ = i

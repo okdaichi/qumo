@@ -1,0 +1,24 @@
+--- internal/ingest/flv.go
++++ internal/ingest/flv.go
+@@ -103,9 +103,8 @@
+		if off+spsLen > len(buf) {
+			return nil, ErrBadAVCConfig
+		}
+-		sps := make([]byte, spsLen)
+-		copy(sps, buf[off:off+spsLen])
+-		cfg.SPS = append(cfg.SPS, sps)
++		// Use append to create a copy from a slice to avoid extra allocations
++		cfg.SPS = append(cfg.SPS, append([]byte(nil), buf[off:off+spsLen]...))
+		off += spsLen
+	}
+
+@@ -124,9 +123,7 @@
+		if off+ppsLen > len(buf) {
+			return nil, ErrBadAVCConfig
+		}
+-		pps := make([]byte, ppsLen)
+-		copy(pps, buf[off:off+ppsLen])
+-		cfg.PPS = append(cfg.PPS, pps)
++		cfg.PPS = append(cfg.PPS, append([]byte(nil), buf[off:off+ppsLen]...))
+		off += ppsLen
+	}

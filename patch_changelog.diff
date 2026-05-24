@@ -1,0 +1,12 @@
+--- CHANGELOG.md
++++ CHANGELOG.md
+@@ -6,6 +6,9 @@
+
+ ## [Unreleased]
+
++### Performance
++- **ParseAVCConfig optimization:** Refactored `internal/ingest/flv.go` loop allocations by using a two-pass approach to calculate size, allocating a single byte array and safely copying SPS and PPS slice data via the 3-index slice notation. It improves throughput by significantly reducing GC/allocs during RTMP video ingestion without mutating network buffers.
++
+ ### Added
+
+ - **Concurrent group fill limiting (`internal/relay`):** A buffered-channel semaphore

@@ -1,0 +1,14 @@
+--- internal/ingest/flv.go
++++ internal/ingest/flv.go
+@@ -102,8 +102,9 @@
+		if off+spsLen > len(buf) {
+			return nil, ErrBadAVCConfig
+		}
+-		sps := make([]byte, spsLen)
+-		copy(sps, buf[off:off+spsLen])
++		// Rather than allocating and copying, we can just slice the buffer since we
++		// don't expect the caller to mutate it, or we can copy to a pre-allocated array.
++		// Let's check where the data comes from... it comes from rtmp frame.
+		cfg.SPS = append(cfg.SPS, sps)
+		off += spsLen
+	}
