@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -24,15 +25,17 @@ const (
 //
 // Configuration is read from environment variables:
 //
-//	RTMP_INGEST_ADDR    - RTMP listen address (default: ":1935")
-//	RTMP_SERVE_ADDR     - MoQT listen address (default: ":4433")
-//	CERT_FILE           - TLS certificate file (default: "certs/server.crt")
-//	KEY_FILE            - TLS key file (default: "certs/server.key")
+//	RTMP_INGEST_ADDR     - RTMP listen address (default: ":1935")
+//	RTMP_SERVE_ADDR      - MoQT listen address (default: ":4433")
+//	CERT_FILE            - TLS certificate file (default: "certs/server.crt")
+//	KEY_FILE             - TLS key file (default: "certs/server.key")
+//	CORS_ALLOWED_ORIGINS - Comma-separated list of allowed CORS origins (default: empty, same-origin only)
 func RunRTMP(_ []string) error {
 	ingestAddr := envOr("RTMP_INGEST_ADDR", defaultRTMPIngestAddr)
 	serveAddr := envOr("RTMP_SERVE_ADDR", defaultRTMPServeAddr)
 	certFile := envOr("CERT_FILE", "certs/server.crt")
 	keyFile := envOr("KEY_FILE", "certs/server.key")
+	allowedOriginsEnv := os.Getenv("CORS_ALLOWED_ORIGINS")
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -45,12 +48,25 @@ func RunRTMP(_ []string) error {
 		TrackMux: trackMux,
 	})
 
+	var checkOriginFunc func(r *http.Request) bool
+	if allowedOriginsEnv != "" {
+		allowedOrigins := make(map[string]bool)
+		for _, o := range strings.Split(allowedOriginsEnv, ",") {
+			allowedOrigins[strings.TrimSpace(o)] = true
+		}
+		checkOriginFunc = func(r *http.Request) bool {
+			origin := r.Header.Get("Origin")
+			if origin == "" {
+				return true
+			}
+			return allowedOrigins[origin]
+		}
+	}
+
 	// WebTransportHandler upgrades HTTP/3 requests into MoQT sessions.
 	wtHandler := &moqt.WebTransportHandler{
-		TrackMux: trackMux,
-		CheckOrigin: func(r *http.Request) bool {
-			return true // allow cross-origin (Vite dev server)
-		},
+		TrackMux:    trackMux,
+		CheckOrigin: checkOriginFunc,
 		Handler: moqt.HandleFunc(func(sess *moqt.Session) {
 			defer sess.CloseWithError(moqt.NoError, moqt.NoError.String())
 			<-sess.Context().Done()
