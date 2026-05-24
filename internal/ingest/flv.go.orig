@@ -156,7 +156,7 @@ func parseAVCDecoderConfigurationRecord(buf []byte) (*AVCConfig, error) {
 		if off+spsLen > len(buf) {
 			return nil, ErrBadAVCConfig
 		}
-		sps := backingBytes[backOff : backOff+spsLen : backOff+spsLen]
+		sps := backingBytes[backOff : backOff+spsLen]
 		copy(sps, buf[off:off+spsLen])
 		backOff += spsLen
 		cfg.SPS = append(cfg.SPS, sps)
@@ -177,7 +177,7 @@ func parseAVCDecoderConfigurationRecord(buf []byte) (*AVCConfig, error) {
 		if off+ppsLen > len(buf) {
 			return nil, ErrBadAVCConfig
 		}
-		pps := backingBytes[backOff : backOff+ppsLen : backOff+ppsLen]
+		pps := backingBytes[backOff : backOff+ppsLen]
 		copy(pps, buf[off:off+ppsLen])
 		backOff += ppsLen
 		cfg.PPS = append(cfg.PPS, pps)

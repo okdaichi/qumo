@@ -1,0 +1,24 @@
+package ingest
+
+import (
+	"testing"
+)
+
+var benchData = []byte{
+	// mock FLV video sequence header (using buildAVCSeqHeader logic from flv_test.go)
+	0x17, 0x00, 0x00, 0x00, 0x00, // header
+	0x01, 0x64, 0x00, 0x1F, 0xFF, // config
+	0xE1, 0x00, 0x08, // 1 SPS, len 8
+	0x67, 0x64, 0x00, 0x1F, 0xAC, 0xD9, 0x40, 0x50, // SPS data
+	0x01, 0x00, 0x04, // 1 PPS, len 4
+	0x68, 0xEB, 0xE3, 0xCB, // PPS data
+}
+
+func BenchmarkParseAVCConfig(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		_, err := ParseAVCConfig(benchData)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
