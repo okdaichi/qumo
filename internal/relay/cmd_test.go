@@ -222,7 +222,7 @@ func createTempCert(t *testing.T) (string, string) {
 	certFile := filepath.Join(t.TempDir(), "server.crt")
 	keyFile := filepath.Join(t.TempDir(), "server.key")
 
-	err = os.WriteFile(certFile, certPEM, 0644)
+	err = os.WriteFile(certFile, certPEM, 0600)
 	require.NoError(t, err)
 
 	err = os.WriteFile(keyFile, keyPEM, 0600)
