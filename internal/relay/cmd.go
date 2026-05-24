@@ -2,19 +2,12 @@ package relay
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"log"
 	"log/slog"
-	"math/big"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -393,21 +386,6 @@ func loadCACertPool(caFile string) (*x509.CertPool, error) {
 }
 
 func setupTLS(certFile, keyFile string) (*tls.Config, error) {
-	// INSECURE mode: generate a self-signed certificate on the fly.
-	// Never use in production.
-	if os.Getenv("INSECURE") == "true" {
-		cert, err := generateSelfSignedCert()
-		if err != nil {
-			return nil, fmt.Errorf("failed to generate self-signed cert: %w", err)
-		}
-		slog.Warn("INSECURE mode: using ephemeral self-signed certificate")
-		return &tls.Config{
-			MinVersion:   tls.VersionTLS12,
-			Certificates: []tls.Certificate{cert},
-			NextProtos:   []string{"h3", moqt.NextProtoMOQ},
-		}, nil
-	}
-
 	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load TLS certificates: %w", err)
@@ -418,41 +396,4 @@ func setupTLS(certFile, keyFile string) (*tls.Config, error) {
 		Certificates: []tls.Certificate{cert},
 		NextProtos:   []string{"h3", moqt.NextProtoMOQ}, // HTTP/3 for WebTransport, MOQ native QUIC
 	}, nil
-}
-
-// generateSelfSignedCert creates an in-memory ECDSA P-256 self-signed certificate
-// valid for 365 days. Only used when INSECURE=true.
-func generateSelfSignedCert() (tls.Certificate, error) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return tls.Certificate{}, err
-	}
-
-	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
-	if err != nil {
-		return tls.Certificate{}, err
-	}
-
-	tmpl := &x509.Certificate{
-		SerialNumber: serial,
-		Subject:      pkix.Name{CommonName: "localhost"},
-		NotBefore:    time.Now().Add(-time.Minute),
-		NotAfter:     time.Now().Add(365 * 24 * time.Hour),
-		DNSNames:     []string{"localhost"},
-		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")},
-	}
-
-	derBytes, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
-	if err != nil {
-		return tls.Certificate{}, err
-	}
-
-	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
-	keyDER, err := x509.MarshalECPrivateKey(key)
-	if err != nil {
-		return tls.Certificate{}, err
-	}
-	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
-
-	return tls.X509KeyPair(certPEM, keyPEM)
 }
