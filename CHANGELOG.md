@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Fix overly permissive CORS configuration (`internal/ingest`):** Removed unconditionally allowing cross-origin requests by returning `true` in `CheckOrigin`. Added `CORS_ALLOWED_ORIGINS` environment variable to explicitly allow specified origins, defaulting to standard same-origin policy if unset.
+
 ### Added
 
 - **Concurrent group fill limiting (`internal/relay`):** A buffered-channel semaphore
