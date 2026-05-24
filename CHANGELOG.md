@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **TLS configuration hardened (`internal/relay`):** Removed `InsecureSkipVerify` from the relay dialer, enforcing proper TLS verification on outgoing connections to prevent Man-in-the-Middle attacks.
+
 ### Added
 
 - **Concurrent group fill limiting (`internal/relay`):** A buffered-channel semaphore
