@@ -184,9 +184,6 @@ func Run(_ []string) error {
 	if caPool != nil {
 		dialerTLS.RootCAs = caPool
 	}
-	if os.Getenv("INSECURE") == "true" {
-		dialerTLS.InsecureSkipVerify = true //nolint:gosec // INSECURE mode only
-	}
 
 	trackMux := moqt.NewTrackMux(moqt.NewHopID())
 	relayServer := &Server{
