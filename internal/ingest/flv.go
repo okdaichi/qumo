@@ -99,41 +99,70 @@ func parseAVCDecoderConfigurationRecord(buf []byte) (*AVCConfig, error) {
 	}
 
 	numSPS := int(buf[5] & 0x1F)
-	off := 6
+
+	// Pass 1: calculate total byte length required for SPS/PPS parameters.
+	var totalLen int
+	calcOff := 6
 	for i := range numSPS {
 		_ = i
-		if off+2 > len(buf) {
+		if calcOff+2 > len(buf) {
 			return nil, ErrBadAVCConfig
 		}
+		spsLen := int(binary.BigEndian.Uint16(buf[calcOff:]))
+		calcOff += 2
+		if calcOff+spsLen > len(buf) {
+			return nil, ErrBadAVCConfig
+		}
+		totalLen += spsLen
+		calcOff += spsLen
+	}
+
+	if calcOff >= len(buf) {
+		return nil, ErrBadAVCConfig
+	}
+	numPPS := int(buf[calcOff])
+	calcOff++
+	for i := range numPPS {
+		_ = i
+		if calcOff+2 > len(buf) {
+			return nil, ErrBadAVCConfig
+		}
+		ppsLen := int(binary.BigEndian.Uint16(buf[calcOff:]))
+		calcOff += 2
+		if calcOff+ppsLen > len(buf) {
+			return nil, ErrBadAVCConfig
+		}
+		totalLen += ppsLen
+		calcOff += ppsLen
+	}
+
+	// Allocate a single contiguous byte array and required slice capacity.
+	paramBytes := make([]byte, totalLen)
+	cfg.SPS = make([][]byte, 0, numSPS)
+	cfg.PPS = make([][]byte, 0, numPPS)
+
+	// Pass 2: copy data and construct slices.
+	off := 6
+	var byteOff int
+	for i := range numSPS {
+		_ = i
 		spsLen := int(binary.BigEndian.Uint16(buf[off:]))
 		off += 2
-		if off+spsLen > len(buf) {
-			return nil, ErrBadAVCConfig
-		}
-		sps := make([]byte, spsLen)
-		copy(sps, buf[off:off+spsLen])
-		cfg.SPS = append(cfg.SPS, sps)
+		copy(paramBytes[byteOff:], buf[off:off+spsLen])
+		cfg.SPS = append(cfg.SPS, paramBytes[byteOff:byteOff+spsLen:byteOff+spsLen])
+		byteOff += spsLen
 		off += spsLen
 	}
 
-	if off >= len(buf) {
-		return nil, ErrBadAVCConfig
-	}
-	numPPS := int(buf[off])
+	numPPS = int(buf[off])
 	off++
 	for i := range numPPS {
 		_ = i
-		if off+2 > len(buf) {
-			return nil, ErrBadAVCConfig
-		}
 		ppsLen := int(binary.BigEndian.Uint16(buf[off:]))
 		off += 2
-		if off+ppsLen > len(buf) {
-			return nil, ErrBadAVCConfig
-		}
-		pps := make([]byte, ppsLen)
-		copy(pps, buf[off:off+ppsLen])
-		cfg.PPS = append(cfg.PPS, pps)
+		copy(paramBytes[byteOff:], buf[off:off+ppsLen])
+		cfg.PPS = append(cfg.PPS, paramBytes[byteOff:byteOff+ppsLen:byteOff+ppsLen])
+		byteOff += ppsLen
 		off += ppsLen
 	}
 
