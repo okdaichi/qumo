@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Removed dynamic TLS generation:** Removed the capability to dynamically generate self-signed TLS certificates in production binaries when `INSECURE=true`. Test suites have been updated to utilize dynamically generated temporary certificates.
+
 ### Added
 
 - **Concurrent group fill limiting (`internal/relay`):** A buffered-channel semaphore
