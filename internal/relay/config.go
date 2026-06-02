@@ -1,7 +1,8 @@
 package relay
 
-import "github.com/qumo-dev/qumo/internal/bootstrap"
+import "time"
 
+// Config holds the relay server configuration.
 type Config struct {
 	// NodeID is the unique identifier for this relay node.
 	NodeID string
@@ -28,9 +29,13 @@ type Config struct {
 	// ANNOUNCE_PLEASE, and register them on the local TrackMux.
 	Peers []Peer
 
-	// Bootstraps is the list of bootstrap servers to register with and
-	// discover peers from. Each bootstrap is polled at its Interval.
-	Bootstraps []bootstrap.ClientConfig
+	// LocalResolverInterval is the polling interval for Nomad service discovery.
+	// If zero, local discovery is disabled.
+	LocalResolverInterval time.Duration
+
+	// RemoteResolverInterval is the polling interval for the remote
+	// traffic resolver. If zero, remote discovery is disabled.
+	RemoteResolverInterval time.Duration
 }
 
 // Peer represents a remote relay to connect to for announce discovery.

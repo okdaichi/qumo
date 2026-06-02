@@ -7,7 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **Bootstrap server removed (`internal/bootstrap`):** The bootstrap discovery server
+  and client (`qumo bootstrap` command) have been removed from this repository.
+  Bootstrap functionality with traffic engineering is being migrated to the
+  qumo-enterprise repository as a control plane service.
+
 ### Added
+
+- **Peer resolver interface (`internal/relay/resolver.go`):** New `PeerResolver`
+  interface with `ResolvePeers(ctx, query)` method, `ResolvedPeer` and `PeerQuery`
+  types. Enables pluggable peer discovery backends.
+- **LocalResolver (`internal/relay/local_resolver.go`):** Within-cluster peer
+  discovery via Nomad native service discovery API. Configured via `LOCAL_RESOLVER_ADDR`,
+  `LOCAL_RESOLVER_SERVICE_NAME`, and `LOCAL_RESOLVER_INTERVAL` environment variables.
+- **RemoteResolver (`internal/relay/remote_resolver.go`):** Cross-cluster peer
+  discovery via an external traffic resolver API (e.g. qumo-enterprise).
+  Configured via `REMOTE_RESOLVER_URL`, `REMOTE_AUTH_TOKEN`,
+  `REMOTE_RESOLVE_INTERVAL`, and `REMOTE_TLS_ENABLED`.
+
+### Changed
+
+- **Relay topology (`internal/relay/server.go`):** Updated peer discovery topology.
+  Edges connect to all local hubs (load-balanced). Hubs connect only to remote
+  hubs via the remote resolver (no local hub↔hub connections).
+- **`internal/relay/cmd.go`:** Replaced `BOOTSTRAP_URLS`/`BOOTSTRAP_INTERVAL` env
+  vars with `LOCAL_RESOLVER_*` and `REMOTE_*` resolver configuration.
+- **`main.go`:** Removed `qumo bootstrap` command.
+
+###
 
 - **Concurrent group fill limiting (`internal/relay`):** A buffered-channel semaphore
   (`fillSem`) now bounds the number of in-flight fill goroutines per `trackDistributor`
