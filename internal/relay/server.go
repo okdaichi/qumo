@@ -151,10 +151,10 @@ func (s *Server) ConnectPeers(ctx context.Context) {
 	}
 
 	// Dynamic peer discovery loops.
-	// Nomad resolver: local cluster discovery (edge→all hubs, default→flat peers).
-	if s.localResolver != nil && s.Config.NomadResolverInterval > 0 {
+	// Local resolver: local cluster discovery (edge→all hubs, default→flat peers).
+	if s.localResolver != nil && s.Config.LocalResolverInterval > 0 {
 		wg.Go(func() {
-			s.discoverPeers(ctx, &wg, s.Config.NomadResolverInterval, s.localResolver)
+			s.discoverPeers(ctx, &wg, s.Config.LocalResolverInterval, s.localResolver)
 		})
 	}
 

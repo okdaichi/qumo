@@ -19,9 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Peer resolver interface (`internal/relay/resolver.go`):** New `PeerResolver`
   interface with `ResolvePeers(ctx, query)` method, `ResolvedPeer` and `PeerQuery`
   types. Enables pluggable peer discovery backends.
-- **NomadResolver (`internal/relay/nomad_resolver.go`):** Within-cluster peer
-  discovery via Nomad native service discovery API. Configured via `NOMAD_ADDR`,
-  `NOMAD_SERVICE_NAME`, and `NOMAD_RESOLVE_INTERVAL` environment variables.
+- **LocalResolver (`internal/relay/local_resolver.go`):** Within-cluster peer
+  discovery via Nomad native service discovery API. Configured via `LOCAL_RESOLVER_ADDR`,
+  `LOCAL_RESOLVER_SERVICE_NAME`, and `LOCAL_RESOLVER_INTERVAL` environment variables.
 - **RemoteResolver (`internal/relay/remote_resolver.go`):** Cross-cluster peer
   discovery via an external traffic resolver API (e.g. qumo-enterprise).
   Configured via `REMOTE_RESOLVER_URL`, `REMOTE_AUTH_TOKEN`,
@@ -33,7 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Edges connect to all local hubs (load-balanced). Hubs connect only to remote
   hubs via the remote resolver (no local hub↔hub connections).
 - **`internal/relay/cmd.go`:** Replaced `BOOTSTRAP_URLS`/`BOOTSTRAP_INTERVAL` env
-  vars with `NOMAD_*` and `REMOTE_*` resolver configuration.
+  vars with `LOCAL_RESOLVER_*` and `REMOTE_*` resolver configuration.
 - **`main.go`:** Removed `qumo bootstrap` command.
 
 ###

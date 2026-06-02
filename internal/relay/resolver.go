@@ -3,8 +3,8 @@
 // Peer Resolution
 //
 // The relay discovers peers through one or more PeerResolver implementations.
-//   - NomadResolver: discovers peers via the Nomad native service discovery API
-//     (within-cluster, OSS). Configured via NOMAD_ADDR and NOMAD_SERVICE_NAME.
+//   - LocalResolver: discovers peers via the Nomad native service discovery API
+//     (within-cluster, OSS). Configured via LOCAL_RESOLVER_ADDR and LOCAL_RESOLVER_SERVICE_NAME.
 //   - RemoteResolver: discovers peers via a remote traffic resolver API
 //     (cross-cluster). Configured via REMOTE_RESOLVER_URL.
 package relay

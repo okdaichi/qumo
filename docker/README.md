@@ -64,9 +64,9 @@ Environment variables (relay)
 | `ADVERTISE_ADDR` | (empty) | Public address for peers |
 | `INSECURE` | `false` | Auto-generate self-signed certs |
 | `PEERS` | (empty) | Comma-separated static peer addresses |
-| `NOMAD_ADDR` | `http://localhost:4646` | Nomad HTTP API address |
-| `NOMAD_SERVICE_NAME` | `qumo-relay` | Nomad service name to query |
-| `NOMAD_RESOLVE_INTERVAL` | `15s` | Nomad discovery poll interval |
+| `LOCAL_RESOLVER_ADDR` | `http://localhost:4646` | Nomad HTTP API address |
+| `LOCAL_RESOLVER_SERVICE_NAME` | `qumo-relay` | Nomad service name to query |
+| `LOCAL_RESOLVER_INTERVAL` | `15s` | Local resolver poll interval |
 | `REMOTE_RESOLVER_URL` | (empty) | Remote traffic resolver URL |
 | `REMOTE_AUTH_TOKEN` | (empty) | Bearer token for remote resolver |
 | `REMOTE_RESOLVE_INTERVAL` | `15s` | Remote resolver poll interval |

@@ -8,13 +8,12 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 )
 
-// nomadService is a Nomad API service registration response.
-type nomadService struct {
+// localService is a Nomad API service registration response.
+type localService struct {
 	ID          string   `json:"ID"`
 	ServiceName string   `json:"ServiceName"`
 	Address     string   `json:"Address"`
@@ -25,38 +24,40 @@ type nomadService struct {
 	AllocID     string   `json:"AllocID"`
 }
 
-// NomadResolver discovers peers within a Nomad cluster using the Nomad
-// native service discovery API. It queries the Nomad HTTP API for services
-// matching a configured service name, then filters by role tag.
+// LocalResolver discovers peers within the local cluster using Nomad's native
+// service discovery API. It queries the Nomad HTTP API for services matching
+// a configured service name, then filters by role tag.
 //
 // Configuration is read from environment variables:
 //
-//	NOMAD_ADDR          - Nomad HTTP API address (default: "http://localhost:4646")
-//	                     When running inside a Nomad allocation, NOMAD_ADDR is
-//	                     automatically set by the Nomad client.
-//	NOMAD_SERVICE_NAME  - Nomad service name to query (default: "qumo-relay")
-//	NOMAD_RESOLVE_INTERVAL - polling interval (default: "15s")
-type NomadResolver struct {
+//	LOCAL_RESOLVER_ADDR            - Nomad HTTP API address (default: "http://localhost:4646")
+//	                                 Falls back to NOMAD_ADDR (auto-set by Nomad client)
+//	                                 when not explicitly set.
+//	LOCAL_RESOLVER_SERVICE_NAME    - Nomad service name to query (default: "qumo-relay")
+//	LOCAL_RESOLVER_INTERVAL        - polling interval (default: "15s")
+type LocalResolver struct {
 	addr        string
 	serviceName string
 	interval    time.Duration
 	httpClient  *http.Client
 }
 
-// NewNomadResolver creates a NomadResolver from environment variables.
-// When NOMAD_ADDR is unset, it defaults to "http://localhost:4646" (or the
-// Nomad-out-of-cluster default). When running inside a Nomad allocation,
-// NOMAD_ADDR is set automatically by the Nomad client.
-func NewNomadResolver() *NomadResolver {
-	addr := os.Getenv("NOMAD_ADDR")
+// NewLocalResolver creates a LocalResolver from environment variables.
+// LOCAL_RESOLVER_ADDR takes precedence; if unset, falls back to NOMAD_ADDR
+// (which Nomad auto-sets inside allocations), then to "http://localhost:4646".
+func NewLocalResolver() *LocalResolver {
+	addr := os.Getenv("LOCAL_RESOLVER_ADDR")
+	if addr == "" {
+		addr = os.Getenv("NOMAD_ADDR")
+	}
 	if addr == "" {
 		addr = "http://localhost:4646"
 	}
-	serviceName := os.Getenv("NOMAD_SERVICE_NAME")
+	serviceName := os.Getenv("LOCAL_RESOLVER_SERVICE_NAME")
 	if serviceName == "" {
 		serviceName = "qumo-relay"
 	}
-	intervalStr := os.Getenv("NOMAD_RESOLVE_INTERVAL")
+	intervalStr := os.Getenv("LOCAL_RESOLVER_INTERVAL")
 	interval := 15 * time.Second
 	if intervalStr != "" {
 		if d, err := time.ParseDuration(intervalStr); err == nil {
@@ -64,7 +65,7 @@ func NewNomadResolver() *NomadResolver {
 		}
 	}
 
-	return &NomadResolver{
+	return &LocalResolver{
 		addr:        addr,
 		serviceName: serviceName,
 		interval:    interval,
@@ -75,40 +76,40 @@ func NewNomadResolver() *NomadResolver {
 }
 
 // Interval returns the polling interval for this resolver.
-func (r *NomadResolver) Interval() time.Duration {
+func (r *LocalResolver) Interval() time.Duration {
 	return r.interval
 }
 
 // ResolvePeers queries the Nomad service API for all instances of the
 // configured service name and filters them by the requested role.
-// The role filter matches against service tags (e.g., a tag "hub" matches
+// The role filter matches against service tags (e.g., a tag "role=hub" matches
 // Role: "hub"). When Role is empty, all instances are returned.
-func (r *NomadResolver) ResolvePeers(ctx context.Context, query PeerQuery) ([]ResolvedPeer, error) {
+func (r *LocalResolver) ResolvePeers(ctx context.Context, query PeerQuery) ([]ResolvedPeer, error) {
 	u, err := url.JoinPath(r.addr, "/v1/service/", r.serviceName)
 	if err != nil {
-		return nil, fmt.Errorf("nomad: build URL: %w", err)
+		return nil, fmt.Errorf("local resolver: build URL: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
-		return nil, fmt.Errorf("nomad: create request: %w", err)
+		return nil, fmt.Errorf("local resolver: create request: %w", err)
 	}
 
 	resp, err := r.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("nomad: query %s: %w", u, err)
+		return nil, fmt.Errorf("local resolver: query %s: %w", u, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, resp.Body)
-		return nil, fmt.Errorf("nomad: %s returned status %d", u, resp.StatusCode)
+		return nil, fmt.Errorf("local resolver: %s returned status %d", u, resp.StatusCode)
 	}
 
 	const maxBody = 1 << 20 // 1 MB
-	var services []nomadService
+	var services []localService
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxBody)).Decode(&services); err != nil {
-		return nil, fmt.Errorf("nomad: decode services: %w", err)
+		return nil, fmt.Errorf("local resolver: decode services: %w", err)
 	}
 
 	// Client-side filtering by role tag and limit.
@@ -169,15 +170,3 @@ func netJoinHostPort(host string, port int) string {
 	return fmt.Sprintf("%s:%d", host, port)
 }
 
-// envIntOr is a helper for reading integer env vars used by both resolvers.
-func envIntOr(key string, defaultVal int) (int, error) {
-	v := os.Getenv(key)
-	if v == "" {
-		return defaultVal, nil
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil {
-		return 0, err
-	}
-	return n, nil
-}

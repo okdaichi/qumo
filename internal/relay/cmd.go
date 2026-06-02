@@ -52,10 +52,9 @@ func sanitizeLog(s string) string {
 //	ADVERTISE_ADDR               - address advertised to peers
 //	GROUP_CACHE_SIZE             - max group caches (default: 100) [TODO]
 //	FRAME_CAPACITY               - frame buffer size in bytes (default: 1500) [TODO]
-//	PEERS                        - comma-separated list of static peer addresses
-//	NOMAD_ADDR                   - Nomad HTTP API address (default: http://localhost:4646)
-//	NOMAD_SERVICE_NAME           - Nomad service name to query (default: "qumo-relay")
-//	NOMAD_RESOLVE_INTERVAL       - Nomad discovery polling interval (default: "15s")
+//	PEERS                        - comma-separated list of static peer addresses	//	LOCAL_RESOLVER_ADDR            - Nomad HTTP API address (default: http://localhost:4646)
+	//	LOCAL_RESOLVER_SERVICE_NAME    - Nomad service name to query (default: "qumo-relay")
+	//	LOCAL_RESOLVER_INTERVAL        - Nomad discovery polling interval (default: "15s")
 //	REMOTE_RESOLVER_URL      - remote traffic resolver URL (optional)
 //	REMOTE_AUTH_TOKEN        - bearer token for remote resolver
 //	REMOTE_RESOLVE_INTERVAL  - remote discovery polling interval (default: "15s")
@@ -135,7 +134,7 @@ func Run(_ []string) error {
 	}
 
 	// Create peer resolvers.
-	nomadResolver := NewNomadResolver()
+	localResolver := NewLocalResolver()
 	remoteResolver := NewRemoteResolver(remoteResolverTLS)
 
 	relayCfg := Config{
@@ -146,7 +145,7 @@ func Run(_ []string) error {
 		GroupCacheSize:        groupCacheSize,
 		FrameCapacity:         frameCapacity,
 		Peers:                 peers,
-		NomadResolverInterval: nomadResolver.Interval(),
+		LocalResolverInterval:   localResolver.Interval(),
 		RemoteResolverInterval: remoteResolver.Interval(),
 	}
 
@@ -196,7 +195,7 @@ func Run(_ []string) error {
 		},
 		Config:           &relayCfg,
 		TrackMux:         trackMux,
-		localResolver:    nomadResolver,
+		localResolver:    localResolver,
 		remoteResolver:   remoteResolver,
 	}
 
@@ -223,8 +222,8 @@ func Run(_ []string) error {
 	if remoteResolver != nil {
 		log.Printf("\t%-8s: %s (interval: %s)\n", "Resolver", sanitizeLog(remoteResolver.url), remoteResolver.Interval())
 	}
-	if relayCfg.NomadResolverInterval > 0 {
-		log.Printf("\t%-8s: %s (interval: %s)\n", "Resolver", "Nomad native ("+nomadResolver.serviceName+")", nomadResolver.Interval())
+	if relayCfg.LocalResolverInterval > 0 {
+		log.Printf("\t%-8s: %s (interval: %s)\n", "Resolver", "local ("+localResolver.serviceName+")", localResolver.Interval())
 	}
 
 	// Start peer connections in background

@@ -29,9 +29,9 @@ type Config struct {
 	// ANNOUNCE_PLEASE, and register them on the local TrackMux.
 	Peers []Peer
 
-	// NomadResolverInterval is the polling interval for Nomad service discovery.
-	// If zero, Nomad-based discovery is disabled.
-	NomadResolverInterval time.Duration
+	// LocalResolverInterval is the polling interval for Nomad service discovery.
+	// If zero, local discovery is disabled.
+	LocalResolverInterval time.Duration
 
 	// RemoteResolverInterval is the polling interval for the remote
 	// traffic resolver. If zero, remote discovery is disabled.
