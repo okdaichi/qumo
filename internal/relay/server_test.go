@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/qumo-dev/gomoqt/moqt"
-	"github.com/qumo-dev/qumo/internal/bootstrap"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -266,10 +265,10 @@ func TestServer_MarkUnconnected(t *testing.T) {
 }
 
 func TestFilterPeersByAddr(t *testing.T) {
-	peers := []bootstrap.Node{
-		{Addr: "moqt://relay-a:4433"},
-		{Addr: "moqt://relay-b:4433"},
-		{Addr: "moqt://relay-c:4433"},
+	peers := []ResolvedPeer{
+		{Address: "moqt://relay-a:4433"},
+		{Address: "moqt://relay-b:4433"},
+		{Address: "moqt://relay-c:4433"},
 	}
 
 	exclude := map[string]struct{}{
@@ -280,8 +279,8 @@ func TestFilterPeersByAddr(t *testing.T) {
 	filtered := filterPeersByAddr(peers, exclude)
 
 	assert.Len(t, filtered, 2)
-	assert.Equal(t, "moqt://relay-a:4433", filtered[0].Addr)
-	assert.Equal(t, "moqt://relay-c:4433", filtered[1].Addr)
+	assert.Equal(t, "moqt://relay-a:4433", filtered[0].Address)
+	assert.Equal(t, "moqt://relay-c:4433", filtered[1].Address)
 }
 
 // TestServer_MarkConnected_Concurrent tests that markConnected is safe for concurrent use
