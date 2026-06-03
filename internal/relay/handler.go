@@ -440,7 +440,7 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 					n := frame.Len()
 					d.egressCounter.Add(float64(n))
 					if d.session != nil {
-						d.session.addEgress(uint64(n))
+						d.session.addEgress(int64(n))
 					}
 					frameIdx++
 					continue
@@ -554,7 +554,7 @@ func (d *trackDistributor) processGroup(ctx context.Context, wg *sync.WaitGroup,
 			if n > 0 {
 				d.ingressCounter.Add(float64(n))
 				if d.session != nil {
-					d.session.addIngress(uint64(n))
+					d.session.addIngress(int64(n))
 				}
 			}
 			d.broadcast()

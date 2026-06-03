@@ -17,8 +17,8 @@ type broadcastSession struct {
 	id           string // UUID v4, minted at ANNOUNCE
 	ownerTokenID string // token_id from the credential introspection response
 
-	ingressBytes atomic.Uint64
-	egressBytes  atomic.Uint64
+	ingressBytes atomic.Int64
+	egressBytes  atomic.Int64
 }
 
 func newBroadcastSession(ownerTokenID string) *broadcastSession {
@@ -28,14 +28,14 @@ func newBroadcastSession(ownerTokenID string) *broadcastSession {
 	}
 }
 
-func (s *broadcastSession) addIngress(n uint64) { s.ingressBytes.Add(n) }
-func (s *broadcastSession) addEgress(n uint64)  { s.egressBytes.Add(n) }
+func (s *broadcastSession) addIngress(n int64) { s.ingressBytes.Add(n) }
+func (s *broadcastSession) addEgress(n int64)  { s.egressBytes.Add(n) }
 
 func (s *broadcastSession) toEvent() UsageEvent {
 	return UsageEvent{
 		BroadcastSessionID: s.id,
 		OwnerTokenID:       s.ownerTokenID,
-		Metrics: map[string]uint64{
+		Metrics: map[string]int64{
 			"gateway.ingress_bytes": s.ingressBytes.Load(),
 			"gateway.egress_bytes":  s.egressBytes.Load(),
 		},

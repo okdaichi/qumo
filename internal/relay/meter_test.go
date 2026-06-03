@@ -82,8 +82,8 @@ func TestBroadcastSession_Counters(t *testing.T) {
 	s.addEgress(1000)
 	s.addEgress(24)
 
-	assert.Equal(t, uint64(800), s.ingressBytes.Load())
-	assert.Equal(t, uint64(1024), s.egressBytes.Load())
+	assert.Equal(t, int64(800), s.ingressBytes.Load())
+	assert.Equal(t, int64(1024), s.egressBytes.Load())
 }
 
 func TestBroadcastSession_CountersConcurrent(t *testing.T) {
@@ -98,8 +98,8 @@ func TestBroadcastSession_CountersConcurrent(t *testing.T) {
 	}
 	wg.Wait()
 
-	assert.Equal(t, uint64(goroutines), s.ingressBytes.Load())
-	assert.Equal(t, uint64(goroutines*2), s.egressBytes.Load())
+	assert.Equal(t, int64(goroutines), s.ingressBytes.Load())
+	assert.Equal(t, int64(goroutines*2), s.egressBytes.Load())
 }
 
 func TestBroadcastSession_ToEvent(t *testing.T) {
@@ -113,8 +113,8 @@ func TestBroadcastSession_ToEvent(t *testing.T) {
 
 	assert.Equal(t, s.id, event.BroadcastSessionID)
 	assert.Equal(t, "owner-x", event.OwnerTokenID)
-	assert.Equal(t, uint64(128), event.Metrics["gateway.ingress_bytes"])
-	assert.Equal(t, uint64(512), event.Metrics["gateway.egress_bytes"])
+	assert.Equal(t, int64(128), event.Metrics["gateway.ingress_bytes"])
+	assert.Equal(t, int64(512), event.Metrics["gateway.egress_bytes"])
 
 	ts, err := time.Parse(time.RFC3339, event.Ts)
 	require.NoError(t, err, "Ts must be a valid RFC3339 timestamp")
@@ -129,8 +129,8 @@ func TestBroadcastSession_ToEvent_ReflectsLatestCounters(t *testing.T) {
 	s.addIngress(200)
 	e2 := s.toEvent()
 
-	assert.Equal(t, uint64(100), e1.Metrics["gateway.ingress_bytes"])
-	assert.Equal(t, uint64(300), e2.Metrics["gateway.ingress_bytes"])
+	assert.Equal(t, int64(100), e1.Metrics["gateway.ingress_bytes"])
+	assert.Equal(t, int64(300), e2.Metrics["gateway.ingress_bytes"])
 }
 
 // ── Meter.Register / Deregister ──────────────────────────────────────────────
@@ -186,8 +186,8 @@ func TestMeter_Deregister_RemovesFromActiveSetAndSendsFinalReport(t *testing.T) 
 	require.Len(t, events, 1, "Deregister must POST exactly one final usage event")
 	assert.Equal(t, sess.id, events[0].BroadcastSessionID)
 	assert.Equal(t, "tok-final", events[0].OwnerTokenID)
-	assert.Equal(t, uint64(1000), events[0].Metrics["gateway.ingress_bytes"])
-	assert.Equal(t, uint64(4000), events[0].Metrics["gateway.egress_bytes"])
+	assert.Equal(t, int64(1000), events[0].Metrics["gateway.ingress_bytes"])
+	assert.Equal(t, int64(4000), events[0].Metrics["gateway.egress_bytes"])
 }
 
 // ── Meter.report ─────────────────────────────────────────────────────────────
@@ -221,9 +221,9 @@ func TestMeter_Report_AggregatesAllActiveSessions(t *testing.T) {
 	}
 	require.Contains(t, byID, s1.id)
 	require.Contains(t, byID, s2.id)
-	assert.Equal(t, uint64(100), byID[s1.id].Metrics["gateway.ingress_bytes"])
-	assert.Equal(t, uint64(200), byID[s2.id].Metrics["gateway.ingress_bytes"])
-	assert.Equal(t, uint64(800), byID[s2.id].Metrics["gateway.egress_bytes"])
+	assert.Equal(t, int64(100), byID[s1.id].Metrics["gateway.ingress_bytes"])
+	assert.Equal(t, int64(200), byID[s2.id].Metrics["gateway.ingress_bytes"])
+	assert.Equal(t, int64(800), byID[s2.id].Metrics["gateway.egress_bytes"])
 }
 
 func TestMeter_Report_NoOpWhenNoSessions(t *testing.T) {
@@ -260,8 +260,8 @@ func TestMeter_Report_ReflectsCurrentCounters(t *testing.T) {
 	mu.Unlock()
 
 	require.Len(t, events, 2)
-	assert.Equal(t, uint64(50), events[0].Metrics["gateway.ingress_bytes"], "first report must show 50")
-	assert.Equal(t, uint64(100), events[1].Metrics["gateway.ingress_bytes"], "second report must show cumulative 100")
+	assert.Equal(t, int64(50), events[0].Metrics["gateway.ingress_bytes"], "first report must show 50")
+	assert.Equal(t, int64(100), events[1].Metrics["gateway.ingress_bytes"], "second report must show cumulative 100")
 }
 
 // ── Meter.Run ────────────────────────────────────────────────────────────────

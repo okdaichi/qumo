@@ -49,10 +49,10 @@ type cachedCredential struct {
 // UsageEvent is a single cumulative usage record for a broadcast session.
 // All byte values are totals since session start; the server diffs consecutive reports.
 type UsageEvent struct {
-	BroadcastSessionID string            `json:"broadcast_session_id"`
-	OwnerTokenID       string            `json:"owner_token_id"`
-	Metrics            map[string]uint64 `json:"metrics"`
-	Ts                 string            `json:"ts"` // RFC3339
+	BroadcastSessionID string           `json:"broadcast_session_id"`
+	OwnerTokenID       string           `json:"owner_token_id"`
+	Metrics            map[string]int64 `json:"metrics"`
+	Ts                 string           `json:"ts"` // RFC3339
 }
 
 // BackendClient communicates with the qumo backend for credential introspection

@@ -378,7 +378,7 @@ func TestBackendClient_ReportUsage_SendsCorrectPayload(t *testing.T) {
 		{
 			BroadcastSessionID: "sess-abc",
 			OwnerTokenID:       "tok-1",
-			Metrics: map[string]uint64{
+			Metrics: map[string]int64{
 				"gateway.ingress_bytes": 1024,
 				"gateway.egress_bytes":  4096,
 			},
@@ -395,8 +395,8 @@ func TestBackendClient_ReportUsage_SendsCorrectPayload(t *testing.T) {
 	assert.Equal(t, "application/json", gotCT)
 	require.Len(t, gotEvents, 1)
 	assert.Equal(t, "sess-abc", gotEvents[0].BroadcastSessionID)
-	assert.Equal(t, uint64(1024), gotEvents[0].Metrics["gateway.ingress_bytes"])
-	assert.Equal(t, uint64(4096), gotEvents[0].Metrics["gateway.egress_bytes"])
+	assert.Equal(t, int64(1024), gotEvents[0].Metrics["gateway.ingress_bytes"])
+	assert.Equal(t, int64(4096), gotEvents[0].Metrics["gateway.egress_bytes"])
 }
 
 func TestBackendClient_ReportUsage_NoOpOnEmptySlice(t *testing.T) {
