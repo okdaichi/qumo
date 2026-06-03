@@ -19,6 +19,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Peer resolver interface (`internal/relay/resolver.go`):** New `PeerResolver`
   interface with `ResolvePeers(ctx, query)` method, `ResolvedPeer` and `PeerQuery`
   types. Enables pluggable peer discovery backends.
+- **BackendClient (`internal/relay/backend_client.go`):** Optional backend
+  integration for publisher credential authentication and usage metering.
+  When `QUMO_BACKEND_URL` is set the relay authenticates each WebTransport
+  ANNOUNCE by subscribing to a well-known `"auth"` MoQ track on the announced
+  broadcast path (5 s timeout), reading the JWT from the first frame, and
+  calling `POST /v1/credentials/introspect`. Announcements with missing or
+  rejected credentials are silently dropped. Valid credentials are cached until
+  the server-supplied `revalidate_after` time; concurrent requests for the same
+  JWT are coalesced via `singleflight`; expired cache entries are swept on each
+  write. A `broadcastSession` UUID is minted per accepted announcement and
+  cumulative `gateway.ingress_bytes` / `gateway.egress_bytes` totals are
+  reported to `POST /v1/usage/events` every 30 s and on session close.
+  New env vars: `QUMO_BACKEND_URL` (base URL) and `QUMO_RELAY_TOKEN` (shared
+  bearer token). When both vars are absent the relay behaves as before (open mode).
 - **LocalResolver (`internal/relay/local_resolver.go`):** Within-cluster peer
   discovery via Nomad native service discovery API. Configured via `LOCAL_RESOLVER_ADDR`,
   `LOCAL_RESOLVER_SERVICE_NAME`, and `LOCAL_RESOLVER_INTERVAL` environment variables.
@@ -29,6 +43,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Publisher vs. peer-relay session split (`internal/relay/server.go`):** Native
+  QUIC sessions (relay peers, ALPN `moqt`) are now handled by a dedicated
+  `relayPeer` path that bypasses credential auth. WebTransport sessions
+  (publishers and browsers, ALPN `h3`) go through `Relay` and require credential
+  auth when `QUMO_BACKEND_URL` is set. This distinction is wired in `Server.init`
+  by setting separate handler funcs on `MOQServer.Handler` vs `WebTransportHandler`.
+- **`group_cache.fill` onFrame callback (`internal/relay/group_cache.go`):**
+  The `onFrame` parameter changed from `func()` to `func(n int)` where `n` is
+  the frame's byte length (0 on the group-completion call). This lets callers
+  accumulate ingress byte totals in the same pass without re-reading cached frames.
 - **Relay topology (`internal/relay/server.go`):** Updated peer discovery topology.
   Edges connect to all local hubs (load-balanced). Hubs connect only to remote
   hubs via the remote resolver (no local hub↔hub connections).
@@ -161,6 +185,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`ingressCounter` never incremented (`internal/relay/handler.go`):** The
+  `trackDistributor.ingressCounter` Prometheus counter was allocated but never
+  updated in the data path. Ingress bytes are now counted inside the `fill`
+  callback in `processGroup` using the new `onFrame(n int)` signature.
 - **AVCC codec mismatch in web demo publisher (`solid-deno/src/publish/PublishBoard.tsx`,
   `solid-deno/src/subscribe/SubscribeBoard.tsx`):** `VideoEncoder` configured with `avc1.*`
   outputs AVCC-format frames, but the catalog was misreporting the codec as `avc3.*`
