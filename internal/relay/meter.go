@@ -119,7 +119,7 @@ func (m *Meter) report(ctx context.Context) {
 // newUUIDv4 generates a random UUID v4 string using crypto/rand.
 func newUUIDv4() string {
 	var b [16]byte
-	_, _ = rand.Read(b[:])
+	_, _ = rand.Read(b[:]) // crypto/rand.Read never fails on supported platforms
 	b[6] = (b[6] & 0x0f) | 0x40 // version 4
 	b[8] = (b[8] & 0x3f) | 0x80 // variant RFC 4122
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",

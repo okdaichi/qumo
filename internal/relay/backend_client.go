@@ -93,6 +93,9 @@ func NewBackendClient() *BackendClient {
 	return &BackendClient{
 		baseURL:   baseURL,
 		authToken: authToken,
+		// Uses http.DefaultTransport which trusts the system CA pool.
+		// If the backend uses a custom CA, configure it via HTTPS_PROXY or
+		// extend this to accept a *tls.Config when that becomes necessary.
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
 		},
@@ -116,6 +119,10 @@ func (c *BackendClient) Introspect(ctx context.Context, jwt string) (*Introspect
 
 	// Coalesce concurrent requests for the same JWT into one HTTP round-trip.
 	// The shared return value is (*IntrospectResult)(nil) when valid:false.
+	// Note: the singleflight function captures ctx from the first caller. If
+	// that context is cancelled (e.g. authCtx times out), all coalesced callers
+	// receive the same cancellation error. This is correct for auth: a timeout
+	// on any one caller should reject all publishers waiting on the same JWT.
 	v, err, _ := c.sfGroup.Do(jwt, func() (any, error) {
 		// Re-check cache: another goroutine may have populated it while this one
 		// was waiting for the singleflight lock.
@@ -159,6 +166,9 @@ func (c *BackendClient) Introspect(ctx context.Context, jwt string) (*Introspect
 		}
 
 		if !raw.Valid {
+			// TODO: consider caching rejection with a short TTL (e.g. 30s) to
+			// prevent a burst of invalid-JWT ANNOUNCEs from amplifying backend
+			// load on rapid reconnection attempts.
 			return (*IntrospectResult)(nil), nil // valid:false, not an error
 		}
 

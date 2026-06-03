@@ -109,6 +109,13 @@ func (s *Server) init() {
 			return ctx
 		}
 
+		// Invariant: meter must be set whenever backendClient is set.
+		// A manually-constructed Server that sets backendClient without meter
+		// would panic later when the first metered announcement is accepted.
+		if s.backendClient != nil && s.meter == nil {
+			panic("relay.Server: meter must be non-nil when backendClient is set")
+		}
+
 		if s.connected == nil {
 			s.connected = make(map[string]struct{})
 		}
@@ -361,7 +368,7 @@ func (s *Server) serveSession(sess *moqt.Session, requireAuth bool) {
 	addr := sess.RemoteAddr().String()
 	go pollSessionStats(sess, addr)
 
-	slog.Info("relay: new session", "remote", addr, "publisher", requireAuth)
+	slog.Info("relay: new session", "remote", addr, "peer", !requireAuth)
 
 	announced, err := sess.AcceptAnnounce("/")
 	if err != nil {
@@ -384,6 +391,9 @@ func (s *Server) serveSession(sess *moqt.Session, requireAuth bool) {
 		if requireAuth && s.backendClient != nil {
 			broadSess, err = s.authenticateAnnouncement(sess.Context(), sess, ann)
 			if err != nil {
+				// MoQ has no per-announcement error response, so the publisher
+				// receives no explicit rejection — the ANNOUNCE is simply not
+				// mirrored into the TrackMux.
 				slog.Warn("relay: announcement rejected: credential check failed",
 					"broadcast_path", ann.BroadcastPath(),
 					"error", err)
@@ -439,6 +449,12 @@ func (s *Server) serveSession(sess *moqt.Session, requireAuth bool) {
 // authenticateAnnouncement subscribes to the "auth" track on the announced
 // broadcast path, reads the JWT from the first frame, and introspects it
 // against the backend credential endpoint.
+//
+// Publisher-side contract: the publisher must serve a single-group track named
+// "auth" on the announced broadcast path. The group must contain at least one
+// frame whose payload is the raw JWT bytes (no framing). The relay expects the
+// complete JWT to arrive within the 5-second authCtx deadline.
+//
 // Returns the minted broadcastSession on success, or an error if authentication
 // fails (missing track, empty JWT, or invalid/expired credential).
 func (s *Server) authenticateAnnouncement(ctx context.Context, sess *moqt.Session, ann *moqt.Announcement) (*broadcastSession, error) {

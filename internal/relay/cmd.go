@@ -204,7 +204,7 @@ func Run(_ []string) error {
 		TrackMux:         trackMux,
 		localResolver:    localResolver,
 		remoteResolver:   remoteResolver,
-		backendClient: backendClient,
+		backendClient:    backendClient,
 		meter:            meter,
 	}
 
