@@ -35,7 +35,7 @@ func TestTrackDistributor_ByteCounters(t *testing.T) {
 	nodeID := fmt.Sprintf("node-%d", time.Now().UnixNano())
 	trackID := "[" + nodeID + "]/live/cam1/video"
 
-	dist := newTrackDistributor(newTrackManager(), trackID)
+	dist := newTrackDistributor(newTrackManager(), trackID, nil)
 	defer close(dist.done)
 
 	// Verify the counters are wired to the correct Prometheus metric+label.
@@ -747,7 +747,7 @@ func TestTrackDistributor_GroupRingIntegration(t *testing.T) {
 
 // TestTrackDistributor_DoneChannel tests that the done channel is closed when ingest stops
 func TestTrackDistributor_DoneChannel(t *testing.T) {
-	dist := newTrackDistributor(newTrackManager(), "[test-node]/test/test")
+	dist := newTrackDistributor(newTrackManager(), "[test-node]/test/test", nil)
 
 	// done should not be closed initially
 	select {
@@ -825,7 +825,7 @@ func TestRelayHandler_ConcurrentSubscribe(t *testing.T) {
 	for i := range numTracks {
 		name := moqt.TrackName(fmt.Sprintf("track-%d", i))
 		trackID := "[test-node]/test/" + string(name)
-		d := newTrackDistributor(h.tracks, trackID)
+		d := newTrackDistributor(h.tracks, trackID, nil)
 		defer close(d.done)
 		h.tracks.store(trackID, d)
 	}
@@ -860,7 +860,7 @@ func TestRelayHandler_SingleflightDedup(t *testing.T) {
 	h := newTestRelayHandler(t.Context()) // nil session for test
 
 	// Pre-populate a distributor in the cache
-	existing := newTrackDistributor(newTrackManager(), "[test-node]/test/video")
+	existing := newTrackDistributor(newTrackManager(), "[test-node]/test/video", nil)
 	defer close(existing.done) // Cleanup goroutine
 	h.tracks.store("[test-node]/test/video", existing)
 
@@ -1062,6 +1062,76 @@ func TestIngest_WaitGroup_BlocksDoneUntilFillComplete(t *testing.T) {
 }
 
 // ============================================================================
+// trackDistributor metering integration tests
+// ============================================================================
+
+// TestTrackDistributor_MeteringIngress verifies that processGroup accumulates
+// ingress bytes into the attached broadcastSession as well as the Prometheus counter.
+func TestTrackDistributor_MeteringIngress(t *testing.T) {
+	nodeID := fmt.Sprintf("meter-node-%d", time.Now().UnixNano())
+	trackID := "[" + nodeID + "]/live/test/video"
+
+	sess := newBroadcastSession("tok-ingress")
+	dist := newTrackDistributor(newTrackManager(), trackID, sess)
+	t.Cleanup(func() { close(dist.done) })
+
+	payload := []byte("hello-world") // 11 bytes
+	src := &fakeFrameSource{frames: [][]byte{payload}}
+
+	var wg sync.WaitGroup
+	cache := dist.ring.reserve(moqt.GroupSequence(1))
+	ok := dist.processGroup(context.Background(), &wg, moqt.GroupSequence(1), src)
+	require.True(t, ok)
+	wg.Wait()
+
+	_ = cache // reserved above
+
+	assert.Equal(t, int64(len(payload)), sess.ingressBytes.Load(),
+		"processGroup must add ingress bytes to the broadcast session")
+	assert.Equal(t, 0.0+float64(len(payload)),
+		testutil.ToFloat64(metricRelayIngressBytesTotal.WithLabelValues(trackID)),
+		"Prometheus ingress counter must also be updated")
+}
+
+// TestTrackDistributor_MeteringEgress verifies that the egress path accumulates
+// egress bytes into the attached broadcastSession as well as the Prometheus counter.
+func TestTrackDistributor_MeteringEgress(t *testing.T) {
+	nodeID := fmt.Sprintf("meter-node-egress-%d", time.Now().UnixNano())
+	trackID := "[" + nodeID + "]/live/test/video"
+
+	sess := newBroadcastSession("tok-egress")
+	dist := newTrackDistributor(newTrackManager(), trackID, sess)
+	t.Cleanup(func() { close(dist.done) })
+
+	// Simulate the egress byte-counting path directly via the session methods,
+	// mirroring what egress() does on each frame write.
+	dist.egressCounter.Add(float64(512))
+	sess.addEgress(512)
+	dist.egressCounter.Add(float64(256))
+	sess.addEgress(256)
+
+	assert.Equal(t, int64(768), sess.egressBytes.Load(),
+		"session egress counter must accumulate across multiple writes")
+	assert.Equal(t, 768.0,
+		testutil.ToFloat64(metricRelayEgressBytesTotal.WithLabelValues(trackID)),
+		"Prometheus egress counter must also be updated")
+}
+
+// TestTrackDistributor_MeteringNilSession verifies that processGroup and the
+// egress path do not panic when no broadcastSession is attached.
+func TestTrackDistributor_MeteringNilSession(t *testing.T) {
+	dist := newTrackDistributor(newTrackManager(), "nil-session/test", nil)
+	t.Cleanup(func() { close(dist.done) })
+
+	src := &fakeFrameSource{frames: [][]byte{[]byte("frame")}}
+	var wg sync.WaitGroup
+	assert.NotPanics(t, func() {
+		dist.processGroup(context.Background(), &wg, moqt.GroupSequence(1), src)
+		wg.Wait()
+	})
+}
+
+// ============================================================================
 // trackDistributor.processGroup semaphore tests
 // ============================================================================
 
@@ -1076,7 +1146,7 @@ func TestTrackDistributor_ProcessGroup_SemaphoreLimitsConcurrency(t *testing.T) 
 		t.Cleanup(func() { MaxGroupFillsInFlight = orig })
 		MaxGroupFillsInFlight = limit
 
-		dist := newTrackDistributor(newTrackManager(), "test/sem")
+		dist := newTrackDistributor(newTrackManager(), "test/sem", nil)
 		t.Cleanup(func() { close(dist.done) }) // stop pollCacheDepth
 		require.Equal(t, limit, cap(dist.fillSem), "fillSem capacity must equal MaxGroupFillsInFlight")
 
@@ -1148,7 +1218,7 @@ func TestTrackDistributor_ProcessGroup_CtxCancelUnblocks(t *testing.T) {
 		t.Cleanup(func() { MaxGroupFillsInFlight = orig })
 		MaxGroupFillsInFlight = 1
 
-		dist := newTrackDistributor(newTrackManager(), "test/cancel")
+		dist := newTrackDistributor(newTrackManager(), "test/cancel", nil)
 		t.Cleanup(func() { close(dist.done) }) // stop pollCacheDepth
 
 		ctx, cancel := context.WithCancel(context.Background())

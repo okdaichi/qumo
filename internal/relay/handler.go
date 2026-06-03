@@ -93,9 +93,10 @@ type relayHandler struct {
 	announcement *moqt.Announcement
 	session      *moqt.Session
 
-	tracks  *trackManager
-	flights singleflight.Group
-	nodeID  string
+	tracks       *trackManager
+	flights      singleflight.Group
+	nodeID       string
+	broadSession *broadcastSession // nil when metering is disabled
 
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -165,7 +166,7 @@ func isBetterRoute(candidate, current RouteStats) (bool, rejectionReason) {
 	return false, rejectionInferiorRTT
 }
 
-func newRelayHandler(ann *moqt.Announcement, sess *moqt.Session, nodeID string) *relayHandler {
+func newRelayHandler(ann *moqt.Announcement, sess *moqt.Session, nodeID string, broadSess *broadcastSession) *relayHandler {
 	if sess == nil {
 		panic("relay: session must not be nil")
 	}
@@ -179,6 +180,7 @@ func newRelayHandler(ann *moqt.Announcement, sess *moqt.Session, nodeID string) 
 		session:      sess,
 		tracks:       newTrackManager(),
 		nodeID:       nodeID,
+		broadSession: broadSess,
 		ctx:          ctx,
 		cancel:       cancel,
 	}
@@ -282,7 +284,7 @@ func (h *relayHandler) subscribe(name moqt.TrackName) *trackDistributor {
 		return nil
 	}
 
-	d := newTrackDistributor(h.tracks, trackID)
+	d := newTrackDistributor(h.tracks, trackID, h.broadSession)
 
 	go d.ingest(h.ctx, src)
 
@@ -325,6 +327,9 @@ type trackDistributor struct {
 	ingressCounter prometheus.Counter
 	egressCounter  prometheus.Counter
 
+	// session is non-nil when backend metering is active for this broadcast.
+	session *broadcastSession
+
 	// fillSem is a buffered-channel semaphore that limits the number of
 	// concurrently running fill goroutines. Its capacity is set to
 	// MaxGroupFillsInFlight at construction time.
@@ -336,17 +341,17 @@ type trackDistributor struct {
 	done chan struct{} // closed when ingest returns
 }
 
-func newTrackDistributor(manager *trackManager, trackID string) *trackDistributor {
+func newTrackDistributor(manager *trackManager, trackID string, broadSess *broadcastSession) *trackDistributor {
 	d := &trackDistributor{
 		trackID:        trackID,
 		ring:           newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
 		manager:        manager,
 		ingressCounter: metricRelayIngressBytesTotal.WithLabelValues(trackID),
 		egressCounter:  metricRelayEgressBytesTotal.WithLabelValues(trackID),
+		session:        broadSess,
 		fillSem:        make(chan struct{}, maxGroupFillsInFlightOrPanic()),
 		subscribers:    make(map[chan struct{}]struct{}),
-
-		done: make(chan struct{}),
+		done:           make(chan struct{}),
 	}
 	go d.pollCacheDepth()
 	return d
@@ -432,7 +437,11 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 						_ = gw.Close()
 						return
 					}
-					d.egressCounter.Add(float64(frame.Len()))
+					n := frame.Len()
+					d.egressCounter.Add(float64(n))
+					if d.session != nil {
+						d.session.addEgress(int64(n))
+					}
 					frameIdx++
 					continue
 				}
@@ -541,7 +550,15 @@ func (d *trackDistributor) processGroup(ctx context.Context, wg *sync.WaitGroup,
 			<-d.fillSem
 			metricGroupFillsInflight.Dec()
 		}()
-		d.ring.fill(src, cache, d.broadcast)
+		d.ring.fill(src, cache, func(n int) {
+			if n > 0 {
+				d.ingressCounter.Add(float64(n))
+				if d.session != nil {
+					d.session.addIngress(int64(n))
+				}
+			}
+			d.broadcast()
+		})
 	})
 	return true
 }

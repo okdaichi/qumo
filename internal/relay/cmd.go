@@ -137,6 +137,13 @@ func Run(_ []string) error {
 	localResolver := NewLocalResolver()
 	remoteResolver := NewRemoteResolver(remoteResolverTLS)
 
+	// Credential client: credential introspection + usage metering (optional).
+	credentialClient := NewCredentialClient()
+	var meter *Meter
+	if credentialClient != nil {
+		meter = newMeter(credentialClient)
+	}
+
 	relayCfg := Config{
 		NodeID:                nodeID,
 		Region:                os.Getenv("REGION"),
@@ -197,6 +204,8 @@ func Run(_ []string) error {
 		TrackMux:         trackMux,
 		localResolver:    localResolver,
 		remoteResolver:   remoteResolver,
+		credentialClient:    credentialClient,
+		meter:            meter,
 	}
 
 	httpMux.HandleFunc("/", relayServer.HandleWebTransport)
@@ -225,9 +234,17 @@ func Run(_ []string) error {
 	if relayCfg.LocalResolverInterval > 0 {
 		log.Printf("\t%-8s: %s (interval: %s)\n", "Resolver", "local ("+localResolver.serviceName+")", localResolver.Interval())
 	}
+	if credentialClient != nil {
+		log.Printf("\t%-8s: %s (metering every 30s)\n", "Credentials", sanitizeLog(credentialClient.baseURL))
+	}
 
 	// Start peer connections in background
 	go relayServer.ConnectPeers(ctx)
+
+	// Start usage meter if credential features are active.
+	if meter != nil {
+		go meter.Run(ctx)
+	}
 
 	// Delegate to testable helper that runs servers until ctx is cancelled
 	if err := serveComponents(ctx, relayServer, httpServer, 10*time.Second); err != nil {

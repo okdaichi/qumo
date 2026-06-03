@@ -92,22 +92,25 @@ func (ring *groupRing) reserve(seq moqt.GroupSequence) *groupCache {
 
 // fill reads all frames from group into cache, calling onFrame after each frame
 // and once more when the group is complete.
-// It is safe to call fill concurrently for different groups.
-func (ring *groupRing) fill(group frameSource, cache *groupCache, onFrame func()) {
+// onFrame receives the byte length of the frame just appended, or 0 on the
+// completion call (after markComplete). It is safe to call fill concurrently
+// for different groups.
+func (ring *groupRing) fill(group frameSource, cache *groupCache, onFrame func(n int)) {
 	buf := ring.pool.Get()
 	defer ring.pool.Put(buf)
 	frameCount := 0
 	for frame := range group.Frames(buf) {
 		frameCount++
+		n := frame.Len()
 		cache.append(frame)
 		if onFrame != nil {
-			onFrame()
+			onFrame(n)
 		}
 	}
 	slog.Debug("group cached", "seq", cache.seq, "frames", frameCount)
 	cache.markComplete()
 	if onFrame != nil {
-		onFrame()
+		onFrame(0) // signals group completion; no new bytes
 	}
 }
 
