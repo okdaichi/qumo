@@ -467,7 +467,7 @@ func (s *Server) authenticateAnnouncement(ctx context.Context, sess *moqt.Sessio
 	}
 	jwt := jwtBuf.String()
 
-	result, err := s.backendClient.Introspect(ctx, jwt)
+	result, err := s.backendClient.Introspect(authCtx, jwt)
 	if err != nil {
 		return nil, fmt.Errorf("introspect: %w", err)
 	}

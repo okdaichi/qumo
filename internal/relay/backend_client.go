@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 )
 
 const backendMaxBody = 1 << 20 // 1 MB
@@ -67,6 +69,7 @@ type BackendClient struct {
 
 	cacheMu sync.Mutex
 	cache   map[string]cachedCredential
+	sfGroup singleflight.Group // deduplicates concurrent requests for the same JWT
 }
 
 // NewBackendClient creates a BackendClient from environment variables.
@@ -100,7 +103,9 @@ func NewBackendClient() *BackendClient {
 // Introspect validates a publisher JWT against the backend credential endpoint.
 // Returns (nil, nil) when the token is present but the server reports valid:false.
 // Results are cached until the server-supplied revalidate_after time.
+// Concurrent calls for the same JWT are coalesced into a single HTTP request.
 func (c *BackendClient) Introspect(ctx context.Context, jwt string) (*IntrospectResult, error) {
+	// Fast path: cache hit.
 	c.cacheMu.Lock()
 	if cached, ok := c.cache[jwt]; ok && time.Now().Before(cached.expires) {
 		result := cached.result
@@ -109,59 +114,84 @@ func (c *BackendClient) Introspect(ctx context.Context, jwt string) (*Introspect
 	}
 	c.cacheMu.Unlock()
 
-	body, err := json.Marshal(introspectRequest{Token: jwt})
+	// Coalesce concurrent requests for the same JWT into one HTTP round-trip.
+	// The shared return value is (*IntrospectResult)(nil) when valid:false.
+	v, err, _ := c.sfGroup.Do(jwt, func() (any, error) {
+		// Re-check cache: another goroutine may have populated it while this one
+		// was waiting for the singleflight lock.
+		c.cacheMu.Lock()
+		if cached, ok := c.cache[jwt]; ok && time.Now().Before(cached.expires) {
+			result := cached.result
+			c.cacheMu.Unlock()
+			return &result, nil
+		}
+		c.cacheMu.Unlock()
+
+		body, err := json.Marshal(introspectRequest{Token: jwt})
+		if err != nil {
+			return nil, fmt.Errorf("backend: marshal introspect request: %w", err)
+		}
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+			c.baseURL+"/v1/credentials/introspect", bytes.NewReader(body))
+		if err != nil {
+			return nil, fmt.Errorf("backend: create introspect request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		if c.authToken != "" {
+			req.Header.Set("Authorization", "Bearer "+c.authToken)
+		}
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("backend: introspect: %w", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			_, _ = io.Copy(io.Discard, resp.Body)
+			return nil, fmt.Errorf("backend: introspect returned HTTP %d", resp.StatusCode)
+		}
+
+		var raw introspectResponse
+		if err := json.NewDecoder(io.LimitReader(resp.Body, backendMaxBody)).Decode(&raw); err != nil {
+			return nil, fmt.Errorf("backend: decode introspect response: %w", err)
+		}
+
+		if !raw.Valid {
+			return (*IntrospectResult)(nil), nil // valid:false, not an error
+		}
+
+		expires, err := time.Parse(time.RFC3339, raw.RevalidateAfter)
+		if err != nil || expires.IsZero() || !expires.After(time.Now()) {
+			expires = time.Now().Add(5 * time.Minute) // safe fallback
+		}
+
+		result := IntrospectResult{
+			TokenID:     raw.TokenID,
+			ProjectID:   raw.ProjectID,
+			TenantID:    raw.TenantID,
+			APIKeyID:    raw.APIKeyID,
+			Environment: raw.Environment,
+		}
+
+		c.cacheMu.Lock()
+		c.cache[jwt] = cachedCredential{result: result, expires: expires}
+		// Sweep expired entries to prevent unbounded cache growth.
+		now := time.Now()
+		for k, v := range c.cache {
+			if now.After(v.expires) {
+				delete(c.cache, k)
+			}
+		}
+		c.cacheMu.Unlock()
+
+		return &result, nil
+	})
 	if err != nil {
-		return nil, fmt.Errorf("backend: marshal introspect request: %w", err)
+		return nil, err
 	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		c.baseURL+"/v1/credentials/introspect", bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("backend: create introspect request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if c.authToken != "" {
-		req.Header.Set("Authorization", "Bearer "+c.authToken)
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("backend: introspect: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		_, _ = io.Copy(io.Discard, resp.Body)
-		return nil, fmt.Errorf("backend: introspect returned HTTP %d", resp.StatusCode)
-	}
-
-	var raw introspectResponse
-	if err := json.NewDecoder(io.LimitReader(resp.Body, backendMaxBody)).Decode(&raw); err != nil {
-		return nil, fmt.Errorf("backend: decode introspect response: %w", err)
-	}
-
-	if !raw.Valid {
-		return nil, nil // token present but not valid
-	}
-
-	expires, err := time.Parse(time.RFC3339, raw.RevalidateAfter)
-	if err != nil || expires.IsZero() || !expires.After(time.Now()) {
-		expires = time.Now().Add(5 * time.Minute) // safe fallback
-	}
-
-	result := IntrospectResult{
-		TokenID:     raw.TokenID,
-		ProjectID:   raw.ProjectID,
-		TenantID:    raw.TenantID,
-		APIKeyID:    raw.APIKeyID,
-		Environment: raw.Environment,
-	}
-
-	c.cacheMu.Lock()
-	c.cache[jwt] = cachedCredential{result: result, expires: expires}
-	c.cacheMu.Unlock()
-
-	return &result, nil
+	return v.(*IntrospectResult), nil
 }
 
 // ReportUsage POSTs a batch of cumulative usage events to the backend.
