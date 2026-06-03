@@ -44,17 +44,17 @@ func (s *broadcastSession) toEvent() UsageEvent {
 }
 
 // Meter manages active broadcast sessions and periodically reports cumulative
-// usage to the enterprise backend. A single Meter is shared across all
-// publisher sessions on a relay node.
+// usage to the backend. A single Meter is shared across all publisher sessions
+// on a relay node.
 type Meter struct {
-	client   *EnterpriseClient
+	client   *BackendClient
 	interval time.Duration
 
 	mu       sync.Mutex
 	sessions map[*broadcastSession]struct{}
 }
 
-func newMeter(client *EnterpriseClient) *Meter {
+func newMeter(client *BackendClient) *Meter {
 	return &Meter{
 		client:   client,
 		interval: 30 * time.Second,

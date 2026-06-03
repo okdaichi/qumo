@@ -137,11 +137,11 @@ func Run(_ []string) error {
 	localResolver := NewLocalResolver()
 	remoteResolver := NewRemoteResolver(remoteResolverTLS)
 
-	// Enterprise client: credential introspection + usage metering (optional).
-	enterpriseClient := NewEnterpriseClient()
+	// Backend client: credential introspection + usage metering (optional).
+	backendClient := NewBackendClient()
 	var meter *Meter
-	if enterpriseClient != nil {
-		meter = newMeter(enterpriseClient)
+	if backendClient != nil {
+		meter = newMeter(backendClient)
 	}
 
 	relayCfg := Config{
@@ -204,7 +204,7 @@ func Run(_ []string) error {
 		TrackMux:         trackMux,
 		localResolver:    localResolver,
 		remoteResolver:   remoteResolver,
-		enterpriseClient: enterpriseClient,
+		backendClient: backendClient,
 		meter:            meter,
 	}
 
@@ -234,14 +234,14 @@ func Run(_ []string) error {
 	if relayCfg.LocalResolverInterval > 0 {
 		log.Printf("\t%-8s: %s (interval: %s)\n", "Resolver", "local ("+localResolver.serviceName+")", localResolver.Interval())
 	}
-	if enterpriseClient != nil {
-		log.Printf("\t%-8s: %s (metering every 30s)\n", "Enterprise", sanitizeLog(enterpriseClient.baseURL))
+	if backendClient != nil {
+		log.Printf("\t%-8s: %s (metering every 30s)\n", "Backend", sanitizeLog(backendClient.baseURL))
 	}
 
 	// Start peer connections in background
 	go relayServer.ConnectPeers(ctx)
 
-	// Start usage meter if enterprise features are active.
+	// Start usage meter if backend features are active.
 	if meter != nil {
 		go meter.Run(ctx)
 	}

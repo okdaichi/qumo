@@ -28,11 +28,11 @@ type Server struct {
 	Config    *Config
 	TrackMux  *moqt.TrackMux
 
-	// enterpriseClient is non-nil when QUMO_ENTERPRISE_URL is configured.
+	// backendClient is non-nil when QUMO_BACKEND_URL is configured.
 	// It handles credential introspection and usage reporting.
-	enterpriseClient *EnterpriseClient
+	backendClient *BackendClient
 	// meter drives periodic and final usage reporting for metered sessions.
-	// It is non-nil exactly when enterpriseClient is non-nil.
+	// It is non-nil exactly when backendClient is non-nil.
 	meter *Meter
 
 	webtransportHandler *moqt.WebTransportHandler
@@ -83,7 +83,7 @@ func (s *Server) init() {
 		}
 		// Native QUIC connections are always relay peers (ALPN "moqt").
 		// WebTransport connections (ALPN "h3") are publisher/browser sessions
-		// that require credential auth when the enterprise client is configured.
+		// that require credential auth when the backend client is configured.
 		s.MOQServer.Handler = moqt.HandleFunc(s.relayPeer)
 		if s.MOQServer.TrackMux != nil {
 			slog.Warn("relay.Server: overriding MOQServer.TrackMux set by caller")
@@ -336,7 +336,7 @@ func waitRetry(ctx context.Context, d time.Duration) bool {
 }
 
 // Relay handles inbound WebTransport sessions (publishers and browser clients).
-// When an enterprise client is configured, each announced broadcast path is
+// When a backend client is configured, each announced broadcast path is
 // authenticated via a JWT read from the "auth" MoQ track before being accepted.
 func (s *Server) Relay(sess *moqt.Session) {
 	s.serveSession(sess, true)
@@ -379,9 +379,9 @@ func (s *Server) serveSession(sess *moqt.Session, requireAuth bool) {
 			return
 		}
 
-		// Authenticate publisher announcements when the enterprise client is configured.
+		// Authenticate publisher announcements when the backend client is configured.
 		var broadSess *broadcastSession
-		if requireAuth && s.enterpriseClient != nil {
+		if requireAuth && s.backendClient != nil {
 			broadSess, err = s.authenticateAnnouncement(sess.Context(), sess, ann)
 			if err != nil {
 				slog.Warn("relay: announcement rejected: credential check failed",
@@ -438,7 +438,7 @@ func (s *Server) serveSession(sess *moqt.Session, requireAuth bool) {
 
 // authenticateAnnouncement subscribes to the "auth" track on the announced
 // broadcast path, reads the JWT from the first frame, and introspects it
-// against the enterprise credential endpoint.
+// against the backend credential endpoint.
 // Returns the minted broadcastSession on success, or an error if authentication
 // fails (missing track, empty JWT, or invalid/expired credential).
 func (s *Server) authenticateAnnouncement(ctx context.Context, sess *moqt.Session, ann *moqt.Announcement) (*broadcastSession, error) {
@@ -467,12 +467,12 @@ func (s *Server) authenticateAnnouncement(ctx context.Context, sess *moqt.Sessio
 	}
 	jwt := jwtBuf.String()
 
-	result, err := s.enterpriseClient.Introspect(ctx, jwt)
+	result, err := s.backendClient.Introspect(ctx, jwt)
 	if err != nil {
 		return nil, fmt.Errorf("introspect: %w", err)
 	}
 	if result == nil {
-		return nil, fmt.Errorf("credential rejected by enterprise server")
+		return nil, fmt.Errorf("credential rejected by backend")
 	}
 
 	return newBroadcastSession(result.TokenID), nil

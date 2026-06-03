@@ -327,7 +327,7 @@ type trackDistributor struct {
 	ingressCounter prometheus.Counter
 	egressCounter  prometheus.Counter
 
-	// session is non-nil when enterprise metering is active for this broadcast.
+	// session is non-nil when backend metering is active for this broadcast.
 	session *broadcastSession
 
 	// fillSem is a buffered-channel semaphore that limits the number of

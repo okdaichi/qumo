@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-const enterpriseMaxBody = 1 << 20 // 1 MB
+const backendMaxBody = 1 << 20 // 1 MB
 
 type introspectRequest struct {
 	Token string `json:"token"`
@@ -53,14 +53,14 @@ type UsageEvent struct {
 	Ts                 string            `json:"ts"` // RFC3339
 }
 
-// EnterpriseClient communicates with the qumo-enterprise backend for credential
-// introspection and usage reporting.
+// BackendClient communicates with the qumo backend for credential introspection
+// and usage reporting.
 //
 // Configuration is read from environment variables:
 //
-//	QUMO_ENTERPRISE_URL  - base URL of the enterprise server
-//	QUMO_RELAY_TOKEN     - shared bearer token (must match the server's config)
-type EnterpriseClient struct {
+//	QUMO_BACKEND_URL  - base URL of the backend server
+//	QUMO_RELAY_TOKEN  - shared bearer token (must match the server's config)
+type BackendClient struct {
 	baseURL    string
 	authToken  string
 	httpClient *http.Client
@@ -69,10 +69,10 @@ type EnterpriseClient struct {
 	cache   map[string]cachedCredential
 }
 
-// NewEnterpriseClient creates an EnterpriseClient from environment variables.
-// Returns nil when QUMO_ENTERPRISE_URL is not set (enterprise features disabled).
-func NewEnterpriseClient() *EnterpriseClient {
-	baseURL := os.Getenv("QUMO_ENTERPRISE_URL")
+// NewBackendClient creates a BackendClient from environment variables.
+// Returns nil when QUMO_BACKEND_URL is not set (credential auth and metering disabled).
+func NewBackendClient() *BackendClient {
+	baseURL := os.Getenv("QUMO_BACKEND_URL")
 	if baseURL == "" {
 		return nil
 	}
@@ -83,11 +83,11 @@ func NewEnterpriseClient() *EnterpriseClient {
 
 	authToken := os.Getenv("QUMO_RELAY_TOKEN")
 	if authToken == "" {
-		slog.Warn("QUMO_ENTERPRISE_URL is set but QUMO_RELAY_TOKEN is empty")
+		slog.Warn("QUMO_BACKEND_URL is set but QUMO_RELAY_TOKEN is empty")
 	}
 
-	slog.Info("enterprise client configured", "url", baseURL)
-	return &EnterpriseClient{
+	slog.Info("backend client configured", "url", baseURL)
+	return &BackendClient{
 		baseURL:   baseURL,
 		authToken: authToken,
 		httpClient: &http.Client{
@@ -97,10 +97,10 @@ func NewEnterpriseClient() *EnterpriseClient {
 	}
 }
 
-// Introspect validates a publisher JWT against the enterprise credential endpoint.
+// Introspect validates a publisher JWT against the backend credential endpoint.
 // Returns (nil, nil) when the token is present but the server reports valid:false.
 // Results are cached until the server-supplied revalidate_after time.
-func (c *EnterpriseClient) Introspect(ctx context.Context, jwt string) (*IntrospectResult, error) {
+func (c *BackendClient) Introspect(ctx context.Context, jwt string) (*IntrospectResult, error) {
 	c.cacheMu.Lock()
 	if cached, ok := c.cache[jwt]; ok && time.Now().Before(cached.expires) {
 		result := cached.result
@@ -111,13 +111,13 @@ func (c *EnterpriseClient) Introspect(ctx context.Context, jwt string) (*Introsp
 
 	body, err := json.Marshal(introspectRequest{Token: jwt})
 	if err != nil {
-		return nil, fmt.Errorf("enterprise: marshal introspect request: %w", err)
+		return nil, fmt.Errorf("backend: marshal introspect request: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		c.baseURL+"/v1/credentials/introspect", bytes.NewReader(body))
 	if err != nil {
-		return nil, fmt.Errorf("enterprise: create introspect request: %w", err)
+		return nil, fmt.Errorf("backend: create introspect request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if c.authToken != "" {
@@ -126,18 +126,18 @@ func (c *EnterpriseClient) Introspect(ctx context.Context, jwt string) (*Introsp
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("enterprise: introspect: %w", err)
+		return nil, fmt.Errorf("backend: introspect: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, resp.Body)
-		return nil, fmt.Errorf("enterprise: introspect returned HTTP %d", resp.StatusCode)
+		return nil, fmt.Errorf("backend: introspect returned HTTP %d", resp.StatusCode)
 	}
 
 	var raw introspectResponse
-	if err := json.NewDecoder(io.LimitReader(resp.Body, enterpriseMaxBody)).Decode(&raw); err != nil {
-		return nil, fmt.Errorf("enterprise: decode introspect response: %w", err)
+	if err := json.NewDecoder(io.LimitReader(resp.Body, backendMaxBody)).Decode(&raw); err != nil {
+		return nil, fmt.Errorf("backend: decode introspect response: %w", err)
 	}
 
 	if !raw.Valid {
@@ -164,21 +164,21 @@ func (c *EnterpriseClient) Introspect(ctx context.Context, jwt string) (*Introsp
 	return &result, nil
 }
 
-// ReportUsage POSTs a batch of cumulative usage events to the enterprise backend.
-func (c *EnterpriseClient) ReportUsage(ctx context.Context, events []UsageEvent) error {
+// ReportUsage POSTs a batch of cumulative usage events to the backend.
+func (c *BackendClient) ReportUsage(ctx context.Context, events []UsageEvent) error {
 	if len(events) == 0 {
 		return nil
 	}
 
 	body, err := json.Marshal(events)
 	if err != nil {
-		return fmt.Errorf("enterprise: marshal usage events: %w", err)
+		return fmt.Errorf("backend: marshal usage events: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		c.baseURL+"/v1/usage/events", bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("enterprise: create usage request: %w", err)
+		return fmt.Errorf("backend: create usage request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if c.authToken != "" {
@@ -187,13 +187,13 @@ func (c *EnterpriseClient) ReportUsage(ctx context.Context, events []UsageEvent)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("enterprise: report usage: %w", err)
+		return fmt.Errorf("backend: report usage: %w", err)
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, resp.Body)
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("enterprise: usage events returned HTTP %d", resp.StatusCode)
+		return fmt.Errorf("backend: usage events returned HTTP %d", resp.StatusCode)
 	}
 	return nil
 }
