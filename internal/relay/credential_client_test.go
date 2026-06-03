@@ -15,9 +15,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// newTestBackendClient wires a BackendClient to srv with an auth token pre-set.
-func newTestBackendClient(srv *httptest.Server) *BackendClient {
-	return &BackendClient{
+// newTestCredentialClient wires a CredentialClient to srv with an auth token pre-set.
+func newTestCredentialClient(srv *httptest.Server) *CredentialClient {
+	return &CredentialClient{
 		baseURL:    srv.URL,
 		authToken:  "test-token",
 		httpClient: srv.Client(),
@@ -44,51 +44,51 @@ func writeIntrospectJSON(w http.ResponseWriter, resp introspectResponse) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-// ── NewBackendClient ──────────────────────────────────────────────────────────
+// ── NewCredentialClient ──────────────────────────────────────────────────────────
 
-func TestNewBackendClient(t *testing.T) {
-	t.Run("nil when QUMO_BACKEND_URL unset", func(t *testing.T) {
-		t.Setenv("QUMO_BACKEND_URL", "")
-		assert.Nil(t, NewBackendClient())
+func TestNewCredentialClient(t *testing.T) {
+	t.Run("nil when QUMO_CREDENTIAL_URL unset", func(t *testing.T) {
+		t.Setenv("QUMO_CREDENTIAL_URL", "")
+		assert.Nil(t, NewCredentialClient())
 	})
 
 	t.Run("returns client with correct fields", func(t *testing.T) {
-		t.Setenv("QUMO_BACKEND_URL", "https://backend.example.com")
+		t.Setenv("QUMO_CREDENTIAL_URL", "https://credential.example.com")
 		t.Setenv("QUMO_RELAY_TOKEN", "my-secret")
-		c := NewBackendClient()
+		c := NewCredentialClient()
 		require.NotNil(t, c)
-		assert.Equal(t, "https://backend.example.com", c.baseURL)
+		assert.Equal(t, "https://credential.example.com", c.baseURL)
 		assert.Equal(t, "my-secret", c.authToken)
 	})
 
 	t.Run("adds https scheme when missing", func(t *testing.T) {
-		t.Setenv("QUMO_BACKEND_URL", "backend.example.com")
+		t.Setenv("QUMO_CREDENTIAL_URL", "credential.example.com")
 		t.Setenv("QUMO_RELAY_TOKEN", "tok")
-		c := NewBackendClient()
+		c := NewCredentialClient()
 		require.NotNil(t, c)
-		assert.Equal(t, "https://backend.example.com", c.baseURL)
+		assert.Equal(t, "https://credential.example.com", c.baseURL)
 	})
 
 	t.Run("preserves http scheme", func(t *testing.T) {
-		t.Setenv("QUMO_BACKEND_URL", "http://backend.example.com")
+		t.Setenv("QUMO_CREDENTIAL_URL", "http://credential.example.com")
 		t.Setenv("QUMO_RELAY_TOKEN", "tok")
-		c := NewBackendClient()
+		c := NewCredentialClient()
 		require.NotNil(t, c)
-		assert.Equal(t, "http://backend.example.com", c.baseURL)
+		assert.Equal(t, "http://credential.example.com", c.baseURL)
 	})
 
 	t.Run("strips trailing slash", func(t *testing.T) {
-		t.Setenv("QUMO_BACKEND_URL", "https://backend.example.com/")
+		t.Setenv("QUMO_CREDENTIAL_URL", "https://credential.example.com/")
 		t.Setenv("QUMO_RELAY_TOKEN", "tok")
-		c := NewBackendClient()
+		c := NewCredentialClient()
 		require.NotNil(t, c)
-		assert.Equal(t, "https://backend.example.com", c.baseURL)
+		assert.Equal(t, "https://credential.example.com", c.baseURL)
 	})
 }
 
 // ── Introspect – request shape ────────────────────────────────────────────────
 
-func TestBackendClient_Introspect_RequestShape(t *testing.T) {
+func TestCredentialClient_Introspect_RequestShape(t *testing.T) {
 	revalidate := time.Now().Add(10 * time.Minute)
 	var gotMethod, gotPath, gotAuth, gotCT string
 	var gotBodyBytes []byte
@@ -103,7 +103,7 @@ func TestBackendClient_Introspect_RequestShape(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := newTestBackendClient(srv).Introspect(context.Background(), "the-jwt")
+	_, err := newTestCredentialClient(srv).Introspect(context.Background(), "the-jwt")
 	require.NoError(t, err)
 
 	assert.Equal(t, http.MethodPost, gotMethod)
@@ -113,7 +113,7 @@ func TestBackendClient_Introspect_RequestShape(t *testing.T) {
 	assert.Contains(t, string(gotBodyBytes), "the-jwt")
 }
 
-func TestBackendClient_Introspect_NoAuthHeaderWhenTokenEmpty(t *testing.T) {
+func TestCredentialClient_Introspect_NoAuthHeaderWhenTokenEmpty(t *testing.T) {
 	revalidate := time.Now().Add(10 * time.Minute)
 	var gotAuth string
 
@@ -123,7 +123,7 @@ func TestBackendClient_Introspect_NoAuthHeaderWhenTokenEmpty(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := newTestBackendClient(srv)
+	c := newTestCredentialClient(srv)
 	c.authToken = ""
 	_, err := c.Introspect(context.Background(), "jwt")
 	require.NoError(t, err)
@@ -132,14 +132,14 @@ func TestBackendClient_Introspect_NoAuthHeaderWhenTokenEmpty(t *testing.T) {
 
 // ── Introspect – result parsing ───────────────────────────────────────────────
 
-func TestBackendClient_Introspect_ValidCredential(t *testing.T) {
+func TestCredentialClient_Introspect_ValidCredential(t *testing.T) {
 	revalidate := time.Now().Add(5 * time.Minute)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writeIntrospectJSON(w, okIntrospectResponse("tok-abc", revalidate))
 	}))
 	defer srv.Close()
 
-	result, err := newTestBackendClient(srv).Introspect(context.Background(), "jwt")
+	result, err := newTestCredentialClient(srv).Introspect(context.Background(), "jwt")
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, "tok-abc", result.TokenID)
@@ -149,20 +149,20 @@ func TestBackendClient_Introspect_ValidCredential(t *testing.T) {
 	assert.Equal(t, "production", result.Environment)
 }
 
-func TestBackendClient_Introspect_InvalidCredential(t *testing.T) {
+func TestCredentialClient_Introspect_InvalidCredential(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writeIntrospectJSON(w, introspectResponse{Valid: false})
 	}))
 	defer srv.Close()
 
-	result, err := newTestBackendClient(srv).Introspect(context.Background(), "bad-jwt")
+	result, err := newTestCredentialClient(srv).Introspect(context.Background(), "bad-jwt")
 	require.NoError(t, err)
 	assert.Nil(t, result, "valid:false must return nil result without an error")
 }
 
 // ── Introspect – caching ──────────────────────────────────────────────────────
 
-func TestBackendClient_Introspect_CacheHit(t *testing.T) {
+func TestCredentialClient_Introspect_CacheHit(t *testing.T) {
 	var calls atomic.Int32
 	revalidate := time.Now().Add(10 * time.Minute)
 
@@ -172,7 +172,7 @@ func TestBackendClient_Introspect_CacheHit(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := newTestBackendClient(srv)
+	c := newTestCredentialClient(srv)
 	ctx := context.Background()
 
 	r1, err := c.Introspect(ctx, "jwt-same")
@@ -187,7 +187,7 @@ func TestBackendClient_Introspect_CacheHit(t *testing.T) {
 	assert.Equal(t, r1.TokenID, r2.TokenID)
 }
 
-func TestBackendClient_Introspect_DifferentJWTsAreCachedIndependently(t *testing.T) {
+func TestCredentialClient_Introspect_DifferentJWTsAreCachedIndependently(t *testing.T) {
 	var calls atomic.Int32
 	revalidate := time.Now().Add(10 * time.Minute)
 
@@ -197,7 +197,7 @@ func TestBackendClient_Introspect_DifferentJWTsAreCachedIndependently(t *testing
 	}))
 	defer srv.Close()
 
-	c := newTestBackendClient(srv)
+	c := newTestCredentialClient(srv)
 	ctx := context.Background()
 
 	r1, err := c.Introspect(ctx, "jwt-alpha")
@@ -210,7 +210,7 @@ func TestBackendClient_Introspect_DifferentJWTsAreCachedIndependently(t *testing
 	assert.NotEqual(t, r1.TokenID, r2.TokenID)
 }
 
-func TestBackendClient_Introspect_CacheExpiry(t *testing.T) {
+func TestCredentialClient_Introspect_CacheExpiry(t *testing.T) {
 	var calls atomic.Int32
 	// Returning revalidate_after in the past causes the fallback TTL; but even
 	// with the 5-min fallback the entry won't be immediately re-fetched. Instead
@@ -223,7 +223,7 @@ func TestBackendClient_Introspect_CacheExpiry(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := newTestBackendClient(srv)
+	c := newTestCredentialClient(srv)
 
 	// Seed the cache with an already-expired entry.
 	c.cacheMu.Lock()
@@ -241,7 +241,7 @@ func TestBackendClient_Introspect_CacheExpiry(t *testing.T) {
 	assert.Equal(t, "tok-exp", result.TokenID, "result must come from the fresh response, not the stale cache")
 }
 
-func TestBackendClient_Introspect_CacheEviction(t *testing.T) {
+func TestCredentialClient_Introspect_CacheEviction(t *testing.T) {
 	revalidate := time.Now().Add(10 * time.Minute)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -249,7 +249,7 @@ func TestBackendClient_Introspect_CacheEviction(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := newTestBackendClient(srv)
+	c := newTestCredentialClient(srv)
 
 	// Manually insert two stale entries.
 	c.cacheMu.Lock()
@@ -274,7 +274,7 @@ func TestBackendClient_Introspect_CacheEviction(t *testing.T) {
 
 // ── Introspect – singleflight ─────────────────────────────────────────────────
 
-func TestBackendClient_Introspect_SingleflightCoalescesConcurrentRequests(t *testing.T) {
+func TestCredentialClient_Introspect_SingleflightCoalescesConcurrentRequests(t *testing.T) {
 	const n = 10
 	var calls atomic.Int32
 	revalidate := time.Now().Add(10 * time.Minute)
@@ -287,7 +287,7 @@ func TestBackendClient_Introspect_SingleflightCoalescesConcurrentRequests(t *tes
 	}))
 	defer srv.Close()
 
-	c := newTestBackendClient(srv)
+	c := newTestCredentialClient(srv)
 	ctx := context.Background()
 
 	var wg sync.WaitGroup
@@ -310,7 +310,7 @@ func TestBackendClient_Introspect_SingleflightCoalescesConcurrentRequests(t *tes
 
 // ── Introspect – error handling ───────────────────────────────────────────────
 
-func TestBackendClient_Introspect_NonOKStatus(t *testing.T) {
+func TestCredentialClient_Introspect_NonOKStatus(t *testing.T) {
 	for _, status := range []int{
 		http.StatusUnauthorized,
 		http.StatusForbidden,
@@ -323,26 +323,26 @@ func TestBackendClient_Introspect_NonOKStatus(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			_, err := newTestBackendClient(srv).Introspect(context.Background(), "jwt")
+			_, err := newTestCredentialClient(srv).Introspect(context.Background(), "jwt")
 			require.Error(t, err)
-			assert.Contains(t, err.Error(), "backend:")
+			assert.Contains(t, err.Error(), "credential:")
 		})
 	}
 }
 
-func TestBackendClient_Introspect_MalformedJSON(t *testing.T) {
+func TestCredentialClient_Introspect_MalformedJSON(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte("{not valid json"))
 	}))
 	defer srv.Close()
 
-	_, err := newTestBackendClient(srv).Introspect(context.Background(), "jwt")
+	_, err := newTestCredentialClient(srv).Introspect(context.Background(), "jwt")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "backend:")
+	assert.Contains(t, err.Error(), "credential:")
 }
 
-func TestBackendClient_Introspect_ContextCancelled(t *testing.T) {
+func TestCredentialClient_Introspect_ContextCancelled(t *testing.T) {
 	// Pre-cancel the context so the HTTP client rejects the request immediately,
 	// avoiding any reliance on the server-side request context being cancelled
 	// when the client drops the connection (behaviour differs across platforms).
@@ -354,13 +354,13 @@ func TestBackendClient_Introspect_ContextCancelled(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := newTestBackendClient(srv).Introspect(ctx, "jwt")
+	_, err := newTestCredentialClient(srv).Introspect(ctx, "jwt")
 	require.Error(t, err)
 }
 
 // ── ReportUsage ───────────────────────────────────────────────────────────────
 
-func TestBackendClient_ReportUsage_SendsCorrectPayload(t *testing.T) {
+func TestCredentialClient_ReportUsage_SendsCorrectPayload(t *testing.T) {
 	var gotMethod, gotPath, gotAuth, gotCT string
 	var gotEvents []UsageEvent
 
@@ -386,7 +386,7 @@ func TestBackendClient_ReportUsage_SendsCorrectPayload(t *testing.T) {
 		},
 	}
 
-	err := newTestBackendClient(srv).ReportUsage(context.Background(), events)
+	err := newTestCredentialClient(srv).ReportUsage(context.Background(), events)
 	require.NoError(t, err)
 
 	assert.Equal(t, http.MethodPost, gotMethod)
@@ -399,23 +399,23 @@ func TestBackendClient_ReportUsage_SendsCorrectPayload(t *testing.T) {
 	assert.Equal(t, int64(4096), gotEvents[0].Metrics["gateway.egress_bytes"])
 }
 
-func TestBackendClient_ReportUsage_NoOpOnEmptySlice(t *testing.T) {
+func TestCredentialClient_ReportUsage_NoOpOnEmptySlice(t *testing.T) {
 	var called bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
 	}))
 	defer srv.Close()
 
-	err := newTestBackendClient(srv).ReportUsage(context.Background(), nil)
+	err := newTestCredentialClient(srv).ReportUsage(context.Background(), nil)
 	require.NoError(t, err)
 	assert.False(t, called, "must not make an HTTP request for an empty event list")
 
-	err = newTestBackendClient(srv).ReportUsage(context.Background(), []UsageEvent{})
+	err = newTestCredentialClient(srv).ReportUsage(context.Background(), []UsageEvent{})
 	require.NoError(t, err)
 	assert.False(t, called, "must not make an HTTP request for an empty event list")
 }
 
-func TestBackendClient_ReportUsage_NonOKStatus(t *testing.T) {
+func TestCredentialClient_ReportUsage_NonOKStatus(t *testing.T) {
 	for _, status := range []int{http.StatusBadRequest, http.StatusInternalServerError} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -423,14 +423,14 @@ func TestBackendClient_ReportUsage_NonOKStatus(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			err := newTestBackendClient(srv).ReportUsage(context.Background(), []UsageEvent{{BroadcastSessionID: "x"}})
+			err := newTestCredentialClient(srv).ReportUsage(context.Background(), []UsageEvent{{BroadcastSessionID: "x"}})
 			require.Error(t, err)
-			assert.Contains(t, err.Error(), "backend:")
+			assert.Contains(t, err.Error(), "credential:")
 		})
 	}
 }
 
-func TestBackendClient_ReportUsage_ContextCancelled(t *testing.T) {
+func TestCredentialClient_ReportUsage_ContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // pre-cancel so the HTTP dial is rejected immediately
 
@@ -439,6 +439,6 @@ func TestBackendClient_ReportUsage_ContextCancelled(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	err := newTestBackendClient(srv).ReportUsage(ctx, []UsageEvent{{BroadcastSessionID: "x"}})
+	err := newTestCredentialClient(srv).ReportUsage(ctx, []UsageEvent{{BroadcastSessionID: "x"}})
 	require.Error(t, err)
 }

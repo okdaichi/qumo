@@ -17,7 +17,7 @@ import (
 
 // newTestMeter returns a Meter backed by srv with a configurable tick interval.
 func newTestMeter(srv *httptest.Server, interval time.Duration) *Meter {
-	client := &BackendClient{
+	client := &CredentialClient{
 		baseURL:    srv.URL,
 		httpClient: srv.Client(),
 		cache:      make(map[string]cachedCredential),

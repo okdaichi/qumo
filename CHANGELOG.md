@@ -19,9 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Peer resolver interface (`internal/relay/resolver.go`):** New `PeerResolver`
   interface with `ResolvePeers(ctx, query)` method, `ResolvedPeer` and `PeerQuery`
   types. Enables pluggable peer discovery backends.
-- **BackendClient (`internal/relay/backend_client.go`):** Optional backend
+- **CredentialClient (`internal/relay/credential_client.go`):** Optional backend
   integration for publisher credential authentication and usage metering.
-  When `QUMO_BACKEND_URL` is set the relay authenticates each WebTransport
+  When `QUMO_CREDENTIAL_URL` is set the relay authenticates each WebTransport
   ANNOUNCE by subscribing to a well-known `"auth"` MoQ track on the announced
   broadcast path (5 s timeout), reading the JWT from the first frame, and
   calling `POST /v1/credentials/introspect`. Announcements with missing or
@@ -31,7 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   write. A `broadcastSession` UUID is minted per accepted announcement and
   cumulative `gateway.ingress_bytes` / `gateway.egress_bytes` totals are
   reported to `POST /v1/usage/events` every 30 s and on session close.
-  New env vars: `QUMO_BACKEND_URL` (base URL) and `QUMO_RELAY_TOKEN` (shared
+  New env vars: `QUMO_CREDENTIAL_URL` (base URL) and `QUMO_RELAY_TOKEN` (shared
   bearer token). When both vars are absent the relay behaves as before (open mode).
 - **LocalResolver (`internal/relay/local_resolver.go`):** Within-cluster peer
   discovery via Nomad native service discovery API. Configured via `LOCAL_RESOLVER_ADDR`,
@@ -47,7 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   QUIC sessions (relay peers, ALPN `moqt`) are now handled by a dedicated
   `relayPeer` path that bypasses credential auth. WebTransport sessions
   (publishers and browsers, ALPN `h3`) go through `Relay` and require credential
-  auth when `QUMO_BACKEND_URL` is set. This distinction is wired in `Server.init`
+  auth when `QUMO_CREDENTIAL_URL` is set. This distinction is wired in `Server.init`
   by setting separate handler funcs on `MOQServer.Handler` vs `WebTransportHandler`.
 - **`group_cache.fill` onFrame callback (`internal/relay/group_cache.go`):**
   The `onFrame` parameter changed from `func()` to `func(n int)` where `n` is

@@ -16,7 +16,7 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
-const backendMaxBody = 1 << 20 // 1 MB
+const credentialMaxBody = 1 << 20 // 1 MB
 
 type introspectRequest struct {
 	Token string `json:"token"`
@@ -55,14 +55,14 @@ type UsageEvent struct {
 	Ts                 string           `json:"ts"` // RFC3339
 }
 
-// BackendClient communicates with the qumo backend for credential introspection
-// and usage reporting.
+// CredentialClient validates publisher credentials and reports session usage to
+// the qumo control plane.
 //
 // Configuration is read from environment variables:
 //
-//	QUMO_BACKEND_URL  - base URL of the backend server
-//	QUMO_RELAY_TOKEN  - shared bearer token (must match the server's config)
-type BackendClient struct {
+//	QUMO_CREDENTIAL_URL  - base URL of the credential server
+//	QUMO_RELAY_TOKEN     - shared bearer token (must match the server's config)
+type CredentialClient struct {
 	baseURL    string
 	authToken  string
 	httpClient *http.Client
@@ -72,10 +72,10 @@ type BackendClient struct {
 	sfGroup singleflight.Group // deduplicates concurrent requests for the same JWT
 }
 
-// NewBackendClient creates a BackendClient from environment variables.
-// Returns nil when QUMO_BACKEND_URL is not set (credential auth and metering disabled).
-func NewBackendClient() *BackendClient {
-	baseURL := os.Getenv("QUMO_BACKEND_URL")
+// NewCredentialClient creates a CredentialClient from environment variables.
+// Returns nil when QUMO_CREDENTIAL_URL is not set (credential auth and metering disabled).
+func NewCredentialClient() *CredentialClient {
+	baseURL := os.Getenv("QUMO_CREDENTIAL_URL")
 	if baseURL == "" {
 		return nil
 	}
@@ -86,15 +86,15 @@ func NewBackendClient() *BackendClient {
 
 	authToken := os.Getenv("QUMO_RELAY_TOKEN")
 	if authToken == "" {
-		slog.Warn("QUMO_BACKEND_URL is set but QUMO_RELAY_TOKEN is empty")
+		slog.Warn("QUMO_CREDENTIAL_URL is set but QUMO_RELAY_TOKEN is empty")
 	}
 
-	slog.Info("backend client configured", "url", baseURL)
-	return &BackendClient{
+	slog.Info("credential client configured", "url", baseURL)
+	return &CredentialClient{
 		baseURL:   baseURL,
 		authToken: authToken,
 		// Uses http.DefaultTransport which trusts the system CA pool.
-		// If the backend uses a custom CA, configure it via HTTPS_PROXY or
+		// If the server uses a custom CA, configure it via HTTPS_PROXY or
 		// extend this to accept a *tls.Config when that becomes necessary.
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
@@ -103,11 +103,11 @@ func NewBackendClient() *BackendClient {
 	}
 }
 
-// Introspect validates a publisher JWT against the backend credential endpoint.
+// Introspect validates a publisher JWT against the credential introspection endpoint.
 // Returns (nil, nil) when the token is present but the server reports valid:false.
 // Results are cached until the server-supplied revalidate_after time.
 // Concurrent calls for the same JWT are coalesced into a single HTTP request.
-func (c *BackendClient) Introspect(ctx context.Context, jwt string) (*IntrospectResult, error) {
+func (c *CredentialClient) Introspect(ctx context.Context, jwt string) (*IntrospectResult, error) {
 	// Fast path: cache hit.
 	c.cacheMu.Lock()
 	if cached, ok := c.cache[jwt]; ok && time.Now().Before(cached.expires) {
@@ -136,13 +136,13 @@ func (c *BackendClient) Introspect(ctx context.Context, jwt string) (*Introspect
 
 		body, err := json.Marshal(introspectRequest{Token: jwt})
 		if err != nil {
-			return nil, fmt.Errorf("backend: marshal introspect request: %w", err)
+			return nil, fmt.Errorf("credential: marshal introspect request: %w", err)
 		}
 
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 			c.baseURL+"/v1/credentials/introspect", bytes.NewReader(body))
 		if err != nil {
-			return nil, fmt.Errorf("backend: create introspect request: %w", err)
+			return nil, fmt.Errorf("credential: create introspect request: %w", err)
 		}
 		req.Header.Set("Content-Type", "application/json")
 		if c.authToken != "" {
@@ -151,18 +151,18 @@ func (c *BackendClient) Introspect(ctx context.Context, jwt string) (*Introspect
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
-			return nil, fmt.Errorf("backend: introspect: %w", err)
+			return nil, fmt.Errorf("credential: introspect: %w", err)
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
 			_, _ = io.Copy(io.Discard, resp.Body)
-			return nil, fmt.Errorf("backend: introspect returned HTTP %d", resp.StatusCode)
+			return nil, fmt.Errorf("credential: introspect returned HTTP %d", resp.StatusCode)
 		}
 
 		var raw introspectResponse
-		if err := json.NewDecoder(io.LimitReader(resp.Body, backendMaxBody)).Decode(&raw); err != nil {
-			return nil, fmt.Errorf("backend: decode introspect response: %w", err)
+		if err := json.NewDecoder(io.LimitReader(resp.Body, credentialMaxBody)).Decode(&raw); err != nil {
+			return nil, fmt.Errorf("credential: decode introspect response: %w", err)
 		}
 
 		if !raw.Valid {
@@ -203,21 +203,21 @@ func (c *BackendClient) Introspect(ctx context.Context, jwt string) (*Introspect
 	return v.(*IntrospectResult), nil
 }
 
-// ReportUsage POSTs a batch of cumulative usage events to the backend.
-func (c *BackendClient) ReportUsage(ctx context.Context, events []UsageEvent) error {
+// ReportUsage POSTs a batch of cumulative usage events to the credential server.
+func (c *CredentialClient) ReportUsage(ctx context.Context, events []UsageEvent) error {
 	if len(events) == 0 {
 		return nil
 	}
 
 	body, err := json.Marshal(events)
 	if err != nil {
-		return fmt.Errorf("backend: marshal usage events: %w", err)
+		return fmt.Errorf("credential: marshal usage events: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		c.baseURL+"/v1/usage/events", bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("backend: create usage request: %w", err)
+		return fmt.Errorf("credential: create usage request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if c.authToken != "" {
@@ -226,13 +226,13 @@ func (c *BackendClient) ReportUsage(ctx context.Context, events []UsageEvent) er
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("backend: report usage: %w", err)
+		return fmt.Errorf("credential: report usage: %w", err)
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, resp.Body)
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("backend: usage events returned HTTP %d", resp.StatusCode)
+		return fmt.Errorf("credential: usage events returned HTTP %d", resp.StatusCode)
 	}
 	return nil
 }

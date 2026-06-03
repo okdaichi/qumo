@@ -47,14 +47,14 @@ func (s *broadcastSession) toEvent() UsageEvent {
 // usage to the backend. A single Meter is shared across all publisher sessions
 // on a relay node.
 type Meter struct {
-	client   *BackendClient
+	client   *CredentialClient
 	interval time.Duration
 
 	mu       sync.Mutex
 	sessions map[*broadcastSession]struct{}
 }
 
-func newMeter(client *BackendClient) *Meter {
+func newMeter(client *CredentialClient) *Meter {
 	return &Meter{
 		client:   client,
 		interval: 30 * time.Second,

@@ -28,11 +28,11 @@ type Server struct {
 	Config    *Config
 	TrackMux  *moqt.TrackMux
 
-	// backendClient is non-nil when QUMO_BACKEND_URL is configured.
+	// credentialClient is non-nil when QUMO_CREDENTIAL_URL is configured.
 	// It handles credential introspection and usage reporting.
-	backendClient *BackendClient
+	credentialClient *CredentialClient
 	// meter drives periodic and final usage reporting for metered sessions.
-	// It is non-nil exactly when backendClient is non-nil.
+	// It is non-nil exactly when credentialClient is non-nil.
 	meter *Meter
 
 	webtransportHandler *moqt.WebTransportHandler
@@ -83,7 +83,7 @@ func (s *Server) init() {
 		}
 		// Native QUIC connections are always relay peers (ALPN "moqt").
 		// WebTransport connections (ALPN "h3") are publisher/browser sessions
-		// that require credential auth when the backend client is configured.
+		// that require credential auth when the credential client is configured.
 		s.MOQServer.Handler = moqt.HandleFunc(s.relayPeer)
 		if s.MOQServer.TrackMux != nil {
 			slog.Warn("relay.Server: overriding MOQServer.TrackMux set by caller")
@@ -109,11 +109,11 @@ func (s *Server) init() {
 			return ctx
 		}
 
-		// Invariant: meter must be set whenever backendClient is set.
-		// A manually-constructed Server that sets backendClient without meter
+		// Invariant: meter must be set whenever credentialClient is set.
+		// A manually-constructed Server that sets credentialClient without meter
 		// would panic later when the first metered announcement is accepted.
-		if s.backendClient != nil && s.meter == nil {
-			panic("relay.Server: meter must be non-nil when backendClient is set")
+		if s.credentialClient != nil && s.meter == nil {
+			panic("relay.Server: meter must be non-nil when credentialClient is set")
 		}
 
 		if s.connected == nil {
@@ -386,9 +386,9 @@ func (s *Server) serveSession(sess *moqt.Session, requireAuth bool) {
 			return
 		}
 
-		// Authenticate publisher announcements when the backend client is configured.
+		// Authenticate publisher announcements when the credential client is configured.
 		var broadSess *broadcastSession
-		if requireAuth && s.backendClient != nil {
+		if requireAuth && s.credentialClient != nil {
 			broadSess, err = s.authenticateAnnouncement(sess.Context(), sess, ann)
 			if err != nil {
 				// MoQ has no per-announcement error response, so the publisher
@@ -448,7 +448,7 @@ func (s *Server) serveSession(sess *moqt.Session, requireAuth bool) {
 
 // authenticateAnnouncement subscribes to the "auth" track on the announced
 // broadcast path, reads the JWT from the first frame, and introspects it
-// against the backend credential endpoint.
+// against the credential introspection endpoint.
 //
 // Publisher-side contract: the publisher must serve a single-group track named
 // "auth" on the announced broadcast path. The group must contain at least one
@@ -483,7 +483,7 @@ func (s *Server) authenticateAnnouncement(ctx context.Context, sess *moqt.Sessio
 	}
 	jwt := jwtBuf.String()
 
-	result, err := s.backendClient.Introspect(authCtx, jwt)
+	result, err := s.credentialClient.Introspect(authCtx, jwt)
 	if err != nil {
 		return nil, fmt.Errorf("introspect: %w", err)
 	}
