@@ -344,7 +344,7 @@ func TestGroupRing_Fill_NotifyCount(t *testing.T) {
 			src := &fakeFrameSource{frames: frames}
 
 			var calls atomic.Int32
-			ring.fill(src, cache, func() { calls.Add(1) })
+			ring.fill(src, cache, func(int) { calls.Add(1) })
 
 			assert.Equal(t, tt.expectedCalls, calls.Load())
 		})
@@ -424,7 +424,7 @@ func TestGroupRing_Fill_ConcurrentNotifyCount(t *testing.T) {
 	}
 
 	var total atomic.Int64
-	notify := func() { total.Add(1) }
+	notify := func(int) { total.Add(1) }
 
 	var wg sync.WaitGroup
 	for i := range numGroups {

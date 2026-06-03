@@ -35,7 +35,7 @@ func TestTrackDistributor_ByteCounters(t *testing.T) {
 	nodeID := fmt.Sprintf("node-%d", time.Now().UnixNano())
 	trackID := "[" + nodeID + "]/live/cam1/video"
 
-	dist := newTrackDistributor(newTrackManager(), trackID)
+	dist := newTrackDistributor(newTrackManager(), trackID, nil)
 	defer close(dist.done)
 
 	// Verify the counters are wired to the correct Prometheus metric+label.
@@ -747,7 +747,7 @@ func TestTrackDistributor_GroupRingIntegration(t *testing.T) {
 
 // TestTrackDistributor_DoneChannel tests that the done channel is closed when ingest stops
 func TestTrackDistributor_DoneChannel(t *testing.T) {
-	dist := newTrackDistributor(newTrackManager(), "[test-node]/test/test")
+	dist := newTrackDistributor(newTrackManager(), "[test-node]/test/test", nil)
 
 	// done should not be closed initially
 	select {
@@ -825,7 +825,7 @@ func TestRelayHandler_ConcurrentSubscribe(t *testing.T) {
 	for i := range numTracks {
 		name := moqt.TrackName(fmt.Sprintf("track-%d", i))
 		trackID := "[test-node]/test/" + string(name)
-		d := newTrackDistributor(h.tracks, trackID)
+		d := newTrackDistributor(h.tracks, trackID, nil)
 		defer close(d.done)
 		h.tracks.store(trackID, d)
 	}
@@ -860,7 +860,7 @@ func TestRelayHandler_SingleflightDedup(t *testing.T) {
 	h := newTestRelayHandler(t.Context()) // nil session for test
 
 	// Pre-populate a distributor in the cache
-	existing := newTrackDistributor(newTrackManager(), "[test-node]/test/video")
+	existing := newTrackDistributor(newTrackManager(), "[test-node]/test/video", nil)
 	defer close(existing.done) // Cleanup goroutine
 	h.tracks.store("[test-node]/test/video", existing)
 
@@ -1076,7 +1076,7 @@ func TestTrackDistributor_ProcessGroup_SemaphoreLimitsConcurrency(t *testing.T) 
 		t.Cleanup(func() { MaxGroupFillsInFlight = orig })
 		MaxGroupFillsInFlight = limit
 
-		dist := newTrackDistributor(newTrackManager(), "test/sem")
+		dist := newTrackDistributor(newTrackManager(), "test/sem", nil)
 		t.Cleanup(func() { close(dist.done) }) // stop pollCacheDepth
 		require.Equal(t, limit, cap(dist.fillSem), "fillSem capacity must equal MaxGroupFillsInFlight")
 
@@ -1148,7 +1148,7 @@ func TestTrackDistributor_ProcessGroup_CtxCancelUnblocks(t *testing.T) {
 		t.Cleanup(func() { MaxGroupFillsInFlight = orig })
 		MaxGroupFillsInFlight = 1
 
-		dist := newTrackDistributor(newTrackManager(), "test/cancel")
+		dist := newTrackDistributor(newTrackManager(), "test/cancel", nil)
 		t.Cleanup(func() { close(dist.done) }) // stop pollCacheDepth
 
 		ctx, cancel := context.WithCancel(context.Background())
