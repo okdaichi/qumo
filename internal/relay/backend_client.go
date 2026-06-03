@@ -166,9 +166,8 @@ func (c *BackendClient) Introspect(ctx context.Context, jwt string) (*Introspect
 		}
 
 		if !raw.Valid {
-			// TODO: consider caching rejection with a short TTL (e.g. 30s) to
-			// prevent a burst of invalid-JWT ANNOUNCEs from amplifying backend
-			// load on rapid reconnection attempts.
+			// Negative results are not cached — see issue #90 for the tradeoffs
+			// around TTL selection, operator visibility, and backend alignment.
 			return (*IntrospectResult)(nil), nil // valid:false, not an error
 		}
 
