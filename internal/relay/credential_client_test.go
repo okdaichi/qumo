@@ -25,9 +25,18 @@ func newTestCredentialClient(srv *httptest.Server) *CredentialClient {
 	}
 }
 
-// okIntrospectResponse builds a valid introspect response body.
-func okIntrospectResponse(tokenID string, revalidateAfter time.Time) introspectResponse {
-	return introspectResponse{
+// writeValidIntrospect writes a valid credential introspection response.
+func writeValidIntrospect(w http.ResponseWriter, tokenID string, revalidateAfter time.Time) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(struct {
+		Valid           bool   `json:"valid"`
+		TokenID         string `json:"token_id"`
+		ProjectID       string `json:"project_id"`
+		TenantID        string `json:"tenant_id"`
+		APIKeyID        string `json:"api_key_id"`
+		Environment     string `json:"environment"`
+		RevalidateAfter string `json:"revalidate_after"`
+	}{
 		Valid:           true,
 		TokenID:         tokenID,
 		ProjectID:       "proj-1",
@@ -35,13 +44,7 @@ func okIntrospectResponse(tokenID string, revalidateAfter time.Time) introspectR
 		APIKeyID:        "key-1",
 		Environment:     "production",
 		RevalidateAfter: revalidateAfter.UTC().Format(time.RFC3339),
-	}
-}
-
-// writeIntrospectJSON encodes resp as JSON and writes it to w.
-func writeIntrospectJSON(w http.ResponseWriter, resp introspectResponse) {
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp)
+	})
 }
 
 // ── NewCredentialClient ──────────────────────────────────────────────────────────
@@ -99,7 +102,7 @@ func TestCredentialClient_Introspect_RequestShape(t *testing.T) {
 		gotAuth = r.Header.Get("Authorization")
 		gotCT = r.Header.Get("Content-Type")
 		gotBodyBytes, _ = io.ReadAll(r.Body)
-		writeIntrospectJSON(w, okIntrospectResponse("tok-1", revalidate))
+		writeValidIntrospect(w, "tok-1", revalidate)
 	}))
 	defer srv.Close()
 
@@ -119,7 +122,7 @@ func TestCredentialClient_Introspect_NoAuthHeaderWhenTokenEmpty(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
-		writeIntrospectJSON(w, okIntrospectResponse("tok", revalidate))
+		writeValidIntrospect(w, "tok", revalidate)
 	}))
 	defer srv.Close()
 
@@ -135,7 +138,7 @@ func TestCredentialClient_Introspect_NoAuthHeaderWhenTokenEmpty(t *testing.T) {
 func TestCredentialClient_Introspect_ValidCredential(t *testing.T) {
 	revalidate := time.Now().Add(5 * time.Minute)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		writeIntrospectJSON(w, okIntrospectResponse("tok-abc", revalidate))
+		writeValidIntrospect(w, "tok-abc", revalidate)
 	}))
 	defer srv.Close()
 
@@ -151,7 +154,8 @@ func TestCredentialClient_Introspect_ValidCredential(t *testing.T) {
 
 func TestCredentialClient_Introspect_InvalidCredential(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		writeIntrospectJSON(w, introspectResponse{Valid: false})
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"valid":false}`))
 	}))
 	defer srv.Close()
 
@@ -168,7 +172,7 @@ func TestCredentialClient_Introspect_CacheHit(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
-		writeIntrospectJSON(w, okIntrospectResponse("tok-cache", revalidate))
+		writeValidIntrospect(w, "tok-cache", revalidate)
 	}))
 	defer srv.Close()
 
@@ -193,7 +197,7 @@ func TestCredentialClient_Introspect_DifferentJWTsAreCachedIndependently(t *test
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := calls.Add(1)
-		writeIntrospectJSON(w, okIntrospectResponse("tok-"+string(rune('A'+n-1)), revalidate))
+		writeValidIntrospect(w, "tok-"+string(rune('A'+n-1)), revalidate)
 	}))
 	defer srv.Close()
 
@@ -219,7 +223,7 @@ func TestCredentialClient_Introspect_CacheExpiry(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
-		writeIntrospectJSON(w, okIntrospectResponse("tok-exp", revalidate))
+		writeValidIntrospect(w, "tok-exp", revalidate)
 	}))
 	defer srv.Close()
 
@@ -245,7 +249,7 @@ func TestCredentialClient_Introspect_CacheEviction(t *testing.T) {
 	revalidate := time.Now().Add(10 * time.Minute)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		writeIntrospectJSON(w, okIntrospectResponse("tok-new", revalidate))
+		writeValidIntrospect(w, "tok-new", revalidate)
 	}))
 	defer srv.Close()
 
@@ -283,7 +287,7 @@ func TestCredentialClient_Introspect_SingleflightCoalescesConcurrentRequests(t *
 		calls.Add(1)
 		// Hold the response long enough for all goroutines to pile up in singleflight.
 		time.Sleep(50 * time.Millisecond)
-		writeIntrospectJSON(w, okIntrospectResponse("tok-sf", revalidate))
+		writeValidIntrospect(w, "tok-sf", revalidate)
 	}))
 	defer srv.Close()
 

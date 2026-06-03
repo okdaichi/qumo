@@ -18,20 +18,6 @@ import (
 
 const credentialMaxBody = 1 << 20 // 1 MB
 
-type introspectRequest struct {
-	Token string `json:"token"`
-}
-
-type introspectResponse struct {
-	Valid           bool   `json:"valid"`
-	TokenID         string `json:"token_id"`
-	ProjectID       string `json:"project_id"`
-	TenantID        string `json:"tenant_id"`
-	APIKeyID        string `json:"api_key_id"`
-	Environment     string `json:"environment"`
-	RevalidateAfter string `json:"revalidate_after"`
-}
-
 // IntrospectResult holds the validated details from a successful credential introspection.
 type IntrospectResult struct {
 	TokenID     string
@@ -134,7 +120,7 @@ func (c *CredentialClient) Introspect(ctx context.Context, jwt string) (*Introsp
 		}
 		c.cacheMu.Unlock()
 
-		body, err := json.Marshal(introspectRequest{Token: jwt})
+		body, err := json.Marshal(map[string]string{"token": jwt})
 		if err != nil {
 			return nil, fmt.Errorf("credential: marshal introspect request: %w", err)
 		}
@@ -160,7 +146,15 @@ func (c *CredentialClient) Introspect(ctx context.Context, jwt string) (*Introsp
 			return nil, fmt.Errorf("credential: introspect returned HTTP %d", resp.StatusCode)
 		}
 
-		var raw introspectResponse
+		var raw struct {
+			Valid           bool   `json:"valid"`
+			TokenID         string `json:"token_id"`
+			ProjectID       string `json:"project_id"`
+			TenantID        string `json:"tenant_id"`
+			APIKeyID        string `json:"api_key_id"`
+			Environment     string `json:"environment"`
+			RevalidateAfter string `json:"revalidate_after"`
+		}
 		if err := json.NewDecoder(io.LimitReader(resp.Body, credentialMaxBody)).Decode(&raw); err != nil {
 			return nil, fmt.Errorf("credential: decode introspect response: %w", err)
 		}
