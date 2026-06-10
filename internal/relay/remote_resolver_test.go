@@ -136,14 +136,14 @@ func TestRemoteResolver_ResolvePeers(t *testing.T) {
 		assert.Equal(t, "Bearer secret-token", gotAuth)
 	})
 
-	t.Run("filters by role", func(t *testing.T) {
+	t.Run("does not send role query param", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			assert.Equal(t, "hub", r.URL.Query().Get("role"))
+			assert.False(t, r.URL.Query().Has("role"), "role must not be sent to the hub-only registry")
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(remotePeerResponse{
 				Peers: []remotePeer{
 					{ID: "hub-1", Addr: "10.0.0.1:4433", Role: "hub"},
-					{ID: "edge-1", Addr: "10.0.0.2:4433", Role: "edge"},
+					{ID: "hub-2", Addr: "10.0.0.2:4433", Role: "hub"},
 				},
 			})
 		}))
@@ -157,9 +157,39 @@ func TestRemoteResolver_ResolvePeers(t *testing.T) {
 
 		peers, err := r.ResolvePeers(context.Background(), PeerQuery{Role: "hub"})
 		require.NoError(t, err)
-		// Only hub-1 should remain after client-side filtering
-		require.Len(t, peers, 1)
+		require.Len(t, peers, 2)
 		assert.Equal(t, "hub-1", peers[0].ID)
+		assert.Equal(t, "hub-2", peers[1].ID)
+	})
+
+	t.Run("does not re-filter when response omits role (hub-only registry)", func(t *testing.T) {
+		// Simulates the control plane collapsing /peers to a hub-only registry
+		// and dropping the per-peer role field (foalk-inc/qumo-deploy#535). The
+		// resolver must trust the server's contract and return every peer rather
+		// than silently filtering them all out.
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(remotePeerResponse{
+				Peers: []remotePeer{
+					{ID: "hub-1", Addr: "10.0.0.1:4433", Region: "us-east"},
+					{ID: "hub-2", Addr: "10.0.0.2:4433", Region: "europe"},
+				},
+			})
+		}))
+		defer srv.Close()
+
+		r := &RemoteResolver{
+			url:        srv.URL,
+			interval:   15 * time.Second,
+			httpClient: srv.Client(),
+		}
+
+		peers, err := r.ResolvePeers(context.Background(), PeerQuery{Role: "hub"})
+		require.NoError(t, err)
+		require.Len(t, peers, 2)
+		// Missing per-peer role falls back to the queried role.
+		assert.Equal(t, "hub", peers[0].Role)
+		assert.Equal(t, "hub", peers[1].Role)
 	})
 
 	t.Run("sends limit query param", func(t *testing.T) {

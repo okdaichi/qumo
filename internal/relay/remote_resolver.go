@@ -95,9 +95,16 @@ func (r *RemoteResolver) Interval() time.Duration {
 	return r.interval
 }
 
-// ResolvePeers queries the remote traffic resolver's /peers endpoint and
-// filters results by the requested role. When query.Role is empty, all peers
-// are returned.
+// ResolvePeers queries the remote traffic resolver's /peers endpoint.
+//
+// The remote resolver is a hub-only registry: it is the cross-cluster hub
+// discovery path, and every peer it returns is a hub. query.Role is therefore
+// neither sent to the server (it is a hub-only registry and ignores it) nor
+// used to re-filter the response. The control plane is collapsing /peers to a
+// hub-only registry and dropping the per-peer role field (foalk-inc/qumo-deploy#535);
+// re-filtering on it would silently drop every peer once role decodes as "".
+// Instead we trust the server's hub-only contract and treat a missing per-peer
+// role as the queried role.
 func (r *RemoteResolver) ResolvePeers(ctx context.Context, query PeerQuery) ([]ResolvedPeer, error) {
 	u, err := url.Parse(r.url + "/peers")
 	if err != nil {
@@ -105,9 +112,6 @@ func (r *RemoteResolver) ResolvePeers(ctx context.Context, query PeerQuery) ([]R
 	}
 
 	qs := u.Query()
-	if query.Role != "" {
-		qs.Set("role", query.Role)
-	}
 	if query.Limit > 0 {
 		qs.Set("limit", strconv.Itoa(query.Limit))
 	}
@@ -138,17 +142,20 @@ func (r *RemoteResolver) ResolvePeers(ctx context.Context, query PeerQuery) ([]R
 		return nil, fmt.Errorf("remote: decode response: %w", err)
 	}
 
-	// Convert to ResolvedPeer and filter by role.
+	// Convert to ResolvedPeer. Do not re-filter on p.Role: the remote resolver
+	// is a hub-only registry and may omit the role field (see method doc). When
+	// it does, fall back to the queried role so downstream metadata stays set.
 	results := make([]ResolvedPeer, 0, len(wrapper.Peers))
 	for _, p := range wrapper.Peers {
-		if query.Role != "" && p.Role != query.Role {
-			continue
+		role := p.Role
+		if role == "" {
+			role = query.Role
 		}
 		results = append(results, ResolvedPeer{
 			ID:      p.ID,
 			Address: p.Addr,
 			Region:  p.Region,
-			Role:    p.Role,
+			Role:    role,
 		})
 	}
 
