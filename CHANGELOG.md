@@ -59,6 +59,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`internal/relay/cmd.go`:** Replaced `BOOTSTRAP_URLS`/`BOOTSTRAP_INTERVAL` env
   vars with `LOCAL_RESOLVER_*` and `REMOTE_*` resolver configuration.
 - **`main.go`:** Removed `qumo bootstrap` command.
+- **RemoteResolver `/peers` role handling (`internal/relay/remote_resolver.go`):**
+  Stopped sending `?role=hub` and dropped the client-side re-filter on the response
+  `role` field, ahead of the control-plane registry going hub-only
+  (foalk-inc/qumo-deploy#535). A peer's role now falls back to the queried role only
+  when the response omits it. Prevents silently dropping every hub once the registry
+  stops returning `role`. (#93)
 
 ###
 
