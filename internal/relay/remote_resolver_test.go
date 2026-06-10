@@ -69,6 +69,20 @@ func TestRemoteResolver_Interval(t *testing.T) {
 	assert.Equal(t, 10*time.Second, r.Interval())
 }
 
+// newHubResolver returns a RemoteResolver wired to a test server that always
+// responds with peers, regardless of the request. Use it for cases that only
+// exercise response handling; tests that assert request shape build their own
+// server.
+func newHubResolver(t *testing.T, peers ...remotePeer) *RemoteResolver {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(remotePeerResponse{Peers: peers})
+	}))
+	t.Cleanup(srv.Close)
+	return &RemoteResolver{url: srv.URL, interval: 15 * time.Second, httpClient: srv.Client()}
+}
+
 func TestRemoteResolver_ResolvePeers(t *testing.T) {
 	t.Run("returns peers from remote API", func(t *testing.T) {
 		var gotAuthHeader string
@@ -164,68 +178,44 @@ func TestRemoteResolver_ResolvePeers(t *testing.T) {
 	})
 
 	t.Run("does not re-filter when response omits role (hub-only registry)", func(t *testing.T) {
-		// Simulates the control plane collapsing /peers to a hub-only registry
-		// and dropping the per-peer role field (foalk-inc/qumo-deploy#535). The
-		// resolver must trust the server's contract and return every peer rather
-		// than silently filtering them all out.
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(remotePeerResponse{
-				Peers: []remotePeer{
-					{ID: "hub-1", Addr: "10.0.0.1:4433", Region: "us-east"},
-					{ID: "hub-2", Addr: "10.0.0.2:4433", Region: "europe"},
-				},
-			})
-		}))
-		defer srv.Close()
-
-		r := &RemoteResolver{
-			url:        srv.URL,
-			interval:   15 * time.Second,
-			httpClient: srv.Client(),
-		}
+		// The realistic hub-only registry (foalk-inc/qumo-deploy#535) drops the
+		// per-peer role field entirely. Every peer must still be returned, tagged
+		// with the queried role — not silently filtered out.
+		r := newHubResolver(t,
+			remotePeer{ID: "hub-1", Addr: "10.0.0.1:4433", Region: "us-east"},
+			remotePeer{ID: "hub-2", Addr: "10.0.0.2:4433", Region: "europe"},
+		)
 
 		peers, err := r.ResolvePeers(context.Background(), PeerQuery{Role: "hub"})
 		require.NoError(t, err)
 		require.Len(t, peers, 2)
-		// Missing per-peer role falls back to the queried role.
 		assert.Equal(t, "hub", peers[0].Role)
 		assert.Equal(t, "hub", peers[1].Role)
 	})
 
-	t.Run("returns every peer regardless of role, never filtering", func(t *testing.T) {
-		// The pre-#93 resolver re-filtered on p.Role and would have dropped any
-		// peer whose role != the queried role. Under the hub-only contract we
-		// trust the server: every returned peer is kept, whatever its role —
-		// and explicit roles are preserved while a blank role falls back to the
-		// queried role. This is the exact regression #93 guards against.
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(remotePeerResponse{
-				Peers: []remotePeer{
-					{ID: "hub-1", Addr: "10.0.0.1:4433", Role: "hub"},
-					{ID: "edge-1", Addr: "10.0.0.2:4433", Role: "edge"},
-					{ID: "blank-1", Addr: "10.0.0.3:4433"},
-				},
-			})
-		}))
-		defer srv.Close()
-
-		r := &RemoteResolver{
-			url:        srv.URL,
-			interval:   15 * time.Second,
-			httpClient: srv.Client(),
-		}
+	t.Run("returns every peer in order regardless of role, never filtering", func(t *testing.T) {
+		// Pre-#93 the resolver re-filtered on p.Role and would drop any peer whose
+		// role != the query. Under the hub-only contract we trust the server: all
+		// peers come back, in order, with identity intact — explicit roles kept,
+		// blank roles defaulted to the queried role. Feeding an "edge" proves the
+		// filter is gone (a real hub-only registry would never send one). The
+		// whole-slice assertion also pins field mapping (addr->Address) and order.
+		r := newHubResolver(t,
+			remotePeer{ID: "hub-1", Addr: "10.0.0.1:4433", Region: "us-east", Role: "hub"},
+			remotePeer{ID: "edge-1", Addr: "10.0.0.2:4433", Region: "europe", Role: "edge"},
+			remotePeer{ID: "blank-1", Addr: "10.0.0.3:4433", Region: "asia"},
+		)
 
 		peers, err := r.ResolvePeers(context.Background(), PeerQuery{Role: "hub"})
 		require.NoError(t, err)
-		require.Len(t, peers, 3, "no peer may be filtered out by role")
-		assert.Equal(t, "hub", peers[0].Role, "explicit role preserved")
-		assert.Equal(t, "edge", peers[1].Role, "non-hub role preserved, not dropped")
-		assert.Equal(t, "hub", peers[2].Role, "blank role falls back to queried role")
+		assert.Equal(t, []ResolvedPeer{
+			{ID: "hub-1", Address: "10.0.0.1:4433", Region: "us-east", Role: "hub"},
+			{ID: "edge-1", Address: "10.0.0.2:4433", Region: "europe", Role: "edge"},
+			{ID: "blank-1", Address: "10.0.0.3:4433", Region: "asia", Role: "hub"},
+		}, peers)
 	})
 
-	t.Run("role fallback mapping", func(t *testing.T) {
+	t.Run("role fallback uses the queried role only when peer role is blank", func(t *testing.T) {
 		cases := []struct {
 			name      string
 			queryRole string
@@ -239,19 +229,7 @@ func TestRemoteResolver_ResolvePeers(t *testing.T) {
 		}
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {
-				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-					w.Header().Set("Content-Type", "application/json")
-					json.NewEncoder(w).Encode(remotePeerResponse{
-						Peers: []remotePeer{{ID: "p1", Addr: "10.0.0.1:4433", Role: tc.peerRole}},
-					})
-				}))
-				defer srv.Close()
-
-				r := &RemoteResolver{
-					url:        srv.URL,
-					interval:   15 * time.Second,
-					httpClient: srv.Client(),
-				}
+				r := newHubResolver(t, remotePeer{ID: "p1", Addr: "10.0.0.1:4433", Role: tc.peerRole})
 
 				peers, err := r.ResolvePeers(context.Background(), PeerQuery{Role: tc.queryRole})
 				require.NoError(t, err)
@@ -261,23 +239,29 @@ func TestRemoteResolver_ResolvePeers(t *testing.T) {
 		}
 	})
 
-	t.Run("returns empty non-nil slice for empty peer list", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(remotePeerResponse{Peers: []remotePeer{}})
-		}))
-		defer srv.Close()
+	t.Run("returns empty non-nil slice when there are no peers", func(t *testing.T) {
+		// Empty array, explicit null, and an absent field must all yield a usable
+		// (non-nil) slice so callers can range over the result unconditionally.
+		for _, body := range []string{`{"peers":[]}`, `{"peers":null}`, `{}`} {
+			t.Run(body, func(t *testing.T) {
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(body))
+				}))
+				defer srv.Close()
 
-		r := &RemoteResolver{
-			url:        srv.URL,
-			interval:   15 * time.Second,
-			httpClient: srv.Client(),
+				r := &RemoteResolver{
+					url:        srv.URL,
+					interval:   15 * time.Second,
+					httpClient: srv.Client(),
+				}
+
+				peers, err := r.ResolvePeers(context.Background(), PeerQuery{Role: "hub"})
+				require.NoError(t, err)
+				require.NotNil(t, peers, "callers range over the result; it must never be nil")
+				assert.Empty(t, peers)
+			})
 		}
-
-		peers, err := r.ResolvePeers(context.Background(), PeerQuery{Role: "hub"})
-		require.NoError(t, err)
-		require.NotNil(t, peers, "callers iterate the result; it must never be nil")
-		assert.Empty(t, peers)
 	})
 
 	t.Run("returns error on malformed JSON", func(t *testing.T) {
@@ -298,7 +282,7 @@ func TestRemoteResolver_ResolvePeers(t *testing.T) {
 		assert.Contains(t, err.Error(), "decode")
 	})
 
-	t.Run("sends limit query param", func(t *testing.T) {
+	t.Run("sends limit query param and keeps the first N in order", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			assert.Equal(t, "3", r.URL.Query().Get("limit"))
 			w.Header().Set("Content-Type", "application/json")
@@ -322,6 +306,36 @@ func TestRemoteResolver_ResolvePeers(t *testing.T) {
 		peers, err := r.ResolvePeers(context.Background(), PeerQuery{Limit: 3})
 		require.NoError(t, err)
 		require.Len(t, peers, 3)
+		assert.Equal(t, []string{"hub-1", "hub-2", "hub-3"},
+			[]string{peers[0].ID, peers[1].ID, peers[2].ID})
+	})
+
+	t.Run("applies limit client-side to the full set, after role processing", func(t *testing.T) {
+		// The helper server ignores limit and returns all three peers; the
+		// resolver must still cap the result, and the cap applies to the whole
+		// set (not a role-filtered subset) in response order.
+		r := newHubResolver(t,
+			remotePeer{ID: "hub-1", Addr: "10.0.0.1:4433", Role: "hub"},
+			remotePeer{ID: "edge-1", Addr: "10.0.0.2:4433", Role: "edge"},
+			remotePeer{ID: "blank-1", Addr: "10.0.0.3:4433"},
+		)
+
+		peers, err := r.ResolvePeers(context.Background(), PeerQuery{Role: "hub", Limit: 2})
+		require.NoError(t, err)
+		require.Len(t, peers, 2)
+		assert.Equal(t, "hub-1", peers[0].ID)
+		assert.Equal(t, "edge-1", peers[1].ID)
+	})
+
+	t.Run("limit larger than the result returns all peers", func(t *testing.T) {
+		r := newHubResolver(t,
+			remotePeer{ID: "hub-1", Addr: "10.0.0.1:4433", Role: "hub"},
+			remotePeer{ID: "hub-2", Addr: "10.0.0.2:4433", Role: "hub"},
+		)
+
+		peers, err := r.ResolvePeers(context.Background(), PeerQuery{Role: "hub", Limit: 10})
+		require.NoError(t, err)
+		require.Len(t, peers, 2)
 	})
 
 	t.Run("returns error on non-200", func(t *testing.T) {
