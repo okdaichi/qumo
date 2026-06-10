@@ -139,6 +139,7 @@ func TestRemoteResolver_ResolvePeers(t *testing.T) {
 	t.Run("does not send role query param", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			assert.False(t, r.URL.Query().Has("role"), "role must not be sent to the hub-only registry")
+			assert.False(t, r.URL.Query().Has("limit"), "limit must not be sent when unset")
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(remotePeerResponse{
 				Peers: []remotePeer{
@@ -190,6 +191,111 @@ func TestRemoteResolver_ResolvePeers(t *testing.T) {
 		// Missing per-peer role falls back to the queried role.
 		assert.Equal(t, "hub", peers[0].Role)
 		assert.Equal(t, "hub", peers[1].Role)
+	})
+
+	t.Run("returns every peer regardless of role, never filtering", func(t *testing.T) {
+		// The pre-#93 resolver re-filtered on p.Role and would have dropped any
+		// peer whose role != the queried role. Under the hub-only contract we
+		// trust the server: every returned peer is kept, whatever its role —
+		// and explicit roles are preserved while a blank role falls back to the
+		// queried role. This is the exact regression #93 guards against.
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(remotePeerResponse{
+				Peers: []remotePeer{
+					{ID: "hub-1", Addr: "10.0.0.1:4433", Role: "hub"},
+					{ID: "edge-1", Addr: "10.0.0.2:4433", Role: "edge"},
+					{ID: "blank-1", Addr: "10.0.0.3:4433"},
+				},
+			})
+		}))
+		defer srv.Close()
+
+		r := &RemoteResolver{
+			url:        srv.URL,
+			interval:   15 * time.Second,
+			httpClient: srv.Client(),
+		}
+
+		peers, err := r.ResolvePeers(context.Background(), PeerQuery{Role: "hub"})
+		require.NoError(t, err)
+		require.Len(t, peers, 3, "no peer may be filtered out by role")
+		assert.Equal(t, "hub", peers[0].Role, "explicit role preserved")
+		assert.Equal(t, "edge", peers[1].Role, "non-hub role preserved, not dropped")
+		assert.Equal(t, "hub", peers[2].Role, "blank role falls back to queried role")
+	})
+
+	t.Run("role fallback mapping", func(t *testing.T) {
+		cases := []struct {
+			name      string
+			queryRole string
+			peerRole  string
+			wantRole  string
+		}{
+			{"explicit role preserved", "hub", "hub", "hub"},
+			{"explicit non-hub role preserved", "hub", "edge", "edge"},
+			{"blank peer role falls back to query role", "hub", "", "hub"},
+			{"blank peer role and blank query role stays blank", "", "", ""},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					json.NewEncoder(w).Encode(remotePeerResponse{
+						Peers: []remotePeer{{ID: "p1", Addr: "10.0.0.1:4433", Role: tc.peerRole}},
+					})
+				}))
+				defer srv.Close()
+
+				r := &RemoteResolver{
+					url:        srv.URL,
+					interval:   15 * time.Second,
+					httpClient: srv.Client(),
+				}
+
+				peers, err := r.ResolvePeers(context.Background(), PeerQuery{Role: tc.queryRole})
+				require.NoError(t, err)
+				require.Len(t, peers, 1)
+				assert.Equal(t, tc.wantRole, peers[0].Role)
+			})
+		}
+	})
+
+	t.Run("returns empty non-nil slice for empty peer list", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(remotePeerResponse{Peers: []remotePeer{}})
+		}))
+		defer srv.Close()
+
+		r := &RemoteResolver{
+			url:        srv.URL,
+			interval:   15 * time.Second,
+			httpClient: srv.Client(),
+		}
+
+		peers, err := r.ResolvePeers(context.Background(), PeerQuery{Role: "hub"})
+		require.NoError(t, err)
+		require.NotNil(t, peers, "callers iterate the result; it must never be nil")
+		assert.Empty(t, peers)
+	})
+
+	t.Run("returns error on malformed JSON", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"peers": [ this is not json`))
+		}))
+		defer srv.Close()
+
+		r := &RemoteResolver{
+			url:        srv.URL,
+			interval:   15 * time.Second,
+			httpClient: srv.Client(),
+		}
+
+		_, err := r.ResolvePeers(context.Background(), PeerQuery{})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "decode")
 	})
 
 	t.Run("sends limit query param", func(t *testing.T) {
