@@ -1,4 +1,8 @@
-# 3-Region Topology Test Environment
+# 3-Region Topology Test Environment — static PEERS (no discovery)
+#
+# Peers are wired by hand via the PEERS env var; this exercises the static-config
+# dial path, NOT peer discovery. For Nomad service discovery use
+# docker-compose.nomad.yml instead.
 #
 # Topology (static PEERS — no bootstrap server):
 #   asia     : relay-hub-asia,     relay-edge-asia
@@ -9,7 +13,7 @@
 # Edge topology: edges connect to their local hub via static PEERS
 #
 # Usage:
-#   docker compose -f docker/docker-compose.topology.yml up --build
+#   docker compose -f docker/docker-compose.static.yml up --build
 #
 # Health endpoints (host ports):
 #   http://localhost:9001   relay-hub-asia      (/health, /status, /metrics)

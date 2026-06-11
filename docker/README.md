@@ -7,7 +7,7 @@ Files
 - `Dockerfile` — image build used by CI (GHCR)
 - `docker-compose.yml` — single relay (local build)
 - `docker-compose.external.yml` — single relay (pre-built image)
-- `docker-compose.topology.yml` — **full 3-region topology** (hub + edge per region), wired with **static `PEERS`** (no discovery)
+- `docker-compose.static.yml` — **full 3-region topology** (hub + edge per region), wired with **static `PEERS`** (no discovery)
 - `docker-compose.nomad.yml` + `nomad/` — **real single-region Nomad cluster** that exercises the `LocalResolver` (Nomad service discovery) path; see [`nomad/README.md`](nomad/README.md)
 
 Quick start (single relay)
@@ -27,13 +27,13 @@ Quick start (3-region topology)
 
 ```bash
 # Start the full topology: 3 hubs + 3 edges
-docker compose -f docker/docker-compose.topology.yml up --build
+docker compose -f docker/docker-compose.static.yml up --build
 
 # Check a relay health
 curl http://localhost:9001/health
 
 # Stop
-docker compose -f docker/docker-compose.topology.yml down
+docker compose -f docker/docker-compose.static.yml down
 ```
 
 Run pre-built image (GHCR)

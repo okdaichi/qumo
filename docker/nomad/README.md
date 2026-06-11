@@ -2,7 +2,7 @@
 
 A real single-region Nomad cluster that exercises the **`LocalResolver`** path —
 Nomad native service discovery — which the static-`PEERS` topology compose
-(`docker-compose.topology.yml`) never touches.
+(`docker-compose.static.yml`) never touches.
 
 ## What this verifies (and what it doesn't)
 

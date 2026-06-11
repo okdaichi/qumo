@@ -49,6 +49,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Renamed `docker-compose.topology.yml` → `docker-compose.static.yml`:** clarifies
+  that it wires peers via static `PEERS` (no discovery), distinct from the new
+  `docker-compose.nomad.yml` which exercises Nomad service discovery.
 - **Publisher vs. peer-relay session split (`internal/relay/server.go`):** Native
   QUIC sessions (relay peers, ALPN `moqt`) are now handled by a dedicated
   `relayPeer` path that bypasses credential auth. WebTransport sessions
@@ -160,7 +163,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cross-region mesh validation. Exits with code 1 on frame loss or hash mismatch.
 - **`internal/smoketest` package:** Smoke test implementation moved from `cmd/smoketest`
   to `internal/smoketest` and invoked via the Mage build system.
-- **`docker-compose.topology.yml` port protocols:** UDP and TCP protocols are now
+- **`docker-compose.static.yml` port protocols:** UDP and TCP protocols are now
   explicitly declared for all relay service ports.
 
 ### Changed
