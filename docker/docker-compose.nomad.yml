@@ -1,0 +1,71 @@
+# Real single-region Nomad cluster for manually verifying the LocalResolver
+# (Nomad native service discovery) path. This is a SIMULATION, not an automated
+# test — bring it up and verify by hand per docker/nomad/README.md.
+#
+# Prerequisite — build the relay image into the host Docker first, so Nomad's
+# docker driver can run it:
+#   docker build -f docker/Dockerfile -t qumo:local .
+#
+# Then:
+#   docker compose -f docker/docker-compose.nomad.yml up -d
+#   # Nomad UI: http://localhost:4646/ui/jobs
+#
+# Tear down (also stops the relay containers Nomad started):
+#   docker compose -f docker/docker-compose.nomad.yml down
+#   nomad job stop -purge qumo-cluster   # if any relay containers linger
+
+name: qumo-nomad-sim
+
+services:
+  nomad:
+    image: hashicorp/nomad:1.9.3
+    container_name: qumo-nomad
+    # Combined dev server+client. Bind to all interfaces so the relays (and the
+    # host) can reach the API; advertise the qumo-net interface.
+    entrypoint: ["nomad"]
+    command:
+      - "agent"
+      - "-dev"
+      - "-bind=0.0.0.0"
+      - "-network-interface=eth0"
+      - "-config=/etc/nomad/agent.hcl"
+    privileged: true # the docker driver launches sibling containers via the socket
+    ports:
+      - "4646:4646" # Nomad HTTP API + Web UI
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./nomad/agent.hcl:/etc/nomad/agent.hcl:ro
+      - ./nomad/qumo-cluster.nomad.hcl:/jobs/qumo-cluster.nomad.hcl:ro
+    networks:
+      - qumo-net
+    healthcheck:
+      test: ["CMD", "nomad", "node", "status"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 8s
+
+  # One-shot: submit the relay job once Nomad is ready, then exit.
+  job-runner:
+    image: hashicorp/nomad:1.9.3
+    container_name: qumo-nomad-job
+    depends_on:
+      nomad:
+        condition: service_healthy
+    environment:
+      NOMAD_ADDR: "http://nomad:4646"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - "nomad job run /jobs/qumo-cluster.nomad.hcl && echo 'qumo-cluster submitted'"
+    volumes:
+      - ./nomad/qumo-cluster.nomad.hcl:/jobs/qumo-cluster.nomad.hcl:ro
+    networks:
+      - qumo-net
+    restart: "no"
+
+# Explicit, unprefixed name so the Nomad job's `network_mode = "qumo-net"` and the
+# relay containers attach to the same network as the Nomad agent.
+networks:
+  qumo-net:
+    name: qumo-net
+    driver: bridge

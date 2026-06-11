@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Nomad LocalResolver simulation (`docker/docker-compose.nomad.yml`, `docker/nomad/`):**
+  A real single-region Nomad dev cluster (2 hubs + 2 edges) that exercises the
+  `LocalResolver` (Nomad native service discovery) path — edges discover local
+  hubs via Nomad and connect. Verifiable via the `qumo_relay_peers_connected`
+  metric. Manual simulation only; no automated integration tests. Cross-region
+  hub discovery (the `RemoteResolver`/`/peers` path) is explicitly out of scope.
 - **Peer resolver interface (`internal/relay/resolver.go`):** New `PeerResolver`
   interface with `ResolvePeers(ctx, query)` method, `ResolvedPeer` and `PeerQuery`
   types. Enables pluggable peer discovery backends.
@@ -43,6 +49,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Renamed `docker-compose.topology.yml` → `docker-compose.static.yml`:** clarifies
+  that it wires peers via static `PEERS` (no discovery), distinct from the new
+  `docker-compose.nomad.yml` which exercises Nomad service discovery.
 - **Publisher vs. peer-relay session split (`internal/relay/server.go`):** Native
   QUIC sessions (relay peers, ALPN `moqt`) are now handled by a dedicated
   `relayPeer` path that bypasses credential auth. WebTransport sessions
@@ -154,7 +163,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cross-region mesh validation. Exits with code 1 on frame loss or hash mismatch.
 - **`internal/smoketest` package:** Smoke test implementation moved from `cmd/smoketest`
   to `internal/smoketest` and invoked via the Mage build system.
-- **`docker-compose.topology.yml` port protocols:** UDP and TCP protocols are now
+- **`docker-compose.static.yml` port protocols:** UDP and TCP protocols are now
   explicitly declared for all relay service ports.
 
 ### Changed

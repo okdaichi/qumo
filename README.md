@@ -130,7 +130,9 @@ qumo/
 │   ├── Dockerfile              # Multi-stage container build
 │   ├── docker-compose.yml               # Single relay (local build)
 │   ├── docker-compose.external.yml      # Single relay (GHCR prebuilt)
-│   ├── docker-compose.topology.yml      # Full 3-region topology (hub + edge)
+│   ├── docker-compose.static.yml        # 3-region topology, static PEERS (no discovery)
+│   ├── docker-compose.nomad.yml         # Single-region Nomad cluster (LocalResolver)
+│   ├── nomad/                           # Nomad agent config + job spec
 │   └── README.md               # Docker usage guide
 │
 ├── internal/                   # Core implementation
