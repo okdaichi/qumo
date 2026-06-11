@@ -7,7 +7,8 @@ Files
 - `Dockerfile` — image build used by CI (GHCR)
 - `docker-compose.yml` — single relay (local build)
 - `docker-compose.external.yml` — single relay (pre-built image)
-- `docker-compose.topology.yml` — **full 3-region topology** (hub + edge per region)
+- `docker-compose.topology.yml` — **full 3-region topology** (hub + edge per region), wired with **static `PEERS`** (no discovery)
+- `docker-compose.nomad.yml` + `nomad/` — **real single-region Nomad cluster** that exercises the `LocalResolver` (Nomad service discovery) path; see [`nomad/README.md`](nomad/README.md)
 
 Quick start (single relay)
 

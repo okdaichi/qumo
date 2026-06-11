@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Nomad LocalResolver simulation (`docker/docker-compose.nomad.yml`, `docker/nomad/`):**
+  A real single-region Nomad dev cluster (2 hubs + 2 edges) that exercises the
+  `LocalResolver` (Nomad native service discovery) path — edges discover local
+  hubs via Nomad and connect. Verifiable via the `qumo_relay_peers_connected`
+  metric. Manual simulation only; no automated integration tests. Cross-region
+  hub discovery (the `RemoteResolver`/`/peers` path) is explicitly out of scope.
 - **Peer resolver interface (`internal/relay/resolver.go`):** New `PeerResolver`
   interface with `ResolvePeers(ctx, query)` method, `ResolvedPeer` and `PeerQuery`
   types. Enables pluggable peer discovery backends.
