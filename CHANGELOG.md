@@ -40,6 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   discovery via an external traffic resolver API (e.g. qumo-enterprise).
   Configured via `REMOTE_RESOLVER_URL`, `REMOTE_AUTH_TOKEN`,
   `REMOTE_RESOLVE_INTERVAL`, and `REMOTE_TLS_ENABLED`.
+- **In-process discovery integration test (`internal/relay`, build tag `integration`):**
+  Stands up a real edge + hub relay and a fake Nomad service catalog, asserting the
+  edge discovers the hub via `LocalResolver` and completes a real QUIC/MOQT handshake.
+  Kept out of the default `go test ./...` unit run; gated by a dedicated `Integration`
+  CI job (`go test -tags=integration`).
 
 ### Changed
 
