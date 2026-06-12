@@ -7,12 +7,21 @@ package relay
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
+	"math/big"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
@@ -43,7 +52,8 @@ func freeUDPPort(t *testing.T) int {
 // docker/nomad simulation and would catch regressions in the discover→dial loop
 // (e.g. the #93 class, where an edge filtered out all hubs).
 func TestPeerDiscovery_EdgeConnectsToHubViaLocalResolver(t *testing.T) {
-	cert, err := generateSelfSignedCert()
+	certFile, keyFile := createTempCert(t)
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
 	require.NoError(t, err)
 
 	quicCfg := &quic.Config{
@@ -138,4 +148,44 @@ func TestPeerDiscovery_EdgeConnectsToHubViaLocalResolver(t *testing.T) {
 
 	require.GreaterOrEqual(t, testutil.ToFloat64(metricPeersConnected), 1.0,
 		"peers_connected should reflect the maintained edge→hub connection")
+}
+
+// createTempCert generates an ephemeral self-signed cert and returns the file paths.
+func createTempCert(t *testing.T) (string, string) {
+	t.Helper()
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	require.NoError(t, err)
+
+	tmpl := &x509.Certificate{
+		SerialNumber: serial,
+		Subject:      pkix.Name{CommonName: "localhost"},
+		NotBefore:    time.Now().Add(-time.Minute),
+		NotAfter:     time.Now().Add(time.Hour),
+		DNSNames:     []string{"localhost"},
+		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")},
+	}
+
+	derBytes, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	require.NoError(t, err)
+
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
+
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	require.NoError(t, err)
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+
+	certFile := filepath.Join(t.TempDir(), "server.crt")
+	keyFile := filepath.Join(t.TempDir(), "server.key")
+
+	err = os.WriteFile(certFile, certPEM, 0600)
+	require.NoError(t, err)
+
+	err = os.WriteFile(keyFile, keyPEM, 0600)
+	require.NoError(t, err)
+
+	return certFile, keyFile
 }

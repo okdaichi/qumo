@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 
 - **TLS configuration hardened (`internal/relay`):** Removed `InsecureSkipVerify` from the relay dialer, enforcing proper TLS verification on outgoing connections to prevent Man-in-the-Middle attacks.
+- **Removed dynamic TLS generation:** Removed the capability to dynamically generate self-signed TLS certificates in production binaries when `INSECURE=true`. Test suites have been updated to utilize dynamically generated temporary certificates.
 
 ### Performance
 

@@ -26,18 +26,6 @@ func TestSetupTLSEmptyPaths(t *testing.T) {
 	}
 }
 
-// TestSetupTLS_Insecure verifies that INSECURE=true generates a usable self-signed certificate.
-func TestSetupTLS_Insecure(t *testing.T) {
-	t.Setenv("INSECURE", "true")
-
-	tlsCfg, err := setupTLS("nonexistent.crt", "nonexistent.key")
-	require.NoError(t, err)
-	require.NotNil(t, tlsCfg)
-	assert.Len(t, tlsCfg.Certificates, 1, "expected exactly one certificate")
-	assert.Contains(t, tlsCfg.NextProtos, "h3")
-	assert.False(t, tlsCfg.InsecureSkipVerify, "server TLS config must not set InsecureSkipVerify")
-}
-
 // --- serveComponents tests ---
 
 type mockServer struct {
@@ -173,5 +161,3 @@ func TestRun_InvalidGroupCacheSize(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "GROUP_CACHE_SIZE")
 }
-
-
