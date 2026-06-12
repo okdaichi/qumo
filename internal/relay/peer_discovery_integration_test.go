@@ -43,7 +43,8 @@ func freeUDPPort(t *testing.T) int {
 // docker/nomad simulation and would catch regressions in the discover→dial loop
 // (e.g. the #93 class, where an edge filtered out all hubs).
 func TestPeerDiscovery_EdgeConnectsToHubViaLocalResolver(t *testing.T) {
-	cert, err := generateSelfSignedCert()
+	certFile, keyFile := createTempCert(t)
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
 	require.NoError(t, err)
 
 	quicCfg := &quic.Config{
