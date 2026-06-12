@@ -2,17 +2,7 @@ package relay
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/pem"
 	"fmt"
-	"math/big"
-	"net"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -170,45 +160,4 @@ func TestRun_InvalidGroupCacheSize(t *testing.T) {
 	err := Run(nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "GROUP_CACHE_SIZE")
-}
-
-
-// createTempCert generates an ephemeral self-signed cert and returns the file paths.
-func createTempCert(t *testing.T) (string, string) {
-	t.Helper()
-
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
-	require.NoError(t, err)
-
-	tmpl := &x509.Certificate{
-		SerialNumber: serial,
-		Subject:      pkix.Name{CommonName: "localhost"},
-		NotBefore:    time.Now().Add(-time.Minute),
-		NotAfter:     time.Now().Add(time.Hour),
-		DNSNames:     []string{"localhost"},
-		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")},
-	}
-
-	derBytes, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
-	require.NoError(t, err)
-
-	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
-
-	keyDER, err := x509.MarshalECPrivateKey(key)
-	require.NoError(t, err)
-	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
-
-	certFile := filepath.Join(t.TempDir(), "server.crt")
-	keyFile := filepath.Join(t.TempDir(), "server.key")
-
-	err = os.WriteFile(certFile, certPEM, 0600)
-	require.NoError(t, err)
-
-	err = os.WriteFile(keyFile, keyPEM, 0600)
-	require.NoError(t, err)
-
-	return certFile, keyFile
 }
