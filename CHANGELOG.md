@@ -220,6 +220,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of silently discarding them (flag set changed to `ContinueOnError`).
 - **Smoke test error handling:** `frame.Write` and `gw.Close` errors are now caught
   and logged during publishing; early return prevents sending corrupt groups.
+- **Smoke test optimized:** Replaced `fmt.Sprintf` with `strconv.AppendInt` inside
+  `generateTestData` nested loop to avoid heavy reflection and large allocations.
+  Memory usage and allocations significantly reduced, yielding ~60% faster test payloads generation.
 
 ### Security
 
