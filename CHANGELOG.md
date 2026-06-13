@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Performance
 
+- **Replaced `time.After` with `time.Timer` inside loops:** Removed `time.After` inside `for` loops in `internal/relay/handler.go` and `internal/ingest/handler.go`, eliminating allocations and significantly lowering GC footprint and latency.
 - **Optimized FLV AVC parsing (`internal/ingest`):** Improved `ParseAVCConfig` by implementing a safe, two-pass parsing algorithm that dramatically reduces garbage collector stress by removing slice allocations within SPS/PPS loops.
 
 ### Added
