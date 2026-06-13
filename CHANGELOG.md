@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Performance Improvements
+- **ingest**: replaced `time.After` in tight loop with reusable `time.Timer` to eliminate garbage collection pressure.
+
 ### Removed
 
 - **Bootstrap server removed (`internal/bootstrap`):** The bootstrap discovery server
