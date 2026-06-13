@@ -395,6 +395,8 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 		last--
 	}
 
+	trackNameStr := string(tw.TrackName)
+
 	for {
 		latest := d.ring.head()
 
@@ -468,7 +470,7 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 			}
 
 			_ = gw.Close()
-			metricGroupDeliveryHistogram.WithLabelValues(string(tw.TrackName)).Observe(time.Since(start).Seconds())
+			metricGroupDeliveryHistogram.WithLabelValues(trackNameStr).Observe(time.Since(start).Seconds())
 			continue
 		}
 
