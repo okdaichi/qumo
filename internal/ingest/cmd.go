@@ -5,8 +5,10 @@ import (
 	"log"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -33,6 +35,14 @@ func RunRTMP(_ []string) error {
 	serveAddr := envOr("RTMP_SERVE_ADDR", defaultRTMPServeAddr)
 	certFile := envOr("CERT_FILE", "certs/server.crt")
 	keyFile := envOr("KEY_FILE", "certs/server.key")
+	allowedOriginsStr := envOr("ALLOWED_ORIGINS", "")
+
+	var allowedOrigins []string
+	if allowedOriginsStr != "" {
+		for _, o := range strings.Split(allowedOriginsStr, ",") {
+			allowedOrigins = append(allowedOrigins, strings.TrimSpace(o))
+		}
+	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -49,7 +59,24 @@ func RunRTMP(_ []string) error {
 	wtHandler := &moqt.WebTransportHandler{
 		TrackMux: trackMux,
 		CheckOrigin: func(r *http.Request) bool {
-			return true // allow cross-origin (Vite dev server)
+			origin := r.Header.Get("Origin")
+			if origin == "" {
+				return true // no origin header implies not a browser cross-origin request
+			}
+
+			// Check configured allowed origins
+			for _, allowed := range allowedOrigins {
+				if allowed == "*" || origin == allowed {
+					return true
+				}
+			}
+
+			// Fallback to same-origin check
+			u, err := url.Parse(origin)
+			if err != nil {
+				return false
+			}
+			return u.Host == r.Host
 		},
 		Handler: moqt.HandleFunc(func(sess *moqt.Session) {
 			defer sess.CloseWithError(moqt.NoError, moqt.NoError.String())
