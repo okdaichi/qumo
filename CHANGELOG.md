@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Performance
+
+- **Relay Handler Egress Allocation Optimization:** Extracted `string(tw.TrackName)` conversion outside the wait loop in the track distributor egress handler, preventing unnecessary memory allocations in the tight loop.
+
 ### Removed
 
 - **Bootstrap server removed (`internal/bootstrap`):** The bootstrap discovery server
