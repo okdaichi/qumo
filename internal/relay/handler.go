@@ -395,6 +395,11 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 		last--
 	}
 
+	timer := time.NewTimer(NotifyTimeout)
+	if !timer.Stop() {
+		<-timer.C
+	}
+
 	for {
 		latest := d.ring.head()
 
@@ -452,16 +457,26 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 					break
 				}
 
+				timer.Reset(NotifyTimeout)
 				// Wait for more frames
 				select {
 				case <-notify:
+					if !timer.Stop() {
+						<-timer.C
+					}
 					// New frame may be available
-				case <-time.After(NotifyTimeout):
+				case <-timer.C:
 					// Poll timeout
 				case <-d.done:
+					if !timer.Stop() {
+						<-timer.C
+					}
 					_ = gw.Close()
 					return
 				case <-twCtx.Done():
+					if !timer.Stop() {
+						<-timer.C
+					}
 					_ = gw.Close()
 					return
 				}
@@ -472,16 +487,26 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 			continue
 		}
 
+		timer.Reset(NotifyTimeout)
 		// Wait for new data with optimized timeout
 		select {
 		case <-notify:
+			if !timer.Stop() {
+				<-timer.C
+			}
 			// New group available, retry immediately
-		case <-time.After(NotifyTimeout):
+		case <-timer.C:
 			// Timeout fallback (1ms for optimal CPU/latency balance)
 		case <-d.done:
+			if !timer.Stop() {
+				<-timer.C
+			}
 			// Distributor shut down (upstream ended)
 			return
 		case <-twCtx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
 			// Client disconnected or relay shutdown
 			return
 		}

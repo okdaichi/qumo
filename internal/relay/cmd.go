@@ -46,8 +46,8 @@ func sanitizeLog(s string) string {
 //	GROUP_CACHE_SIZE             - max group caches (default: 100) [TODO]
 //	FRAME_CAPACITY               - frame buffer size in bytes (default: 1500) [TODO]
 //	PEERS                        - comma-separated list of static peer addresses	//	LOCAL_RESOLVER_ADDR            - Nomad HTTP API address (default: http://localhost:4646)
-	//	LOCAL_RESOLVER_SERVICE_NAME    - Nomad service name to query (default: "qumo-relay")
-	//	LOCAL_RESOLVER_INTERVAL        - Nomad discovery polling interval (default: "15s")
+//	LOCAL_RESOLVER_SERVICE_NAME    - Nomad service name to query (default: "qumo-relay")
+//	LOCAL_RESOLVER_INTERVAL        - Nomad discovery polling interval (default: "15s")
 //	REMOTE_RESOLVER_URL      - remote traffic resolver URL (optional)
 //	REMOTE_AUTH_TOKEN        - bearer token for remote resolver
 //	REMOTE_RESOLVE_INTERVAL  - remote discovery polling interval (default: "15s")
@@ -138,14 +138,14 @@ func Run(_ []string) error {
 	}
 
 	relayCfg := Config{
-		NodeID:                nodeID,
-		Region:                os.Getenv("REGION"),
-		Role:                  os.Getenv("ROLE"),
-		AdvertiseAddr:         advertiseAddr,
-		GroupCacheSize:        groupCacheSize,
-		FrameCapacity:         frameCapacity,
-		Peers:                 peers,
-		LocalResolverInterval:   localResolver.Interval(),
+		NodeID:                 nodeID,
+		Region:                 os.Getenv("REGION"),
+		Role:                   os.Getenv("ROLE"),
+		AdvertiseAddr:          advertiseAddr,
+		GroupCacheSize:         groupCacheSize,
+		FrameCapacity:          frameCapacity,
+		Peers:                  peers,
+		LocalResolverInterval:  localResolver.Interval(),
 		RemoteResolverInterval: remoteResolver.Interval(),
 	}
 
@@ -194,7 +194,7 @@ func Run(_ []string) error {
 		TrackMux:         trackMux,
 		localResolver:    localResolver,
 		remoteResolver:   remoteResolver,
-		credentialClient:    credentialClient,
+		credentialClient: credentialClient,
 		meter:            meter,
 	}
 

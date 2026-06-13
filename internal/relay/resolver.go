@@ -1,6 +1,6 @@
 // Package relay provides the MoQT relay server for content distribution.
 //
-// Peer Resolution
+// # Peer Resolution
 //
 // The relay discovers peers through one or more PeerResolver implementations.
 //   - LocalResolver: discovers peers via the Nomad native service discovery API

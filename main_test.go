@@ -73,16 +73,17 @@ func TestRun_Unit(t *testing.T) {
 	}
 
 	for name, tt := range tests {
-		t.Run(name, func(t *testing.T) {		if tt.stubRelay != nil {
+		t.Run(name, func(t *testing.T) {
+			if tt.stubRelay != nil {
 				runRelay = tt.stubRelay
-		} else {
+			} else {
 				runRelay = func([]string) error { return nil }
-		}
-		if tt.stubRTMP != nil {
-			runRTMP = tt.stubRTMP
-		} else {
-			runRTMP = func([]string) error { return nil }
-		}
+			}
+			if tt.stubRTMP != nil {
+				runRTMP = tt.stubRTMP
+			} else {
+				runRTMP = func([]string) error { return nil }
+			}
 
 			// capture stderr
 			saved := os.Stderr
