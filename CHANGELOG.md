@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Performance
+
+- **Memory Optimization in `internal/ingest`**: Replaced continuous allocation of `time.After` channels within `trackBuffer.serve` with a single reusable `time.Timer`. This optimization significantly reduces CPU allocations and memory overhead during track data waiting loops.
+
 ### Removed
 
 - **Bootstrap server removed (`internal/bootstrap`):** The bootstrap discovery server
