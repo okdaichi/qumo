@@ -395,6 +395,7 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 		last--
 	}
 
+	trackNameStr := string(tw.TrackName)
 	timer := time.NewTimer(NotifyTimeout)
 	if !timer.Stop() {
 		select {
@@ -461,7 +462,6 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 					break
 				}
 
-				timer.Reset(NotifyTimeout)
 				// Wait for more frames
 				timer.Reset(NotifyTimeout)
 				select {
@@ -479,11 +479,10 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 			}
 
 			_ = gw.Close()
-			metricGroupDeliveryHistogram.WithLabelValues(string(tw.TrackName)).Observe(time.Since(start).Seconds())
+			metricGroupDeliveryHistogram.WithLabelValues(trackNameStr).Observe(time.Since(start).Seconds())
 			continue
 		}
 
-		timer.Reset(NotifyTimeout)
 		// Wait for new data with optimized timeout
 		timer.Reset(NotifyTimeout)
 		select {

@@ -1425,3 +1425,21 @@ func TestRelayHandler_Drain_Idempotent(t *testing.T) {
 		return !h.RouteStats().Alive
 	}, 100*time.Millisecond, time.Millisecond)
 }
+
+func BenchmarkEgressHistogramObserve(b *testing.B) {
+	trackName := []byte("test-track-name")
+	start := time.Now()
+
+	b.Run("baseline", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			metricGroupDeliveryHistogram.WithLabelValues(string(trackName)).Observe(time.Since(start).Seconds())
+		}
+	})
+
+	b.Run("optimized", func(b *testing.B) {
+		trackNameStr := string(trackName)
+		for i := 0; i < b.N; i++ {
+			metricGroupDeliveryHistogram.WithLabelValues(trackNameStr).Observe(time.Since(start).Seconds())
+		}
+	})
+}
