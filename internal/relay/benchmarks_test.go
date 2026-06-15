@@ -177,15 +177,12 @@ func BenchmarkTrackDistributor_Broadcast(b *testing.B) {
 
 	for _, tt := range tests {
 		b.Run(tt.name, func(b *testing.B) {
-			dist := &trackDistributor{
-				subscribers: make(map[chan struct{}]struct{}),
-			}
+			dist := &trackDistributor{}
 
 			// Create subscriber channels
 			for i := 0; i < tt.subscribers; i++ {
 				ch := make(chan struct{}, 1)
-				dist.subscribers[ch] = struct{}{}
-				dist.subCount.Add(1)
+				dist.subscribers = append(dist.subscribers, ch)
 			}
 
 			b.ResetTimer()
@@ -203,9 +200,7 @@ func BenchmarkTrackDistributor_Broadcast(b *testing.B) {
 // ============================================================================
 
 func BenchmarkTrackDistributor_SubscribeUnsubscribe(b *testing.B) {
-	dist := &trackDistributor{
-		subscribers: make(map[chan struct{}]struct{}),
-	}
+	dist := &trackDistributor{}
 
 	b.ResetTimer()
 	b.ReportAllocs()
@@ -217,9 +212,7 @@ func BenchmarkTrackDistributor_SubscribeUnsubscribe(b *testing.B) {
 }
 
 func BenchmarkTrackDistributor_SubscribeUnsubscribe_Parallel(b *testing.B) {
-	dist := &trackDistributor{
-		subscribers: make(map[chan struct{}]struct{}),
-	}
+	dist := &trackDistributor{}
 
 	b.ResetTimer()
 	b.ReportAllocs()
@@ -350,9 +343,7 @@ func BenchmarkLockPressure_TrackDistributor_Subscribe(b *testing.B) {
 
 	for _, tt := range tests {
 		b.Run(tt.name, func(b *testing.B) {
-			dist := &trackDistributor{
-				subscribers: make(map[chan struct{}]struct{}),
-			}
+			dist := &trackDistributor{}
 
 			b.ResetTimer()
 			b.ReportAllocs()

@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"runtime"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -338,8 +337,7 @@ type trackDistributor struct {
 	fillSem chan struct{}
 
 	mu          sync.RWMutex
-	subscribers map[chan struct{}]struct{}
-	subCount    atomic.Int32 // Fast-path check to skip map iteration if no subscribers
+	subscribers []chan struct{}
 
 	done chan struct{} // closed when ingest returns
 }
@@ -353,9 +351,8 @@ func newTrackDistributor(manager *trackManager, trackID string, broadSess *broad
 		egressCounter:     metricRelayEgressBytesTotal.WithLabelValues(trackID),
 		deliveryHistogram: metricGroupDeliveryHistogram.WithLabelValues(trackID),
 		session:           broadSess,
-		fillSem:           make(chan struct{}, maxGroupFillsInFlightOrPanic()),
-		subscribers:       make(map[chan struct{}]struct{}),
-		done:              make(chan struct{}),
+		fillSem: make(chan struct{}, maxGroupFillsInFlightOrPanic()),
+		done:    make(chan struct{}),
 	}
 	go d.pollCacheDepth()
 	return d
@@ -509,24 +506,29 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 	}
 }
 
-// subscribe registers a new subscriber and returns its notification channel
+// subscribe registers a new subscriber and returns its notification channel.
 func (d *trackDistributor) subscribe() chan struct{} {
+	ch := make(chan struct{}, 1)
 	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	ch := make(chan struct{}, 1) // Buffered to prevent blocking
-	d.subscribers[ch] = struct{}{}
-	d.subCount.Add(1)
-
+	d.subscribers = append(d.subscribers, ch)
+	d.mu.Unlock()
 	return ch
 }
 
-// unsubscribe removes a subscriber
+// unsubscribe removes a subscriber using swap-delete to keep O(1) removal.
+// Order of remaining subscribers is not preserved.
 func (d *trackDistributor) unsubscribe(ch chan struct{}) {
 	d.mu.Lock()
-	defer d.mu.Unlock()
-	delete(d.subscribers, ch)
-	d.subCount.Add(-1)
+	s := d.subscribers
+	for i, c := range s {
+		if c == ch {
+			s[i] = s[len(s)-1]
+			s[len(s)-1] = nil // release reference
+			d.subscribers = s[:len(s)-1]
+			break
+		}
+	}
+	d.mu.Unlock()
 }
 
 func (d *trackDistributor) ingest(ctx context.Context, src *moqt.TrackReader) {
@@ -588,13 +590,8 @@ func (d *trackDistributor) processGroup(ctx context.Context, wg *sync.WaitGroup,
 
 // broadcast notifies all subscribers that new data is available.
 func (d *trackDistributor) broadcast() {
-	// Fast-path: skip lock acquisition and map iteration if no subscribers
-	if d.subCount.Load() == 0 {
-		return
-	}
-
 	d.mu.RLock()
-	for ch := range d.subscribers {
+	for _, ch := range d.subscribers {
 		select {
 		case ch <- struct{}{}:
 		default:
