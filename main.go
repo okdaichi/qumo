@@ -67,3 +67,4 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  All commands are configured via environment variables.")
 	fmt.Fprintln(os.Stderr, "  See relay-config.example.env for details.")
 }
+// trigger
