@@ -402,6 +402,7 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 		default:
 		}
 	}
+	defer timer.Stop()
 
 	for {
 		latest := d.ring.head()
@@ -465,9 +466,6 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 				select {
 				case <-notify:
 					// New frame may be available
-					if !timer.Stop() {
-						<-timer.C
-					}
 				case <-timer.C:
 					// Poll timeout
 				case <-d.done:
@@ -489,9 +487,6 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 		select {
 		case <-notify:
 			// New group available, retry immediately
-			if !timer.Stop() {
-				<-timer.C
-			}
 		case <-timer.C:
 			// Timeout fallback (1ms for optimal CPU/latency balance)
 		case <-d.done:

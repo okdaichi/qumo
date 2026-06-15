@@ -316,6 +316,7 @@ func (b *trackBuffer) serve(ctx context.Context, tw *moqt.TrackWriter) {
 		default:
 		}
 	}
+	defer timer.Stop()
 
 	for {
 		latest := b.head()
@@ -364,9 +365,6 @@ func (b *trackBuffer) serve(ctx context.Context, tw *moqt.TrackWriter) {
 				timer.Reset(notifyTimeout)
 				select {
 				case <-notify:
-					if !timer.Stop() {
-						<-timer.C
-					}
 				case <-timer.C:
 				case <-ctx.Done():
 					_ = gw.Close()
@@ -386,9 +384,6 @@ func (b *trackBuffer) serve(ctx context.Context, tw *moqt.TrackWriter) {
 		timer.Reset(notifyTimeout)
 		select {
 		case <-notify:
-			if !timer.Stop() {
-				<-timer.C
-			}
 		case <-timer.C:
 		case <-ctx.Done():
 			return
