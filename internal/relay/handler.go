@@ -461,6 +461,7 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 					break
 				}
 
+				timer.Reset(NotifyTimeout)
 				// Wait for more frames
 				timer.Reset(NotifyTimeout)
 				select {
@@ -482,6 +483,7 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 			continue
 		}
 
+		timer.Reset(NotifyTimeout)
 		// Wait for new data with optimized timeout
 		timer.Reset(NotifyTimeout)
 		select {
