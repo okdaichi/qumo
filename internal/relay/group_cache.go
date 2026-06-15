@@ -18,7 +18,7 @@ type frameSource interface {
 const DefaultGroupCacheSize = 8
 
 type groupCache struct {
-	mu       sync.Mutex // Protects frames slice
+	mu       sync.RWMutex // Protects frames slice; RLock for next, Lock for append
 	seq      moqt.GroupSequence
 	frames   []*moqt.Frame
 	complete atomic.Bool // True when all frames have been added
@@ -45,23 +45,21 @@ func (gc *groupCache) incrRef() {
 // The frame is cloned and stored in the cache.
 // Thread-safe: can be called concurrently (though typically called from single goroutine).
 func (gc *groupCache) append(f *moqt.Frame, pool *FramePool) {
-	gc.mu.Lock()
-	defer gc.mu.Unlock()
-
+	// Clone outside the lock: the clone is private until appended, so the
+	// memmove does not need to exclude concurrent readers.
 	clone := pool.Get()
-
-	// Clone the frame because the frame will be reused.
-	// This operation never returns an error, so we can ignore it.
 	_, _ = f.WriteTo(clone)
 
+	gc.mu.Lock()
 	gc.frames = append(gc.frames, clone)
+	gc.mu.Unlock()
 }
 
 // next returns the frame at the given index.
 // Thread-safe: can be called concurrently.
 func (gc *groupCache) next(index int) *moqt.Frame {
-	gc.mu.Lock()
-	defer gc.mu.Unlock()
+	gc.mu.RLock()
+	defer gc.mu.RUnlock()
 
 	if index < 0 || index >= len(gc.frames) {
 		return nil
