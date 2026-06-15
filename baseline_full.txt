@@ -1,0 +1,52 @@
+goos: windows
+goarch: amd64
+pkg: github.com/qumo-dev/qumo/internal/relay
+cpu: Intel(R) Core(TM) i7-10700K CPU @ 3.80GHz
+BenchmarkFramePool_GetPut-16                                  	504923678	        12.01 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFramePool_GetPut_Parallel-16                         	1000000000	         1.486 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFramePool_LargeFrame-16                              	   45703	    123116 ns/op	 1049680 B/op	       1 allocs/op
+BenchmarkGroupCache_Next_HitRate-16                           	503807144	        11.87 ns/op	       0 B/op	       0 allocs/op
+BenchmarkGroupCache_ConcurrentAppendAndNext/10writers_10readers-16         	  501903	     14125 ns/op	   16422 B/op	      20 allocs/op
+BenchmarkGroupRing_Reserve-16                                              	60453156	        92.37 ns/op	       0 B/op	       0 allocs/op
+BenchmarkGroupRing_Fill_VariableSize/small_10frames_1KB-16                 	 7962530	       744.6 ns/op	       0 B/op	       0 allocs/op
+BenchmarkGroupRing_Fill_VariableSize/medium_50frames_2KB-16                	 1000000	      5407 ns/op	       1 B/op	       0 allocs/op
+BenchmarkGroupRing_Fill_VariableSize/large_100frames_10KB-16               	  111028	     57040 ns/op	      90 B/op	       0 allocs/op
+BenchmarkTrackDistributor_Broadcast/1_subscriber-16                        	126834466	        48.24 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTrackDistributor_Broadcast/10_subscribers-16                      	43287763	       148.7 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTrackDistributor_Broadcast/100_subscribers-16                     	 5527412	      1239 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTrackDistributor_Broadcast/1000_subscribers-16                    	  440515	     17572 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTrackDistributor_SubscribeUnsubscribe-16                          	42264286	       122.5 ns/op	     112 B/op	       1 allocs/op
+BenchmarkTrackDistributor_SubscribeUnsubscribe_Parallel-16                 	28700457	       222.6 ns/op	     112 B/op	       1 allocs/op
+BenchmarkMemAllocs_FramePool-16                                            	572459106	        10.16 ns/op	       0 B/op	       0 allocs/op
+BenchmarkMemAllocs_GroupCache_Append-16                                    	 6695619	       789.0 ns/op	    1640 B/op	       2 allocs/op
+BenchmarkMemAllocs_GroupRing_Reserve-16                                    	69611544	        89.69 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLockPressure_GroupCache/1w_1r-16                                  	1000000000	         0.0000437 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLockPressure_GroupCache/1w_10r-16                                 	1000000000	         0.0001157 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLockPressure_GroupCache/10w_10r-16                                	1000000000	         0.0004398 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLockPressure_GroupCache/1w_100r-16                                	1000000000	         0.0005939 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLockPressure_TrackDistributor_Subscribe/10_goroutines-16          	24473233	       239.8 ns/op	     112 B/op	       1 allocs/op
+BenchmarkLockPressure_TrackDistributor_Subscribe/100_goroutines-16         	22890723	       281.3 ns/op	     112 B/op	       1 allocs/op
+BenchmarkLockPressure_TrackDistributor_Subscribe/1000_goroutines-16        	17710845	       335.6 ns/op	     112 B/op	       1 allocs/op
+BenchmarkGroupRing_ConcurrentReserveAndGet/1w_1r-16                        	11657486	       574.5 ns/op	       0 B/op	       0 allocs/op
+BenchmarkGroupRing_ConcurrentReserveAndGet/1w_10r-16                       	24898424	       329.2 ns/op	       0 B/op	       0 allocs/op
+BenchmarkGroupRing_ConcurrentReserveAndGet/10w_10r-16                      	20785382	       316.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFramePoolGet-16                                                   	440176298	        13.39 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFramePoolGetPutConcurrent-16                                      	1000000000	         1.477 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFramePoolNoReuse-16                                               	 9890113	       627.8 ns/op	    1536 B/op	       1 allocs/op
+BenchmarkFramePoolWithReuse-16                                             	495749935	        12.14 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFramePoolPatterns/write_and_return-16                             	249462584	        24.93 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFramePoolPatterns/parallel_write_and_return-16                    	1000000000	         2.984 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFramePoolPatterns/hold_and_return-16                              	22395663	       244.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFramePoolVsNaive/with_pool-16                                     	511271229	         9.965 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFramePoolVsNaive/without_pool-16                                  	 9936038	       760.5 ns/op	    1536 B/op	       1 allocs/op
+BenchmarkFramePoolVsNaive/with_pool_and_write-16                           	299344688	        19.41 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFramePoolVsNaive/without_pool_and_write-16                        	 7866342	       777.2 ns/op	    1536 B/op	       1 allocs/op
+BenchmarkGroupCache_Append-16                                              	 5545700	       958.6 ns/op	    1600 B/op	       2 allocs/op
+BenchmarkGroupCache_Next-16                                                	484949040	        12.23 ns/op	       0 B/op	       0 allocs/op
+BenchmarkGroupRing_Get-16                                                  	269667356	        22.75 ns/op	       0 B/op	       0 allocs/op
+BenchmarkGroupRing_Ingest-16                                               	 7426263	       682.3 ns/op	       0 B/op	       0 allocs/op
+BenchmarkEgressHistogramObserve/baseline-16                                	52105088	       105.5 ns/op	      16 B/op	       1 allocs/op
+BenchmarkEgressHistogramObserve/optimized-16                               	64426278	        84.26 ns/op	       0 B/op	       0 allocs/op
+BenchmarkEgressHistogramObserve/prebound-16                                	209026837	        28.68 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/qumo-dev/qumo/internal/relay	298.353s

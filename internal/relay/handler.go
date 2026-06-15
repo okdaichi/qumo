@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -338,6 +339,7 @@ type trackDistributor struct {
 
 	mu          sync.RWMutex
 	subscribers map[chan struct{}]struct{}
+	subCount    atomic.Int32 // Fast-path check to skip map iteration if no subscribers
 
 	done chan struct{} // closed when ingest returns
 }
@@ -514,6 +516,7 @@ func (d *trackDistributor) subscribe() chan struct{} {
 
 	ch := make(chan struct{}, 1) // Buffered to prevent blocking
 	d.subscribers[ch] = struct{}{}
+	d.subCount.Add(1)
 
 	return ch
 }
@@ -523,6 +526,7 @@ func (d *trackDistributor) unsubscribe(ch chan struct{}) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	delete(d.subscribers, ch)
+	d.subCount.Add(-1)
 }
 
 func (d *trackDistributor) ingest(ctx context.Context, src *moqt.TrackReader) {
@@ -584,6 +588,11 @@ func (d *trackDistributor) processGroup(ctx context.Context, wg *sync.WaitGroup,
 
 // broadcast notifies all subscribers that new data is available.
 func (d *trackDistributor) broadcast() {
+	// Fast-path: skip lock acquisition and map iteration if no subscribers
+	if d.subCount.Load() == 0 {
+		return
+	}
+
 	d.mu.RLock()
 	for ch := range d.subscribers {
 		select {
