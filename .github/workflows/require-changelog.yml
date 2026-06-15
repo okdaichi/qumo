@@ -12,7 +12,7 @@ jobs:
   check-changelog:
     # Bot Exemption: Skip for dependabot or other bots
     if: github.actor != 'dependabot[bot]' && github.actor != 'renovate[bot]'
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
 
     steps:
       - name: Check for no-changelog label
@@ -23,8 +23,6 @@ jobs:
       - name: Checkout PR branch
         if: "!contains(github.event.pull_request.labels.*.name, 'no-changelog')"
         uses: actions/checkout@v6
-        env:
-          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
         with:
           fetch-depth: 0
 
