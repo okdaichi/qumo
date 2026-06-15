@@ -22,6 +22,8 @@ type groupCache struct {
 	seq      moqt.GroupSequence
 	frames   []*moqt.Frame
 	complete atomic.Bool // True when all frames have been added
+	refCount atomic.Int32
+	evicted  atomic.Bool
 }
 
 // isComplete returns true if the group has finished receiving all frames.
@@ -34,14 +36,18 @@ func (gc *groupCache) markComplete() {
 	gc.complete.Store(true)
 }
 
-// Append appends a frame to the group cache.
+func (gc *groupCache) incrRef() {
+	gc.refCount.Add(1)
+}
+
+// Append appends a frame to the group cache using the provided pool.
 // The frame is cloned and stored in the cache.
 // Thread-safe: can be called concurrently (though typically called from single goroutine).
-func (gc *groupCache) append(f *moqt.Frame) {
+func (gc *groupCache) append(f *moqt.Frame, pool *FramePool) {
 	gc.mu.Lock()
 	defer gc.mu.Unlock()
 
-	clone := DefaultFramePool.Get()
+	clone := pool.Get()
 
 	// Clone the frame because the frame will be reused.
 	// This operation never returns an error, so we can ignore it.
@@ -66,7 +72,12 @@ func newGroupRing(size int, pool *FramePool) *groupRing {
 	ring := &groupRing{
 		caches: make([]atomic.Pointer[groupCache], size),
 		pool:   pool,
-		size:   size, // Is this needed?
+		size:   size,
+	}
+	ring.gcPool.New = func() any {
+		return &groupCache{
+			frames: make([]*moqt.Frame, 0, 32),
+		}
 	}
 	return ring
 }
@@ -76,17 +87,23 @@ type groupRing struct {
 	pool   *FramePool
 	size   int
 	pos    atomic.Uint64
+	gcPool sync.Pool
 }
 
 // reserve atomically allocates a ring slot for seq and returns the new cache.
 // It must be called from the ingest goroutine (single writer) to preserve group ordering.
 func (ring *groupRing) reserve(seq moqt.GroupSequence) *groupCache {
-	cache := &groupCache{
-		seq:    seq,
-		frames: make([]*moqt.Frame, 0, 1),
-	}
+	cache := ring.gcPool.Get().(*groupCache)
+	cache.seq = seq
+	cache.complete.Store(false)
+	cache.refCount.Store(0)
+	cache.evicted.Store(false)
+
 	idx := int(ring.pos.Add(1) % uint64(ring.size))
-	ring.caches[idx].Store(cache)
+	old := ring.caches[idx].Swap(cache)
+	if old != nil {
+		ring.markEvicted(old)
+	}
 	return cache
 }
 
@@ -102,7 +119,7 @@ func (ring *groupRing) fill(group frameSource, cache *groupCache, onFrame func(n
 	for frame := range group.Frames(buf) {
 		frameCount++
 		n := frame.Len()
-		cache.append(frame)
+		cache.append(frame, ring.pool)
 		if onFrame != nil {
 			onFrame(n)
 		}
@@ -115,7 +132,50 @@ func (ring *groupRing) fill(group frameSource, cache *groupCache, onFrame func(n
 }
 
 func (ring *groupRing) get(seq moqt.GroupSequence) *groupCache {
-	return ring.caches[uint64(seq)%uint64(ring.size)].Load()
+	idx := uint64(seq) % uint64(ring.size)
+	cache := ring.caches[idx].Load()
+	if cache != nil {
+		cache.incrRef()
+		// Double-check that it wasn't swapped out before we incremented it
+		if ring.caches[idx].Load() != cache {
+			ring.decrRef(cache)
+			return nil
+		}
+	}
+	return cache
+}
+
+func (ring *groupRing) decrRef(gc *groupCache) {
+	if gc.refCount.Add(-1) == 0 {
+		if gc.evicted.Load() {
+			ring.releaseCache(gc)
+		}
+	}
+}
+
+func (ring *groupRing) markEvicted(gc *groupCache) {
+	gc.evicted.Store(true)
+	if gc.refCount.Load() == 0 {
+		ring.releaseCache(gc)
+	}
+}
+
+func (ring *groupRing) releaseCache(gc *groupCache) {
+	gc.mu.Lock()
+	if gc.frames == nil {
+		gc.mu.Unlock()
+		return
+	}
+	for _, f := range gc.frames {
+		ring.pool.Put(f)
+	}
+	for i := range gc.frames {
+		gc.frames[i] = nil
+	}
+	gc.frames = gc.frames[:0]
+	gc.mu.Unlock()
+
+	ring.gcPool.Put(gc)
 }
 
 func (ring *groupRing) head() moqt.GroupSequence {

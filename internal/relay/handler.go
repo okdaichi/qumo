@@ -433,53 +433,59 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 				continue
 			}
 
-			gw, err := tw.OpenGroupAt(cache.seq)
-			if err != nil {
+			shouldExit := func() bool {
+				gw, err := tw.OpenGroupAt(cache.seq)
+				if err != nil {
+					d.ring.decrRef(cache)
+					return true
+				}
+				defer gw.Close()
+				defer d.ring.decrRef(cache)
+
+				start := time.Now()
+				frameIdx := 0
+
+				for {
+					frame := cache.next(frameIdx)
+					if frame != nil {
+						if err := gw.WriteFrame(frame); err != nil {
+							return true
+						}
+						n := frame.Len()
+						d.egressCounter.Add(float64(n))
+						if d.session != nil {
+							d.session.addEgress(int64(n))
+						}
+						frameIdx++
+						continue
+					}
+
+					// No more frames available right now
+					if cache.isComplete() {
+						// Group is complete, move to next group
+						break
+					}
+
+					// Wait for more frames
+					timer.Reset(NotifyTimeout)
+					select {
+					case <-notify:
+						// New frame may be available
+					case <-timer.C:
+						// Poll timeout
+					case <-d.done:
+						return true
+					case <-twCtx.Done():
+						return true
+					}
+				}
+
+				metricGroupDeliveryHistogram.WithLabelValues(trackNameStr).Observe(time.Since(start).Seconds())
+				return false
+			}()
+			if shouldExit {
 				return
 			}
-			start := time.Now()
-			frameIdx := 0
-
-			for {
-				frame := cache.next(frameIdx)
-				if frame != nil {
-					if err := gw.WriteFrame(frame); err != nil {
-						_ = gw.Close()
-						return
-					}
-					n := frame.Len()
-					d.egressCounter.Add(float64(n))
-					if d.session != nil {
-						d.session.addEgress(int64(n))
-					}
-					frameIdx++
-					continue
-				}
-
-				// No more frames available right now
-				if cache.isComplete() {
-					// Group is complete, move to next group
-					break
-				}
-
-				// Wait for more frames
-				timer.Reset(NotifyTimeout)
-				select {
-				case <-notify:
-					// New frame may be available
-				case <-timer.C:
-					// Poll timeout
-				case <-d.done:
-					_ = gw.Close()
-					return
-				case <-twCtx.Done():
-					_ = gw.Close()
-					return
-				}
-			}
-
-			_ = gw.Close()
-			metricGroupDeliveryHistogram.WithLabelValues(trackNameStr).Observe(time.Since(start).Seconds())
 			continue
 		}
 
