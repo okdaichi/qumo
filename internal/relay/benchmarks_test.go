@@ -419,3 +419,4 @@ func BenchmarkGroupRing_ConcurrentReserveAndGet(b *testing.B) {
 		})
 	}
 }
+// test trigger
