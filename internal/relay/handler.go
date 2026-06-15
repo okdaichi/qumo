@@ -463,6 +463,7 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 
 				timer.Reset(NotifyTimeout)
 				// Wait for more frames
+				timer.Reset(NotifyTimeout)
 				select {
 				case <-notify:
 					// New frame may be available
@@ -484,6 +485,7 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 
 		timer.Reset(NotifyTimeout)
 		// Wait for new data with optimized timeout
+		timer.Reset(NotifyTimeout)
 		select {
 		case <-notify:
 			// New group available, retry immediately
