@@ -4,24 +4,52 @@ on:
   pull_request:
     types: [opened, edited, synchronize, reopened]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   check-changelog:
+    # Bot Exemption: Skip for dependabot or other bots
+    if: github.actor != 'dependabot[bot]' && github.actor != 'renovate[bot]'
     runs-on: ubuntu-latest
 
     steps:
+      - name: Check for no-changelog label
+        id: check_label
+        if: contains(github.event.pull_request.labels.*.name, 'no-changelog')
+        run: echo "no-changelog label present — skipping CHANGELOG check."
+
       - name: Checkout PR branch
+        if: "!contains(github.event.pull_request.labels.*.name, 'no-changelog')"
         uses: actions/checkout@v6
         with:
-          fetch-depth: 0 # full history
+          fetch-depth: 0
 
-      - name: Verify CHANGELOG.md modification
-        if: ${{ !contains(github.event.pull_request.labels.*.name, 'no-changelog') }}
+      - name: Check for trivial changes
+        id: changed_files
+        if: "!contains(github.event.pull_request.labels.*.name, 'no-changelog')"
+        uses: tj-actions/changed-files@v44
+        with:
+          files_ignore: |
+            .github/**
+            docs/**
+            **/*_test.go
+            **/*.md
+
+      - name: Verify CHANGELOG.md content modification
+        if: "!contains(github.event.pull_request.labels.*.name, 'no-changelog') && steps.changed_files.outputs.any_changed == 'true'"
         run: |
-          # look for any diff lines affecting CHANGELOG.md
-          if git diff --name-only "origin/${{ github.base_ref }}"...HEAD | grep -q '^CHANGELOG\.md$'; then
-            echo "CHANGELOG.md has been updated."
+          if git diff --name-only "origin/${{ github.base_ref }}...HEAD" | grep -q '^CHANGELOG\.md$'; then
+            # Content Validation: Ensure there are actual additions to the file, not just deletions or whitespace fixes
+            ADDITIONS=$(git diff "origin/${{ github.base_ref }}...HEAD" -- CHANGELOG.md | grep -E '^\+[^+]' | wc -l)
+            if [ "$ADDITIONS" -gt 0 ]; then
+              echo "CHANGELOG.md has valid updates ($ADDITIONS lines added)."
+            else
+              echo "::error file=CHANGELOG.md,line=1::CHANGELOG.md was modified, but no new content was added. Please add an entry."
+              exit 1
+            fi
           else
-            echo "::error file=CHANGELOG.md::Pull request must include a change to CHANGELOG.md" \
-                 "(add a new entry or note the reason for omission).";
+            echo "::error file=CHANGELOG.md,line=1::Pull request must include a change to CHANGELOG.md (add a new entry or note the reason for omission with the 'no-changelog' label)."
             exit 1
           fi

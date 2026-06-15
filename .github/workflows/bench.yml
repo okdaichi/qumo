@@ -1,0 +1,57 @@
+name: Remote Benchmark
+
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  benchmark:
+    if: github.event.label.name == 'performance-check'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout base branch
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+          cache: true
+
+      - name: Run base benchmark
+        run: |
+          go test -bench . -benchmem -run=^$ ./... | tee base.txt
+
+      - name: Checkout PR branch
+        uses: actions/checkout@v6
+        with:
+          clean: false
+
+      - name: Run PR benchmark
+        run: |
+          go test -bench . -benchmem -run=^$ ./... | tee pr.txt
+
+      - name: Install benchstat
+        run: go install golang.org/x/perf/cmd/benchstat@latest
+
+      - name: Compare results
+        id: compare
+        run: |
+          echo "### Benchmark Results" > report.md
+          echo "\`\`\`text" >> report.md
+          benchstat base.txt pr.txt >> report.md
+          echo "\`\`\`" >> report.md
+
+      - name: Post comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr comment ${{ github.event.pull_request.number }} \
+            --repo ${{ github.repository }} \
+            --body-file report.md
