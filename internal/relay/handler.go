@@ -396,6 +396,14 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 	}
 
 	trackNameStr := string(tw.TrackName)
+	timer := time.NewTimer(NotifyTimeout)
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
+	defer timer.Stop()
 
 	for {
 		latest := d.ring.head()
@@ -455,10 +463,11 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 				}
 
 				// Wait for more frames
+				timer.Reset(NotifyTimeout)
 				select {
 				case <-notify:
 					// New frame may be available
-				case <-time.After(NotifyTimeout):
+				case <-timer.C:
 					// Poll timeout
 				case <-d.done:
 					_ = gw.Close()
@@ -475,10 +484,11 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 		}
 
 		// Wait for new data with optimized timeout
+		timer.Reset(NotifyTimeout)
 		select {
 		case <-notify:
 			// New group available, retry immediately
-		case <-time.After(NotifyTimeout):
+		case <-timer.C:
 			// Timeout fallback (1ms for optimal CPU/latency balance)
 		case <-d.done:
 			// Distributor shut down (upstream ended)
