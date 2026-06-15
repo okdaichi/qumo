@@ -25,13 +25,18 @@ jobs:
     # label-added and new-push events). Always exits successfully.
     if: contains(github.event.pull_request.labels.*.name, 'performance-check')
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       PR_NUMBER: ${{ github.event.pull_request.number }}
       BASE_SHA: ${{ github.event.pull_request.base.sha }}
       HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       # 10 samples so benchstat can compute statistical significance.
       BENCH_COUNT: "10"
+      # Short per-run benchtime keeps CI within budget: the relay suite is ~70s
+      # at benchtime=1s, so count=10 x (base+PR) x 1s would exceed the job
+      # timeout on slower shared runners. 300ms/run keeps statistical power
+      # (10 samples) while cutting runtime ~3x.
+      BENCH_TIME: 300ms
       BENCH_TIMEOUT: 20m
     steps:
       - name: Checkout PR head
@@ -85,7 +90,7 @@ jobs:
           while IFS= read -r pkg; do
             [ -d "./$pkg" ] || continue
             echo "::group::Base benchmark: $pkg"
-            if out=$(go test -count="$BENCH_COUNT" -bench=. -benchmem -run=^$ -timeout="$BENCH_TIMEOUT" "./$pkg" 2>&1); then
+            if out=$(go test -count="$BENCH_COUNT" -benchtime="$BENCH_TIME" -bench=. -benchmem -run=^$ -timeout="$BENCH_TIMEOUT" "./$pkg" 2>&1); then
               printf '%s\n' "$out" >> "$GITHUB_WORKSPACE/base.txt"
             else
               echo "::error::Base benchmark/build failed for $pkg"
@@ -99,7 +104,7 @@ jobs:
         run: |
           while IFS= read -r pkg; do
             echo "::group::PR benchmark: $pkg"
-            if out=$(go test -count="$BENCH_COUNT" -bench=. -benchmem -run=^$ -timeout="$BENCH_TIMEOUT" "./$pkg" 2>&1); then
+            if out=$(go test -count="$BENCH_COUNT" -benchtime="$BENCH_TIME" -bench=. -benchmem -run=^$ -timeout="$BENCH_TIMEOUT" "./$pkg" 2>&1); then
               printf '%s\n' "$out" >> pr.txt
             else
               echo "::error::PR benchmark/build failed for $pkg"
