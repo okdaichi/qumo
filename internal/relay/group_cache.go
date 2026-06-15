@@ -18,12 +18,13 @@ type frameSource interface {
 const DefaultGroupCacheSize = 8
 
 type groupCache struct {
-	mu       sync.Mutex // Protects frames slice for defensive programming
+	mu       sync.Mutex // Protects frames slice
 	seq      moqt.GroupSequence
 	frames   []*moqt.Frame
 	complete atomic.Bool // True when all frames have been added
 	refCount atomic.Int32
 	evicted  atomic.Bool
+	released atomic.Bool
 }
 
 // isComplete returns true if the group has finished receiving all frames.
@@ -83,6 +84,7 @@ func newGroupRing(size int, pool *FramePool) *groupRing {
 }
 
 type groupRing struct {
+	mu     sync.RWMutex
 	caches []atomic.Pointer[groupCache]
 	pool   *FramePool
 	size   int
@@ -93,16 +95,20 @@ type groupRing struct {
 // reserve atomically allocates a ring slot for seq and returns the new cache.
 // It must be called from the ingest goroutine (single writer) to preserve group ordering.
 func (ring *groupRing) reserve(seq moqt.GroupSequence) *groupCache {
+	ring.mu.Lock()
+	defer ring.mu.Unlock()
+
 	cache := ring.gcPool.Get().(*groupCache)
 	cache.seq = seq
 	cache.complete.Store(false)
-	cache.refCount.Store(0)
+	cache.refCount.Store(1) // 1 reference for the in-flight filler
 	cache.evicted.Store(false)
+	cache.released.Store(false)
 
 	idx := int(ring.pos.Add(1) % uint64(ring.size))
 	old := ring.caches[idx].Swap(cache)
 	if old != nil {
-		ring.markEvicted(old)
+		ring.markEvictedLocked(old)
 	}
 	return cache
 }
@@ -115,6 +121,8 @@ func (ring *groupRing) reserve(seq moqt.GroupSequence) *groupCache {
 func (ring *groupRing) fill(group frameSource, cache *groupCache, onFrame func(n int)) {
 	buf := ring.pool.Get()
 	defer ring.pool.Put(buf)
+	defer ring.decrRef(cache) // filler completes and releases its reference
+
 	frameCount := 0
 	for frame := range group.Frames(buf) {
 		frameCount++
@@ -132,17 +140,16 @@ func (ring *groupRing) fill(group frameSource, cache *groupCache, onFrame func(n
 }
 
 func (ring *groupRing) get(seq moqt.GroupSequence) *groupCache {
+	ring.mu.RLock()
+	defer ring.mu.RUnlock()
+
 	idx := uint64(seq) % uint64(ring.size)
 	cache := ring.caches[idx].Load()
-	if cache != nil {
+	if cache != nil && cache.seq == seq && !cache.released.Load() {
 		cache.incrRef()
-		// Double-check that it wasn't swapped out before we incremented it
-		if ring.caches[idx].Load() != cache {
-			ring.decrRef(cache)
-			return nil
-		}
+		return cache
 	}
-	return cache
+	return nil
 }
 
 func (ring *groupRing) decrRef(gc *groupCache) {
@@ -153,7 +160,7 @@ func (ring *groupRing) decrRef(gc *groupCache) {
 	}
 }
 
-func (ring *groupRing) markEvicted(gc *groupCache) {
+func (ring *groupRing) markEvictedLocked(gc *groupCache) {
 	gc.evicted.Store(true)
 	if gc.refCount.Load() == 0 {
 		ring.releaseCache(gc)
@@ -161,6 +168,10 @@ func (ring *groupRing) markEvicted(gc *groupCache) {
 }
 
 func (ring *groupRing) releaseCache(gc *groupCache) {
+	if !gc.released.CompareAndSwap(false, true) {
+		return // already released by another goroutine
+	}
+
 	gc.mu.Lock()
 	if gc.frames == nil {
 		gc.mu.Unlock()

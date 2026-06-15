@@ -610,6 +610,60 @@ func BenchmarkGroupRing_Ingest(b *testing.B) {
 		for j := 0; j < 10; j++ {
 			cache.append(frame, pool)
 		}
+		ring.decrRef(cache)
 	}
+}
+
+func TestGroupRing_Stress(t *testing.T) {
+	const numReaders = 10
+	const numGroups = 1000
+	const ringSize = 8
+
+	pool := NewFramePool(DefaultNewFrameCapacity)
+	ring := newGroupRing(ringSize, pool)
+
+	var wg sync.WaitGroup
+
+	// Start readers
+	for r := range numReaders {
+		wg.Add(1)
+		go func(readerID int) {
+			defer wg.Done()
+			for g := 1; g < numGroups; g++ {
+				// Sleep to simulate processing lag
+				time.Sleep(time.Duration(g%3) * time.Microsecond)
+
+				cache := ring.get(moqt.GroupSequence(g))
+				if cache != nil {
+					// Read frame
+					_ = cache.next(0)
+					ring.decrRef(cache)
+				}
+			}
+		}(r)
+	}
+
+	// Start writer (ingest)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for g := 1; g < numGroups; g++ {
+			cache := ring.reserve(moqt.GroupSequence(g))
+			
+			// Simulate concurrent fill
+			wg.Add(1)
+			go func(c *groupCache, groupSeq int) {
+				defer wg.Done()
+				time.Sleep(time.Duration(groupSeq%5) * time.Microsecond)
+				
+				src := &fakeFrameSource{
+					frames: [][]byte{[]byte("frame-data")},
+				}
+				ring.fill(src, c, nil)
+			}(cache, g)
+		}
+	}()
+
+	wg.Wait()
 }
 
