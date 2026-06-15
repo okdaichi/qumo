@@ -1442,4 +1442,12 @@ func BenchmarkEgressHistogramObserve(b *testing.B) {
 			metricGroupDeliveryHistogram.WithLabelValues(trackNameStr).Observe(time.Since(start).Seconds())
 		}
 	})
+
+	b.Run("prebound", func(b *testing.B) {
+		observer := metricGroupDeliveryHistogram.WithLabelValues(string(trackName))
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			observer.Observe(time.Since(start).Seconds())
+		}
+	})
 }
