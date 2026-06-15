@@ -324,8 +324,9 @@ type trackDistributor struct {
 	manager *trackManager
 
 	// Pre-bound Prometheus counters to avoid per-frame label lookups in hot paths.
-	ingressCounter prometheus.Counter
-	egressCounter  prometheus.Counter
+	ingressCounter    prometheus.Counter
+	egressCounter     prometheus.Counter
+	deliveryHistogram prometheus.Observer
 
 	// session is non-nil when backend metering is active for this broadcast.
 	session *broadcastSession
@@ -343,15 +344,16 @@ type trackDistributor struct {
 
 func newTrackDistributor(manager *trackManager, trackID string, broadSess *broadcastSession) *trackDistributor {
 	d := &trackDistributor{
-		trackID:        trackID,
-		ring:           newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-		manager:        manager,
-		ingressCounter: metricRelayIngressBytesTotal.WithLabelValues(trackID),
-		egressCounter:  metricRelayEgressBytesTotal.WithLabelValues(trackID),
-		session:        broadSess,
-		fillSem:        make(chan struct{}, maxGroupFillsInFlightOrPanic()),
-		subscribers:    make(map[chan struct{}]struct{}),
-		done:           make(chan struct{}),
+		trackID:           trackID,
+		ring:              newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
+		manager:           manager,
+		ingressCounter:    metricRelayIngressBytesTotal.WithLabelValues(trackID),
+		egressCounter:     metricRelayEgressBytesTotal.WithLabelValues(trackID),
+		deliveryHistogram: metricGroupDeliveryHistogram.WithLabelValues(trackID),
+		session:           broadSess,
+		fillSem:           make(chan struct{}, maxGroupFillsInFlightOrPanic()),
+		subscribers:       make(map[chan struct{}]struct{}),
+		done:              make(chan struct{}),
 	}
 	go d.pollCacheDepth()
 	return d
@@ -395,7 +397,6 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 		last--
 	}
 
-	trackNameStr := string(tw.TrackName)
 	timer := time.NewTimer(NotifyTimeout)
 	if !timer.Stop() {
 		select {
@@ -480,7 +481,7 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 					}
 				}
 
-				metricGroupDeliveryHistogram.WithLabelValues(trackNameStr).Observe(time.Since(start).Seconds())
+				d.deliveryHistogram.Observe(time.Since(start).Seconds())
 				return false
 			}()
 			if shouldExit {
