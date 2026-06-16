@@ -151,7 +151,10 @@ jobs:
 
           # Full benchstat across all metrics (authoritative, shown collapsed).
           # geomean is on by default in current benchstat (-geomean is not a flag).
-          benchstat base.txt pr.txt > benchstat-full.txt
+          # -alpha=0.01 tightens significance vs the default 0.05 to cut
+          # false-positive deltas: all changed-package benchmarks run, so a
+          # stricter threshold keeps the comment focused on real changes.
+          benchstat -alpha=0.01 base.txt pr.txt > benchstat-full.txt
 
           # Relevant subset: a metric section is kept only if it has at least one
           # significant per-benchmark change (+/-N.NN%, excluding the geomean row);
