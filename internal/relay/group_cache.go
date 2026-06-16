@@ -17,10 +17,18 @@ type frameSource interface {
 
 const DefaultGroupCacheSize = 8
 
+// MaxFramesPerGroup is the maximum number of frames allowed in a single group cache.
+// This limit prevents unbounded growth and enables lockless reads by guaranteeing
+// that the frames slice never reallocates after construction.
+// Typical video groups at 60fps for 2 seconds = ~120 frames.
+// Audio-video groups may have more. Choose a value with comfortable headroom.
+const MaxFramesPerGroup = 256
+
 type groupCache struct {
-	mu       sync.RWMutex // Protects frames slice; RLock for next, Lock for append
+	mu       sync.RWMutex // Protects frames slice; Lock for append only
 	seq      moqt.GroupSequence
 	frames   []*moqt.Frame
+	frameLen atomic.Int32 // Number of frames in frames slice (for lockless reads)
 	complete atomic.Bool // True when all frames have been added
 	refCount atomic.Int32
 	evicted  atomic.Bool
@@ -45,25 +53,47 @@ func (gc *groupCache) incrRef() {
 // The frame is cloned and stored in the cache.
 // Thread-safe: can be called concurrently (though typically called from single goroutine).
 func (gc *groupCache) append(f *moqt.Frame, pool *FramePool) {
+	// Fast path: quick length check without full lock.
+	// Racy in multi-writer mode, but we re-check under Lock below.
+	gc.mu.RLock()
+	atLimit := len(gc.frames) >= MaxFramesPerGroup
+	gc.mu.RUnlock()
+
+	if atLimit {
+		// Slow path: log once and skip
+		slog.Warn("group exceeded max frame limit", "seq", gc.seq, "max", MaxFramesPerGroup)
+		return
+	}
+
 	// Clone outside the lock: the clone is private until appended, so the
 	// memmove does not need to exclude concurrent readers.
 	clone := pool.Get()
 	_, _ = f.WriteTo(clone)
 
 	gc.mu.Lock()
+	// Re-check under lock in case another writer raced us (rare)
+	if len(gc.frames) >= MaxFramesPerGroup {
+		pool.Put(clone) // return unused clone to pool
+		gc.mu.Unlock()
+		return
+	}
 	gc.frames = append(gc.frames, clone)
+	// Store length AFTER appending so readers see valid frames
+	newLen := int32(len(gc.frames))
+	gc.frameLen.Store(newLen)
 	gc.mu.Unlock()
 }
 
 // next returns the frame at the given index.
-// Thread-safe: can be called concurrently.
+// Thread-safe: can be called concurrently. Uses atomic length for lockless reads.
 func (gc *groupCache) next(index int) *moqt.Frame {
-	gc.mu.RLock()
-	defer gc.mu.RUnlock()
-
-	if index < 0 || index >= len(gc.frames) {
+	// Lockless read: load length atomically and check bounds
+	frameLen := gc.frameLen.Load()
+	if index < 0 || index >= int(frameLen) {
 		return nil
 	}
+	// Slice base pointer is stable (F4: pre-allocated, MaxFramesPerGroup)
+	// and we never shrink, so this access is safe without lock.
 	return gc.frames[index]
 }
 
@@ -75,7 +105,7 @@ func newGroupRing(size int, pool *FramePool) *groupRing {
 	}
 	ring.gcPool.New = func() any {
 		return &groupCache{
-			frames: make([]*moqt.Frame, 0, 32),
+			frames: make([]*moqt.Frame, 0, MaxFramesPerGroup),
 		}
 	}
 	return ring
@@ -100,6 +130,12 @@ func (ring *groupRing) reserve(seq moqt.GroupSequence) *groupCache {
 	cache.refCount.Store(1) // 1 reference for the in-flight filler
 	cache.evicted.Store(false)
 	cache.released.Store(false)
+	// Reinitialize content state so the lockless read contract does not depend
+	// on releaseCache having cleaned up. append indexes by len(frames) and next()
+	// gates reads by frameLen, so both must start at zero together for a new group.
+	cache.frames = cache.frames[:0]
+	cache.frameLen.Store(0)
+
 	idx := int(ring.pos.Add(1) % uint64(ring.size))
 
 	ring.mu.Lock()
@@ -182,6 +218,7 @@ func (ring *groupRing) releaseCache(gc *groupCache) {
 		gc.frames[i] = nil
 	}
 	gc.frames = gc.frames[:0]
+	gc.frameLen.Store(0) // Reset atomic length for reuse
 	gc.mu.Unlock()
 
 	ring.gcPool.Put(gc)
