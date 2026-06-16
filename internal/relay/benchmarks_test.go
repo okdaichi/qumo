@@ -72,34 +72,51 @@ func BenchmarkGroupCache_Next_HitRate(b *testing.B) {
 }
 
 func BenchmarkGroupCache_ConcurrentAppendAndNext(b *testing.B) {
-	pool := NewFramePool(DefaultNewFrameCapacity)
-	gc := &groupCache{
-		seq:    1,
-		frames: make([]*moqt.Frame, 0, 1024),
-	}
+	const (
+		writers   = 10
+		readers   = 10
+		framesCap = 1024 // bound the working set so the slice can't grow unboundedly
+	)
 
-	frame := moqt.NewFrame(DefaultNewFrameCapacity)
-	frame.Write([]byte("test data"))
-
-	b.ResetTimer()
 	b.Run("10writers_10readers", func(b *testing.B) {
-		var wg sync.WaitGroup
+		pool := NewFramePool(DefaultNewFrameCapacity)
+		gc := &groupCache{
+			seq:    1,
+			frames: make([]*moqt.Frame, 0, framesCap),
+		}
+		frame := moqt.NewFrame(DefaultNewFrameCapacity)
+		frame.Write([]byte("test data"))
 
-		for w := 0; w < 10; w++ {
-			wg.Add(1)
+		b.ResetTimer()
+		b.ReportAllocs()
+
+		// Work is scaled to b.N and divided across goroutines, so the reported
+		// ns/op reflects one operation (previously each goroutine ran b.N
+		// iterations, inflating the result by writers+readers).
+		var wg sync.WaitGroup
+		wg.Add(writers + readers)
+
+		for w := 0; w < writers; w++ {
 			go func() {
 				defer wg.Done()
-				for i := 0; i < b.N; i++ {
+				for i := 0; i < b.N/writers; i++ {
 					gc.append(frame, pool)
+					// groupCache.append grows frames without bound; trim
+					// periodically (under the same lock append uses) to keep
+					// memory bounded at high b.N.
+					if i%framesCap == 0 {
+						gc.mu.Lock()
+						gc.frames = gc.frames[:0]
+						gc.mu.Unlock()
+					}
 				}
 			}()
 		}
 
-		for r := 0; r < 10; r++ {
-			wg.Add(1)
+		for r := 0; r < readers; r++ {
 			go func() {
 				defer wg.Done()
-				for i := 0; i < b.N; i++ {
+				for i := 0; i < b.N/readers; i++ {
 					_ = gc.next(i % 100)
 				}
 			}()
@@ -242,10 +259,12 @@ func BenchmarkMemAllocs_FramePool(b *testing.B) {
 }
 
 func BenchmarkMemAllocs_GroupCache_Append(b *testing.B) {
+	const framesCap = 4096
+
 	pool := NewFramePool(DefaultNewFrameCapacity)
 	gc := &groupCache{
 		seq:    1,
-		frames: make([]*moqt.Frame, 0),
+		frames: make([]*moqt.Frame, 0, framesCap),
 	}
 
 	frame := moqt.NewFrame(DefaultNewFrameCapacity)
@@ -254,8 +273,15 @@ func BenchmarkMemAllocs_GroupCache_Append(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for range b.N {
+	for i := 0; i < b.N; i++ {
 		gc.append(frame, pool)
+		// groupCache.append grows frames without bound; trim periodically to
+		// bound memory without distorting the amortized allocs/op measurement.
+		if i%framesCap == 0 {
+			gc.mu.Lock()
+			gc.frames = gc.frames[:0]
+			gc.mu.Unlock()
+		}
 	}
 }
 
@@ -276,16 +302,17 @@ func BenchmarkMemAllocs_GroupRing_Reserve(b *testing.B) {
 // ============================================================================
 
 func BenchmarkLockPressure_GroupCache(b *testing.B) {
+	const framesCap = 512 // bound the working set so the slice can't grow unboundedly
+
 	tests := []struct {
-		name       string
-		writers    int
-		readers    int
-		iterations int
+		name    string
+		writers int
+		readers int
 	}{
-		{"1w_1r", 1, 1, 100},
-		{"1w_10r", 1, 10, 100},
-		{"10w_10r", 10, 10, 100},
-		{"1w_100r", 1, 100, 100},
+		{"1w_1r", 1, 1},
+		{"1w_10r", 1, 10},
+		{"10w_10r", 10, 10},
+		{"1w_100r", 1, 100},
 	}
 
 	for _, tt := range tests {
@@ -293,7 +320,7 @@ func BenchmarkLockPressure_GroupCache(b *testing.B) {
 			pool := NewFramePool(DefaultNewFrameCapacity)
 			gc := &groupCache{
 				seq:    1,
-				frames: make([]*moqt.Frame, 0),
+				frames: make([]*moqt.Frame, 0, framesCap),
 			}
 
 			frame := moqt.NewFrame(DefaultNewFrameCapacity)
@@ -304,23 +331,32 @@ func BenchmarkLockPressure_GroupCache(b *testing.B) {
 
 			var wg sync.WaitGroup
 
-			// Writers
+			// Writers: work scales with b.N (previously a fixed iteration
+			// count made ns/op meaningless and ignored b.N).
 			for w := 0; w < tt.writers; w++ {
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
-					for i := 0; i < tt.iterations; i++ {
+					for i := 0; i < b.N/tt.writers; i++ {
 						gc.append(frame, pool)
+						// groupCache.append grows frames without bound; trim
+						// periodically (under the same lock append uses) to
+						// keep memory bounded at high b.N.
+						if i%framesCap == 0 {
+							gc.mu.Lock()
+							gc.frames = gc.frames[:0]
+							gc.mu.Unlock()
+						}
 					}
 				}()
 			}
 
-			// Readers
+			// Readers: work scales with b.N, divided across readers.
 			for r := 0; r < tt.readers; r++ {
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
-					for i := 0; i < tt.iterations; i++ {
+					for i := 0; i < b.N/tt.readers; i++ {
 						_ = gc.next(i % 10)
 					}
 				}()
