@@ -132,6 +132,11 @@ func (ring *groupRing) reserve(seq moqt.GroupSequence) *groupCache {
 	cache.refCount.Store(1) // 1 reference for the in-flight filler
 	cache.evicted.Store(false)
 	cache.released.Store(false)
+	// Reinitialize content state so the lockless read contract does not depend
+	// on releaseCache having cleaned up. append indexes by len(frames) and next()
+	// gates reads by frameLen, so both must start at zero together for a new group.
+	cache.frames = cache.frames[:0]
+	cache.frameLen.Store(0)
 
 	idx := int(ring.pos.Add(1) % uint64(ring.size))
 	old := ring.caches[idx].Swap(cache)
