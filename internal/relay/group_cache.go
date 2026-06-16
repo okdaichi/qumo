@@ -17,6 +17,13 @@ type frameSource interface {
 
 const DefaultGroupCacheSize = 8
 
+// MaxFramesPerGroup is the maximum number of frames allowed in a single group cache.
+// This limit prevents unbounded growth and enables lockless reads by guaranteeing
+// that the frames slice never reallocates after construction.
+// Typical video groups at 60fps for 2 seconds = ~120 frames.
+// Audio-video groups may have more. Choose a value with comfortable headroom.
+const MaxFramesPerGroup = 256
+
 type groupCache struct {
 	mu       sync.RWMutex // Protects frames slice; RLock for next, Lock for append
 	seq      moqt.GroupSequence
@@ -45,12 +52,30 @@ func (gc *groupCache) incrRef() {
 // The frame is cloned and stored in the cache.
 // Thread-safe: can be called concurrently (though typically called from single goroutine).
 func (gc *groupCache) append(f *moqt.Frame, pool *FramePool) {
+	// Fast path: quick length check without full lock.
+	// Racy in multi-writer mode, but we re-check under Lock below.
+	gc.mu.RLock()
+	atLimit := len(gc.frames) >= MaxFramesPerGroup
+	gc.mu.RUnlock()
+
+	if atLimit {
+		// Slow path: log once and skip
+		slog.Warn("group exceeded max frame limit", "seq", gc.seq, "max", MaxFramesPerGroup)
+		return
+	}
+
 	// Clone outside the lock: the clone is private until appended, so the
 	// memmove does not need to exclude concurrent readers.
 	clone := pool.Get()
 	_, _ = f.WriteTo(clone)
 
 	gc.mu.Lock()
+	// Re-check under lock in case another writer raced us (rare)
+	if len(gc.frames) >= MaxFramesPerGroup {
+		pool.Put(clone) // return unused clone to pool
+		gc.mu.Unlock()
+		return
+	}
 	gc.frames = append(gc.frames, clone)
 	gc.mu.Unlock()
 }
@@ -75,7 +100,7 @@ func newGroupRing(size int, pool *FramePool) *groupRing {
 	}
 	ring.gcPool.New = func() any {
 		return &groupCache{
-			frames: make([]*moqt.Frame, 0, 32),
+			frames: make([]*moqt.Frame, 0, MaxFramesPerGroup),
 		}
 	}
 	return ring
