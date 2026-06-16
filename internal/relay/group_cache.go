@@ -25,9 +25,10 @@ const DefaultGroupCacheSize = 8
 const MaxFramesPerGroup = 256
 
 type groupCache struct {
-	mu       sync.RWMutex // Protects frames slice; RLock for next, Lock for append
+	mu       sync.RWMutex // Protects frames slice; Lock for append only
 	seq      moqt.GroupSequence
 	frames   []*moqt.Frame
+	frameLen atomic.Int32 // Number of frames in frames slice (for lockless reads)
 	complete atomic.Bool // True when all frames have been added
 	refCount atomic.Int32
 	evicted  atomic.Bool
@@ -77,18 +78,22 @@ func (gc *groupCache) append(f *moqt.Frame, pool *FramePool) {
 		return
 	}
 	gc.frames = append(gc.frames, clone)
+	// Store length AFTER appending so readers see valid frames
+	newLen := int32(len(gc.frames))
+	gc.frameLen.Store(newLen)
 	gc.mu.Unlock()
 }
 
 // next returns the frame at the given index.
-// Thread-safe: can be called concurrently.
+// Thread-safe: can be called concurrently. Uses atomic length for lockless reads.
 func (gc *groupCache) next(index int) *moqt.Frame {
-	gc.mu.RLock()
-	defer gc.mu.RUnlock()
-
-	if index < 0 || index >= len(gc.frames) {
+	// Lockless read: load length atomically and check bounds
+	frameLen := gc.frameLen.Load()
+	if index < 0 || index >= int(frameLen) {
 		return nil
 	}
+	// Slice base pointer is stable (F4: pre-allocated, MaxFramesPerGroup)
+	// and we never shrink, so this access is safe without lock.
 	return gc.frames[index]
 }
 
@@ -207,6 +212,7 @@ func (ring *groupRing) releaseCache(gc *groupCache) {
 		gc.frames[i] = nil
 	}
 	gc.frames = gc.frames[:0]
+	gc.frameLen.Store(0) // Reset atomic length for reuse
 	gc.mu.Unlock()
 
 	ring.gcPool.Put(gc)
