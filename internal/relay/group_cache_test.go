@@ -92,7 +92,7 @@ func TestGroupCache_ConcurrentAppend(t *testing.T) {
 	gc := &groupCache{seq: 1, frames: make([]*moqt.Frame, 0)}
 
 	const goroutines = 10
-	const appendsPerGoroutine = 100
+	const appendsPerGoroutine = 20 // Stay under MaxFramesPerGroup (256)
 
 	var wg sync.WaitGroup
 	for range goroutines {
