@@ -93,21 +93,21 @@ type groupRing struct {
 // reserve atomically allocates a ring slot for seq and returns the new cache.
 // It must be called from the ingest goroutine (single writer) to preserve group ordering.
 func (ring *groupRing) reserve(seq moqt.GroupSequence) *groupCache {
-	ring.mu.Lock()
-	defer ring.mu.Unlock()
-
+	// Prepare the new cache before acquiring the lock — it is private until Swap.
 	cache := ring.gcPool.Get().(*groupCache)
 	cache.seq = seq
 	cache.complete.Store(false)
 	cache.refCount.Store(1) // 1 reference for the in-flight filler
 	cache.evicted.Store(false)
 	cache.released.Store(false)
-
 	idx := int(ring.pos.Add(1) % uint64(ring.size))
+
+	ring.mu.Lock()
 	old := ring.caches[idx].Swap(cache)
 	if old != nil {
 		ring.markEvictedLocked(old)
 	}
+	ring.mu.Unlock()
 	return cache
 }
 
