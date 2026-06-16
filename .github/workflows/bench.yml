@@ -153,11 +153,24 @@ jobs:
           # geomean is on by default in current benchstat (-geomean is not a flag).
           benchstat base.txt pr.txt > benchstat-full.txt
 
-          # Relevant subset: drop non-significant rows (benchstat marks them "~")
-          # and the explanatory footnotes (e.g. "need >= N samples", "all samples
-          # are equal"). Keeps section headers, the geomean line, and the
-          # significant (+/-N.NN%) rows.
-          awk '!/~/ && !/need >= / && !/are equal/ && !/must be >0/' benchstat-full.txt > benchstat.txt
+          # Relevant subset: a metric section is kept only if it has at least one
+          # significant per-benchmark change (+/-N.NN%, excluding the geomean row);
+          # sections with no change are dropped entirely. Within kept sections,
+          # non-significant ("~") rows and footnotes are removed. Env metadata
+          # (goos/goarch/pkg/cpu) is printed once at the top.
+          awk '
+            function printBlock() {
+              if (outCount == 0) printf "%s", envBlock; else print ""
+              printf "%s", buf; outCount++
+            }
+            BEGIN { outCount = 0 }
+            /^(goos|goarch|pkg|cpu):/ { envBlock = envBlock $0 "\n"; next }
+            /~/ { next }
+            /need >= |are equal|must be >0/ { next }
+            /^[[:space:]]*$/ { if (emit) printBlock(); buf = ""; emit = 0; next }
+            { buf = buf $0 "\n"; if ($0 ~ / [+-][0-9]+\.[0-9]+% / && $0 !~ /^geomean/) emit = 1 }
+            END { if (emit) printBlock() }
+          ' benchstat-full.txt > benchstat.txt
 
           # Count significant per-benchmark changes (exclude the geomean rows).
           regress=$(grep -E ' \+[0-9]+\.[0-9]+% ' benchstat-full.txt | grep -vc '^geomean' || true)
