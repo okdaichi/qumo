@@ -3,7 +3,6 @@ package ingest
 import (
 	"context"
 	"encoding/base64"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"log/slog"
@@ -213,19 +212,10 @@ func (s *RTSPServer) handleConn(ctx context.Context, conn *rtsp.Conn) {
 					}
 				} else if media.Type == "audio" && strings.Contains(media.RtpMap, "mpeg4-generic") {
 					track.kind = trackKindAudio
-					if fmtp := media.Fmtp; fmtp != "" {
-						if idx := strings.Index(fmtp, "config="); idx != -1 {
-							configHex := strings.Split(fmtp[idx+7:], ";")[0]
-							config, _ := hex.DecodeString(configHex)
-							if len(config) >= 2 {
-								// Simple AAC config parsing (placeholder)
-								cfg := &AACConfig{
-									SampleRate:    44100,
-									ChannelConfig: 2,
-								}
-								sess.RegisterAudio(cfg)
-							}
-						}
+					cfg := parseAACConfigFromFmtp(media.Fmtp)
+					track.aacDepack = newAACDepacketizer(media.Fmtp, cfg.SampleRate)
+					if err := sess.RegisterAudio(cfg); err != nil {
+						slog.Warn("failed to register audio track", "error", err)
 					}
 				}
 			}
@@ -260,6 +250,9 @@ type rtspTrack struct {
 	kind    trackKind
 	avcCfg  *AVCConfig
 
+	// aacDepack reassembles AAC access units from mpeg4-generic RTP payloads.
+	aacDepack *aacDepacketizer
+
 	// RTP reassembly
 	fuBuffer []byte
 }
@@ -273,7 +266,20 @@ func (t *rtspTrack) handleFrame(f *rtsp.InterleavedFrame) {
 	if t.kind == trackKindVideo {
 		t.handleVideoRTP(packet)
 	} else {
-		// Audio handling (placeholder)
+		t.handleAudioRTP(packet)
+	}
+}
+
+func (t *rtspTrack) handleAudioRTP(p *rtsp.RTPPacket) {
+	if t.session == nil || t.aacDepack == nil {
+		return
+	}
+	aus, err := t.aacDepack.depacketize(p.Payload, p.Header.Timestamp)
+	if err != nil {
+		return
+	}
+	for _, au := range aus {
+		t.session.PushAudio(au.pts, au.data)
 	}
 }
 
