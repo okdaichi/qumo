@@ -309,6 +309,15 @@ func (b *trackBuffer) serve(ctx context.Context, tw *moqt.TrackWriter) {
 		last--
 	}
 
+	timer := time.NewTimer(notifyTimeout)
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
+	defer timer.Stop()
+
 	for {
 		latest := b.head()
 
@@ -353,9 +362,10 @@ func (b *trackBuffer) serve(ctx context.Context, tw *moqt.TrackWriter) {
 				}
 
 				// Wait for more frames within this group.
+				timer.Reset(notifyTimeout)
 				select {
 				case <-notify:
-				case <-time.After(notifyTimeout):
+				case <-timer.C:
 				case <-ctx.Done():
 					_ = gw.Close()
 					return
@@ -371,9 +381,10 @@ func (b *trackBuffer) serve(ctx context.Context, tw *moqt.TrackWriter) {
 		}
 
 		// No new groups yet; wait for data.
+		timer.Reset(notifyTimeout)
 		select {
 		case <-notify:
-		case <-time.After(notifyTimeout):
+		case <-timer.C:
 		case <-ctx.Done():
 			return
 		case <-twCtx.Done():

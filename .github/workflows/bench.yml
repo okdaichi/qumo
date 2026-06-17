@@ -1,0 +1,250 @@
+name: Remote Benchmark
+
+# Runs Go benchmarks on changed packages for a PR, compares base vs PR with
+# benchstat, and posts/updates a single comment. Report-only: it never fails
+# the check (significant regressions are highlighted but do not block merge).
+#
+# Triggered when the `performance-check` label is present — both when it is
+# added and on every subsequent push (synchronize) to the labeled PR.
+
+on:
+  pull_request:
+    types: [labeled, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: bench-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  benchmark:
+    # Run only while the PR carries the performance-check label (covers both
+    # label-added and new-push events). Always exits successfully.
+    if: contains(github.event.pull_request.labels.*.name, 'performance-check')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      # 10 samples so benchstat can compute statistical significance.
+      BENCH_COUNT: "10"
+      # Short per-run benchtime keeps CI within budget: the relay suite is ~70s
+      # at benchtime=1s, so count=10 x (base+PR) x 1s would exceed the job
+      # timeout on slower shared runners. 300ms/run keeps statistical power
+      # (10 samples) while cutting runtime ~3x.
+      BENCH_TIME: 300ms
+      BENCH_TIMEOUT: 20m
+    steps:
+      - name: Checkout PR head
+        # SHA: actions/checkout@v6.0.3
+        uses: actions/checkout@9f698171ed81b15d1823a05fc7211befd50c8ae0
+        with:
+          ref: ${{ env.HEAD_SHA }}
+          fetch-depth: 0
+
+      - name: Set up Go
+        # SHA: actions/setup-go@v6.4.0
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Detect changed Go packages
+        id: changed
+        run: |
+          # Native git diff instead of a third-party action (avoids the
+          # tj-actions/changed-files supply-chain risk, CVE-2025-30066).
+          # Yields the actual package directories, not just top-level dirs.
+          git diff --name-only --diff-filter=ACMR "$BASE_SHA" "$HEAD_SHA" -- '*.go' \
+            | xargs -r -n1 dirname | sort -u > pkgs.txt
+
+          if [ -s pkgs.txt ]; then
+            echo "any=true" >> "$GITHUB_OUTPUT"
+            echo "Changed Go packages:"
+            cat pkgs.txt
+          else
+            echo "any=false" >> "$GITHUB_OUTPUT"
+            echo "No changed Go packages."
+          fi
+
+      - name: Checkout base into worktree
+        if: steps.changed.outputs.any == 'true'
+        run: |
+          # Separate worktree so base and PR source trees don't clobber each
+          # other (the old clean:false swap left stale files). The Go module
+          # and build caches are global, so both builds reuse them.
+          git worktree add "$RUNNER_TEMP/base" "$BASE_SHA"
+          echo "BASE_DIR=$RUNNER_TEMP/base" >> "$GITHUB_ENV"
+
+      - name: Run base benchmarks
+        if: steps.changed.outputs.any == 'true'
+        working-directory: ${{ env.BASE_DIR }}
+        run: |
+          # cwd is the base worktree; pkgs.txt and result files live in the
+          # workspace root, so reference them by absolute path.
+          rm -f "$GITHUB_WORKSPACE/base.txt" "$GITHUB_WORKSPACE/build-errors.md"
+          while IFS= read -r pkg; do
+            [ -d "./$pkg" ] || continue
+            echo "::group::Base benchmark: $pkg"
+            if out=$(go test -count="$BENCH_COUNT" -benchtime="$BENCH_TIME" -bench=. -benchmem -run=^$ -timeout="$BENCH_TIMEOUT" "./$pkg" 2>&1); then
+              printf '%s\n' "$out" >> "$GITHUB_WORKSPACE/base.txt"
+            else
+              echo "::error::Base benchmark/build failed for $pkg"
+              { echo "### ❌ \`$pkg\` — base build/run failed"; echo '```text'; printf '%s\n' "$out" | tail -n 25; echo '```'; } >> "$GITHUB_WORKSPACE/build-errors.md"
+            fi
+            echo "::endgroup::"
+          done < "$GITHUB_WORKSPACE/pkgs.txt"
+
+      - name: Run PR benchmarks
+        if: steps.changed.outputs.any == 'true'
+        run: |
+          while IFS= read -r pkg; do
+            echo "::group::PR benchmark: $pkg"
+            if out=$(go test -count="$BENCH_COUNT" -benchtime="$BENCH_TIME" -bench=. -benchmem -run=^$ -timeout="$BENCH_TIMEOUT" "./$pkg" 2>&1); then
+              printf '%s\n' "$out" >> pr.txt
+            else
+              echo "::error::PR benchmark/build failed for $pkg"
+              { echo "### ❌ \`$pkg\` — PR build/run failed"; echo '```text'; printf '%s\n' "$out" | tail -n 25; echo '```'; } >> build-errors.md
+            fi
+            echo "::endgroup::"
+          done < pkgs.txt
+
+      - name: Install benchstat
+        if: steps.changed.outputs.any == 'true'
+        run: go install golang.org/x/perf/cmd/benchstat@latest
+
+      - name: Compare and build report
+        id: report
+        run: |
+          {
+            echo "<!-- bench-report -->"
+            echo "## 🏁 Benchmark Results"
+            echo
+            echo "Comparing **base** \`${BASE_SHA:0:12}\` → **PR** \`${HEAD_SHA:0:12}\`  •  Runs per benchmark: \`${BENCH_COUNT}\`"
+            echo
+          } > report.md
+
+          if [ "${{ steps.changed.outputs.any }}" != "true" ]; then
+            echo "ℹ️ No changed Go packages — nothing to benchmark." >> report.md
+            echo "has_results=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ -f build-errors.md ]; then
+            {
+              echo "### ⚠️ Build/run errors"
+              echo
+              cat build-errors.md
+              echo
+            } >> report.md
+          fi
+
+          if [ ! -s base.txt ] || [ ! -s pr.txt ]; then
+            echo "ℹ️ No benchmark results to compare (changed packages had no benchmarks)." >> report.md
+            echo "has_results=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Full benchstat across all metrics (authoritative, shown collapsed).
+          # geomean is on by default in current benchstat (-geomean is not a flag).
+          # -alpha=0.01 tightens significance vs the default 0.05 to cut
+          # false-positive deltas: all changed-package benchmarks run, so a
+          # stricter threshold keeps the comment focused on real changes.
+          benchstat -alpha=0.01 base.txt pr.txt > benchstat-full.txt
+
+          # Relevant subset: a metric section is kept only if it has at least one
+          # significant per-benchmark change (+/-N.NN%, excluding the geomean row);
+          # sections with no change are dropped entirely. Within kept sections,
+          # non-significant ("~") rows and footnotes are removed. Env metadata
+          # (goos/goarch/pkg/cpu) is printed once at the top.
+          awk '
+            function printBlock() {
+              if (outCount == 0) printf "%s", envBlock; else print ""
+              printf "%s", buf; outCount++
+            }
+            BEGIN { outCount = 0 }
+            /^(goos|goarch|pkg|cpu):/ { envBlock = envBlock $0 "\n"; next }
+            /~/ { next }
+            /need >= |are equal|must be >0/ { next }
+            /^[[:space:]]*$/ { if (emit) printBlock(); buf = ""; emit = 0; next }
+            { buf = buf $0 "\n"; if ($0 ~ / [+-][0-9]+\.[0-9]+% / && $0 !~ /^geomean/) emit = 1 }
+            END { if (emit) printBlock() }
+          ' benchstat-full.txt > benchstat.txt
+
+          # Count significant per-benchmark changes (exclude the geomean rows).
+          regress=$(grep -E ' \+[0-9]+\.[0-9]+% ' benchstat-full.txt | grep -vc '^geomean' || true)
+          improv=$(grep -E ' -[0-9]+\.[0-9]+% ' benchstat-full.txt | grep -vc '^geomean' || true)
+
+          # Summary line: relevant metered changes only.
+          summary=""
+          [ "$regress" -gt 0 ] && summary="⚠️ **${regress} regression(s)**"
+          if [ "$improv" -gt 0 ]; then
+            [ -n "$summary" ] && summary="$summary  •  "
+            summary="${summary}✅ **${improv} improvement(s)**"
+          fi
+          if [ -z "$summary" ]; then
+            echo "✅ **No significant changes** — all benchmarks within measurement noise." >> report.md
+          else
+            echo "$summary" >> report.md
+          fi
+          echo >> report.md
+
+          # Show the relevant (significant) changes prominently when there are any.
+          if [ "$regress" -gt 0 ] || [ "$improv" -gt 0 ]; then
+            {
+              echo "<details open>"
+              echo "<summary>📊 Significant changes (base → PR, with diff)</summary>"
+              echo
+              echo '```text'
+              cat benchstat.txt
+              echo '```'
+              echo "</details>"
+            } >> report.md
+          fi
+
+          # Full output always available, collapsed, for completeness/audit.
+          {
+            echo "<details>"
+            echo "<summary>🔎 Full benchstat output (all benchmarks)</summary>"
+            echo
+            echo '```text'
+            cat benchstat-full.txt
+            echo '```'
+            echo "</details>"
+          } >> report.md
+
+          echo "has_results=true" >> "$GITHUB_OUTPUT"
+
+      - name: Post or update comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Find our marker comment and update it in place; otherwise create it.
+          marker="<!-- bench-report -->"
+          comment_id=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
+            --paginate --jq ".[] | select(.body | contains(\"$marker\")) | .id" | head -n1)
+          body="$(cat report.md)"
+          if [ -n "$comment_id" ]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$comment_id" -f body="$body" >/dev/null
+          else
+            gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file report.md
+          fi
+
+      - name: Upload artifacts
+        # SHA: actions/upload-artifact@v4.6.2
+        if: always() && steps.changed.outputs.any == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: benchmark-results
+          path: |
+            base.txt
+            pr.txt
+            benchstat.txt
+            benchstat-full.txt
+            report.md
+            build-errors.md
+          if-no-files-found: ignore

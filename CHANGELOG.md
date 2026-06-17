@@ -7,13 +7,100 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Performance
+
+- **Relay Handler Egress Allocation Optimization:** Extracted `string(tw.TrackName)` conversion outside the wait loop in the track distributor egress handler, preventing unnecessary memory allocations in the tight loop.
+
+### Removed
+
+- **Bootstrap server removed (`internal/bootstrap`):** The bootstrap discovery server
+  and client (`qumo bootstrap` command) have been removed from this repository.
+  Bootstrap functionality with traffic engineering is being migrated to the
+  qumo-enterprise repository as a control plane service.
+
+### Security
+
+- **TLS configuration hardened (`internal/relay`):** Removed `InsecureSkipVerify` from the relay dialer, enforcing proper TLS verification on outgoing connections to prevent Man-in-the-Middle attacks.
+- **Removed dynamic TLS generation:** Removed the capability to dynamically generate self-signed TLS certificates in production binaries when `INSECURE=true`. Test suites have been updated to utilize dynamically generated temporary certificates.
+
+### Performance
+
+- **Replaced `time.After` with `time.Timer` inside loops:** Removed `time.After` inside `for` loops in `internal/relay/handler.go` and `internal/ingest/handler.go`, eliminating allocations and significantly lowering GC footprint and latency.
+- **Optimized `time.After` usage (`internal/relay`):** Replaced `time.After` in busy loops within `handler.go` with a reusable `time.NewTimer` to prevent memory allocations per iteration, reducing garbage collector overhead.
+- **Optimized FLV AVC parsing (`internal/ingest`):** Improved `ParseAVCConfig` by implementing a safe, two-pass parsing algorithm that dramatically reduces garbage collector stress by removing slice allocations within SPS/PPS loops.
+
 ### Added
 
 - **RTSP Ingest Server (`internal/ingest`, `internal/rtsp`):** Implemented a complete RTSP 1.0 ingest server to bridge IP cameras and traditional encoders to MoQT.
   - *Protocol Stack*: Custom RTSP implementation including request/response parsing, interleaved binary framing over TCP, and SDP/RTP support.
-  - *Media De-packetization*: RTP de-packetizer for H.264 (supporting FU-A fragmentation) to reconstruct NAL units for MoQT delivery.
+  - *Media De-packetization*: H.264 (FU-A fragmentation) and AAC (mpeg4-generic, RFC 3640) RTP de-packetizers reconstruct NAL units and audio access units for MoQT delivery.
   - *CLI Command*: New `qumo rtsp` command to start a standalone RTSP-to-MoQT bridge.
   - *Mage Targets*: Added `rtsp:serve` for running the server, `rtsp:stream` for pushing test patterns with ffmpeg, and `rtsp:demo` for quick environment setup.
+- **Nomad LocalResolver simulation (`docker/docker-compose.nomad.yml`, `docker/nomad/`):**
+  A real single-region Nomad dev cluster (2 hubs + 2 edges) that exercises the
+  `LocalResolver` (Nomad native service discovery) path — edges discover local
+  hubs via Nomad and connect. Verifiable via the `qumo_relay_peers_connected`
+  metric. Manual simulation only; no automated integration tests. Cross-region
+  hub discovery (the `RemoteResolver`/`/peers` path) is explicitly out of scope.
+- **Peer resolver interface (`internal/relay/resolver.go`):** New `PeerResolver`
+  interface with `ResolvePeers(ctx, query)` method, `ResolvedPeer` and `PeerQuery`
+  types. Enables pluggable peer discovery backends.
+- **CredentialClient (`internal/relay/credential_client.go`):** Optional backend
+  integration for publisher credential authentication and usage metering.
+  When `QUMO_CREDENTIAL_URL` is set the relay authenticates each WebTransport
+  ANNOUNCE by subscribing to a well-known `"auth"` MoQ track on the announced
+  broadcast path (5 s timeout), reading the JWT from the first frame, and
+  calling `POST /v1/credentials/introspect`. Announcements with missing or
+  rejected credentials are silently dropped. Valid credentials are cached until
+  the server-supplied `revalidate_after` time; concurrent requests for the same
+  JWT are coalesced via `singleflight`; expired cache entries are swept on each
+  write. A `broadcastSession` UUID is minted per accepted announcement and
+  cumulative `gateway.ingress_bytes` / `gateway.egress_bytes` totals are
+  reported to `POST /v1/usage/events` every 30 s and on session close.
+  New env vars: `QUMO_CREDENTIAL_URL` (base URL) and `QUMO_RELAY_TOKEN` (shared
+  bearer token). When both vars are absent the relay behaves as before (open mode).
+- **LocalResolver (`internal/relay/local_resolver.go`):** Within-cluster peer
+  discovery via Nomad native service discovery API. Configured via `LOCAL_RESOLVER_ADDR`,
+  `LOCAL_RESOLVER_SERVICE_NAME`, and `LOCAL_RESOLVER_INTERVAL` environment variables.
+- **RemoteResolver (`internal/relay/remote_resolver.go`):** Cross-cluster peer
+  discovery via an external traffic resolver API (e.g. qumo-enterprise).
+  Configured via `REMOTE_RESOLVER_URL`, `REMOTE_AUTH_TOKEN`,
+  `REMOTE_RESOLVE_INTERVAL`, and `REMOTE_TLS_ENABLED`.
+- **In-process discovery integration test (`internal/relay`, build tag `integration`):**
+  Stands up a real edge + hub relay and a fake Nomad service catalog, asserting the
+  edge discovers the hub via `LocalResolver` and completes a real QUIC/MOQT handshake.
+  Kept out of the default `go test ./...` unit run; gated by a dedicated `Integration`
+  CI job (`go test -tags=integration`).
+
+### Changed
+
+- **Renamed `docker-compose.topology.yml` → `docker-compose.static.yml`:** clarifies
+  that it wires peers via static `PEERS` (no discovery), distinct from the new
+  `docker-compose.nomad.yml` which exercises Nomad service discovery.
+- **Publisher vs. peer-relay session split (`internal/relay/server.go`):** Native
+  QUIC sessions (relay peers, ALPN `moqt`) are now handled by a dedicated
+  `relayPeer` path that bypasses credential auth. WebTransport sessions
+  (publishers and browsers, ALPN `h3`) go through `Relay` and require credential
+  auth when `QUMO_CREDENTIAL_URL` is set. This distinction is wired in `Server.init`
+  by setting separate handler funcs on `MOQServer.Handler` vs `WebTransportHandler`.
+- **`group_cache.fill` onFrame callback (`internal/relay/group_cache.go`):**
+  The `onFrame` parameter changed from `func()` to `func(n int)` where `n` is
+  the frame's byte length (0 on the group-completion call). This lets callers
+  accumulate ingress byte totals in the same pass without re-reading cached frames.
+- **Relay topology (`internal/relay/server.go`):** Updated peer discovery topology.
+  Edges connect to all local hubs (load-balanced). Hubs connect only to remote
+  hubs via the remote resolver (no local hub↔hub connections).
+- **`internal/relay/cmd.go`:** Replaced `BOOTSTRAP_URLS`/`BOOTSTRAP_INTERVAL` env
+  vars with `LOCAL_RESOLVER_*` and `REMOTE_*` resolver configuration.
+- **`main.go`:** Removed `qumo bootstrap` command.
+- **RemoteResolver `/peers` role handling (`internal/relay/remote_resolver.go`):**
+  Stopped sending `?role=hub` and dropped the client-side re-filter on the response
+  `role` field, ahead of the control-plane registry going hub-only
+  (foalk-inc/qumo-deploy#535). A peer's role now falls back to the queried role only
+  when the response omits it. Prevents silently dropping every hub once the registry
+  stops returning `role`. (#93)
+
+### Added
 
 - **Concurrent group fill limiting (`internal/relay`):** A buffered-channel semaphore
   (`fillSem`) now bounds the number of in-flight fill goroutines per `trackDistributor`
@@ -101,7 +188,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cross-region mesh validation. Exits with code 1 on frame loss or hash mismatch.
 - **`internal/smoketest` package:** Smoke test implementation moved from `cmd/smoketest`
   to `internal/smoketest` and invoked via the Mage build system.
-- **`docker-compose.topology.yml` port protocols:** UDP and TCP protocols are now
+- **`docker-compose.static.yml` port protocols:** UDP and TCP protocols are now
   explicitly declared for all relay service ports.
 
 ### Changed
@@ -138,6 +225,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`ingressCounter` never incremented (`internal/relay/handler.go`):** The
+  `trackDistributor.ingressCounter` Prometheus counter was allocated but never
+  updated in the data path. Ingress bytes are now counted inside the `fill`
+  callback in `processGroup` using the new `onFrame(n int)` signature.
 - **AVCC codec mismatch in web demo publisher (`solid-deno/src/publish/PublishBoard.tsx`,
   `solid-deno/src/subscribe/SubscribeBoard.tsx`):** `VideoEncoder` configured with `avc1.*`
   outputs AVCC-format frames, but the catalog was misreporting the codec as `avc3.*`
@@ -149,6 +240,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of silently discarding them (flag set changed to `ContinueOnError`).
 - **Smoke test error handling:** `frame.Write` and `gw.Close` errors are now caught
   and logged during publishing; early return prevents sending corrupt groups.
+- **Smoke test optimized:** Replaced `fmt.Sprintf` with `strconv.AppendInt` inside
+  `generateTestData` nested loop to avoid heavy reflection and large allocations.
+  Memory usage and allocations significantly reduced, yielding ~60% faster test payloads generation.
 
 ### Security
 

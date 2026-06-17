@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/qumo-dev/qumo/internal/bootstrap"
 	"github.com/qumo-dev/qumo/internal/ingest"
 	"github.com/qumo-dev/qumo/internal/relay"
 	"github.com/qumo-dev/qumo/internal/version"
@@ -12,10 +11,9 @@ import (
 
 var (
 	// overridable command handlers for easier unit-testing
-	runRelay     = relay.Run
-	runRTMP      = ingest.RunRTMP
-	runRTSP      = ingest.RunRTSP
-	runBootstrap = bootstrap.Run
+	runRelay = relay.Run
+	runRTMP  = ingest.RunRTMP
+	runRTSP  = ingest.RunRTSP
 )
 
 func main() {
@@ -47,8 +45,6 @@ func run(args []string) int {
 		err = runRTMP(cmdArgs)
 	case "rtsp":
 		err = runRTSP(cmdArgs)
-	case "bootstrap":
-		err = runBootstrap(cmdArgs)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n", cmd)
 		printUsage()
@@ -68,10 +64,9 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "Commands:")
 	fmt.Fprintln(os.Stderr, "  relay      Start the MoQ relay server")
 	fmt.Fprintln(os.Stderr, "  rtmp       Start the RTMP ingest server")
-	fmt.Fprintln(os.Stderr, "  bootstrap  Start the bootstrap discovery server")
 	fmt.Fprintln(os.Stderr, "  version    Print version information")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Configuration:")
 	fmt.Fprintln(os.Stderr, "  All commands are configured via environment variables.")
-	fmt.Fprintln(os.Stderr, "  See relay-config.example.env and bootstrap-config.example.env for details.")
+	fmt.Fprintln(os.Stderr, "  See relay-config.example.env for details.")
 }

@@ -1,15 +1,20 @@
 package relay
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"sync"
 	"time"
 
 	"github.com/qumo-dev/gomoqt/moqt"
-	"github.com/qumo-dev/qumo/internal/bootstrap"
 )
+
+// authTrackName is the well-known MoQ track name on which publishers send
+// their JWT credential. The relay subscribes to this track at ANNOUNCE time.
+const authTrackName moqt.TrackName = "auth"
 
 type Server struct {
 	// MOQServer is the underlying MoQT server. The caller is responsible for
@@ -23,9 +28,20 @@ type Server struct {
 	Config    *Config
 	TrackMux  *moqt.TrackMux
 
+	// credentialClient is non-nil when QUMO_CREDENTIAL_URL is configured.
+	// It handles credential introspection and usage reporting.
+	credentialClient *CredentialClient
+	// meter drives periodic and final usage reporting for metered sessions.
+	// It is non-nil exactly when credentialClient is non-nil.
+	meter *Meter
+
 	webtransportHandler *moqt.WebTransportHandler
 	statusHandler       *statusHandler
 	initOnce            sync.Once
+
+	// resolvers for peer discovery
+	localResolver  PeerResolver // Nomad native (within-cluster)
+	remoteResolver PeerResolver // Remote traffic resolver (cross-cluster)
 
 	// connectedMu guards connected, which tracks peer addresses already dialing
 	// or connected to prevent duplicate maintainPeer goroutines.
@@ -65,7 +81,10 @@ func (s *Server) init() {
 		if s.MOQServer.Handler != nil {
 			slog.Warn("relay.Server: overriding MOQServer.Handler set by caller")
 		}
-		s.MOQServer.Handler = moqt.HandleFunc(s.Relay)
+		// Native QUIC connections are always relay peers (ALPN "moqt").
+		// WebTransport connections (ALPN "h3") are publisher/browser sessions
+		// that require credential auth when the credential client is configured.
+		s.MOQServer.Handler = moqt.HandleFunc(s.relayPeer)
 		if s.MOQServer.TrackMux != nil {
 			slog.Warn("relay.Server: overriding MOQServer.TrackMux set by caller")
 		}
@@ -88,6 +107,13 @@ func (s *Server) init() {
 				go pollConnStats(conn.Context(), provider, addr)
 			}
 			return ctx
+		}
+
+		// Invariant: meter must be set whenever credentialClient is set.
+		// A manually-constructed Server that sets credentialClient without meter
+		// would panic later when the first metered announcement is accepted.
+		if s.credentialClient != nil && s.meter == nil {
+			panic("relay.Server: meter must be non-nil when credentialClient is set")
 		}
 
 		if s.connected == nil {
@@ -130,7 +156,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 // ConnectPeers dials configured peer relays and discovers their announcements
 // via ANNOUNCE_PLEASE. Received announcements are registered on the local
 // TrackMux so that subscribers can transparently access remote content.
-// It also starts bootstrap clients for each configured bootstrap server.
+// It also starts peer discovery loops for configured resolvers.
 // It blocks until ctx is cancelled.
 func (s *Server) ConnectPeers(ctx context.Context) {
 	s.init()
@@ -147,16 +173,18 @@ func (s *Server) ConnectPeers(ctx context.Context) {
 		})
 	}
 
-	// Dynamic peers from bootstrap servers.
-	for _, bsCfg := range s.Config.Bootstraps {
+	// Dynamic peer discovery loops.
+	// Local resolver: local cluster discovery (edge→all hubs, default→flat peers).
+	if s.localResolver != nil && s.Config.LocalResolverInterval > 0 {
 		wg.Go(func() {
-			client := bootstrap.NewClient(bsCfg, s.Config.NodeID, s.Config.AdvertiseAddr, s.Config.Region, s.Config.Role)
-			// Heartbeat goroutine.
-			wg.Go(func() {
-				client.Run(ctx)
-			})
-			// Topology-aware peer discovery goroutine.
-			s.discoverPeers(ctx, &wg, bsCfg.Interval, client)
+			s.discoverPeers(ctx, &wg, s.Config.LocalResolverInterval, s.localResolver)
+		})
+	}
+
+	// Remote resolver: cross-cluster hub discovery.
+	if s.remoteResolver != nil && s.Config.RemoteResolverInterval > 0 {
+		wg.Go(func() {
+			s.discoverPeers(ctx, &wg, s.Config.RemoteResolverInterval, s.remoteResolver)
 		})
 	}
 
@@ -164,10 +192,10 @@ func (s *Server) ConnectPeers(ctx context.Context) {
 }
 
 // filterPeersByAddr removes peers whose addresses are present in the exclude map.
-func filterPeersByAddr(peers []bootstrap.Node, exclude map[string]struct{}) []bootstrap.Node {
-	filtered := make([]bootstrap.Node, 0, len(peers))
+func filterPeersByAddr(peers []ResolvedPeer, exclude map[string]struct{}) []ResolvedPeer {
+	filtered := make([]ResolvedPeer, 0, len(peers))
 	for _, p := range peers {
-		if _, ok := exclude[p.Addr]; ok {
+		if _, ok := exclude[p.Address]; ok {
 			continue
 		}
 		filtered = append(filtered, p)
@@ -175,73 +203,61 @@ func filterPeersByAddr(peers []bootstrap.Node, exclude map[string]struct{}) []bo
 	return filtered
 }
 
-// discoverPeers runs the role-aware peer discovery loop for a single bootstrap client.
+// discoverPeers runs the role-aware peer discovery loop using resolver.
 // It builds topology connections according to the node's role (edge/hub/default)
 // and re-checks at interval. Already-connected peers are skipped.
-func (s *Server) discoverPeers(ctx context.Context, wg *sync.WaitGroup, interval time.Duration, client *bootstrap.Client) {
+func (s *Server) discoverPeers(ctx context.Context, wg *sync.WaitGroup, interval time.Duration, resolver PeerResolver) {
 	// connect dials each peer not already connected (server-wide dedup by address).
-	connect := func(peers []bootstrap.Node) {
+	connect := func(peers []ResolvedPeer) {
 		for _, p := range peers {
-			if !s.markConnected(p.Addr) {
+			if !s.markConnected(p.Address) {
 				continue
 			}
 			p := p
 			wg.Go(func() {
-				s.maintainPeer(ctx, Peer{Address: p.Addr})
-				s.markUnconnected(p.Addr)
+				s.maintainPeer(ctx, Peer{Address: p.Address})
+				s.markUnconnected(p.Address)
 			})
 		}
 	}
 
 	// connectFirst dials only the first peer from the slice.
-	connectFirst := func(peers []bootstrap.Node) {
+	connectFirst := func(peers []ResolvedPeer) {
 		if len(peers) > 0 {
 			connect(peers[:1])
 		}
 	}
 
 	tick := func() {
-		region := s.Config.Region
 		switch s.Config.Role {
 		case "edge":
-			// 2 local edges + 1 hub.
-			if peers, err := client.FetchPeers(ctx, bootstrap.PeerQuery{PreferredRegion: region, Role: "edge", Limit: 2}); err == nil {
-				connect(peers)
-			}
-			if peers, err := client.FetchPeers(ctx, bootstrap.PeerQuery{PreferredRegion: region, Role: "hub", Limit: 2}); err == nil {
-				connectFirst(peers)
+			// Edge nodes connect to ALL local hubs (load-balanced content relay).
+			// No edge-to-edge or cross-region connections.
+			// Only use the local (Nomad) resolver — never query the enterprise resolver.
+			if resolver == s.localResolver {
+				if peers, err := resolver.ResolvePeers(ctx, PeerQuery{Role: "hub"}); err == nil {
+					connect(peers)
+				}
 			}
 
 		case "hub":
-			// 2 local peers + 2 same-region hubs + 1 cross-region hub.
-			// Avoid wasting the same-region hub limit on nodes already selected as local peers.
-			var localPeers []bootstrap.Node
-			if peers, err := client.FetchPeers(ctx, bootstrap.PeerQuery{PreferredRegion: region, Limit: 2}); err == nil {
-				connect(peers)
-				localPeers = peers
-			}
-			if peers, err := client.FetchPeers(ctx, bootstrap.PeerQuery{PreferredRegion: region, Role: "hub", Limit: 2}); err == nil {
-				exclude := make(map[string]struct{}, len(localPeers))
-				for _, p := range localPeers {
-					exclude[p.Addr] = struct{}{}
+			// Hub nodes connect to remote hubs (cross-cluster) via remote resolver.
+			// No local hub-to-hub connections (reduces hops/latency within cluster).
+			if resolver == s.remoteResolver {
+				if peers, err := resolver.ResolvePeers(ctx, PeerQuery{Role: "hub"}); err == nil {
+					connectFirst(peers)
 				}
-				connect(filterPeersByAddr(peers, exclude))
 			}
-			// Cross-region: fetch hubs from any region, then client-side filter to other regions.
-			if all, err := client.FetchPeers(ctx, bootstrap.PeerQuery{Role: "hub", AllowRemote: true, Limit: 5}); err == nil {
-				var remote []bootstrap.Node
-				for _, p := range all {
-					if p.Region != region {
-						remote = append(remote, p)
-					}
-				}
-				connectFirst(remote)
-			}
+			// When local resolver (Nomad) is the resolver being used, hubs
+			// do nothing — no local hub connections needed.
 
 		default:
-			// Flat discovery: any peers in the preferred region.
-			if peers, err := client.FetchPeers(ctx, bootstrap.PeerQuery{PreferredRegion: region, Limit: 5}); err == nil {
-				connect(peers)
+			// Flat discovery: any peers in the cluster (for nodes without role set).
+			// Only use the local (Nomad) resolver.
+			if resolver == s.localResolver {
+				if peers, err := resolver.ResolvePeers(ctx, PeerQuery{Limit: 5}); err == nil {
+					connect(peers)
+				}
 			}
 		}
 	}
@@ -301,7 +317,7 @@ func (s *Server) maintainPeer(ctx context.Context, peer Peer) {
 		}
 		metricPeerDialAttempts.WithLabelValues(peer.Address, "ok").Inc()
 
-		s.Relay(sess)
+		s.relayPeer(sess)
 
 		<-sess.Context().Done()
 
@@ -326,7 +342,23 @@ func waitRetry(ctx context.Context, d time.Duration) bool {
 	}
 }
 
+// Relay handles inbound WebTransport sessions (publishers and browser clients).
+// When a backend client is configured, each announced broadcast path is
+// authenticated via a JWT read from the "auth" MoQ track before being accepted.
 func (s *Server) Relay(sess *moqt.Session) {
+	s.serveSession(sess, true)
+}
+
+// relayPeer handles native QUIC sessions from trusted relay peers.
+// These sessions are authenticated at the transport layer (mTLS) and bypass
+// the per-announcement JWT credential check.
+func (s *Server) relayPeer(sess *moqt.Session) {
+	s.serveSession(sess, false)
+}
+
+// serveSession is the shared core for Relay and relayPeer.
+// requireAuth=true enables per-announcement JWT authentication (publisher path).
+func (s *Server) serveSession(sess *moqt.Session, requireAuth bool) {
 	s.init()
 	defer sess.CloseWithError(moqt.NoError, moqt.NoError.String())
 
@@ -336,7 +368,7 @@ func (s *Server) Relay(sess *moqt.Session) {
 	addr := sess.RemoteAddr().String()
 	go pollSessionStats(sess, addr)
 
-	slog.Info("relay: new session", "remote", addr)
+	slog.Info("relay: new session", "remote", addr, "peer", !requireAuth)
 
 	announced, err := sess.AcceptAnnounce("/")
 	if err != nil {
@@ -354,7 +386,22 @@ func (s *Server) Relay(sess *moqt.Session) {
 			return
 		}
 
-		handler := newRelayHandler(ann, sess, s.Config.NodeID)
+		// Authenticate publisher announcements when the credential client is configured.
+		var broadSess *broadcastSession
+		if requireAuth && s.credentialClient != nil {
+			broadSess, err = s.authenticateAnnouncement(sess.Context(), sess, ann)
+			if err != nil {
+				// MoQ has no per-announcement error response, so the publisher
+				// receives no explicit rejection — the ANNOUNCE is simply not
+				// mirrored into the TrackMux.
+				slog.Warn("relay: announcement rejected: credential check failed",
+					"broadcast_path", ann.BroadcastPath(),
+					"error", err)
+				continue
+			}
+		}
+
+		handler := newRelayHandler(ann, sess, s.Config.NodeID, broadSess)
 
 		// Route selection: only replace an existing active handler if the new
 		// route is strictly better. This is evaluated once per new candidate to
@@ -384,6 +431,65 @@ func (s *Server) Relay(sess *moqt.Session) {
 		// the child context from the parent's internal children list.
 		context.AfterFunc(sess.Context(), handler.cancel)
 
+		// Register the broadcast session with the meter so usage is reported
+		// periodically and on session close.
+		if broadSess != nil {
+			s.meter.Register(broadSess)
+			context.AfterFunc(handler.ctx, func() {
+				shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				s.meter.Deregister(shutdownCtx, broadSess)
+			})
+		}
+
 		s.TrackMux.Announce(ann, handler)
 	}
+}
+
+// authenticateAnnouncement subscribes to the "auth" track on the announced
+// broadcast path, reads the JWT from the first frame, and introspects it
+// against the credential introspection endpoint.
+//
+// Publisher-side contract: the publisher must serve a single-group track named
+// "auth" on the announced broadcast path. The group must contain at least one
+// frame whose payload is the raw JWT bytes (no framing). The relay expects the
+// complete JWT to arrive within the 5-second authCtx deadline.
+//
+// Returns the minted broadcastSession on success, or an error if authentication
+// fails (missing track, empty JWT, or invalid/expired credential).
+func (s *Server) authenticateAnnouncement(ctx context.Context, sess *moqt.Session, ann *moqt.Announcement) (*broadcastSession, error) {
+	authCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	reader, err := sess.Subscribe(authCtx, ann.BroadcastPath(), authTrackName, nil)
+	if err != nil {
+		return nil, fmt.Errorf("subscribe auth track: %w", err)
+	}
+
+	gr, err := reader.AcceptGroup(authCtx)
+	if err != nil {
+		return nil, fmt.Errorf("accept auth group: %w", err)
+	}
+
+	buf := DefaultFramePool.Get()
+	defer DefaultFramePool.Put(buf)
+
+	var jwtBuf bytes.Buffer
+	for frame := range gr.Frames(buf) {
+		jwtBuf.Write(frame.Body())
+	}
+	if jwtBuf.Len() == 0 {
+		return nil, fmt.Errorf("auth track: empty JWT")
+	}
+	jwt := jwtBuf.String()
+
+	result, err := s.credentialClient.Introspect(authCtx, jwt)
+	if err != nil {
+		return nil, fmt.Errorf("introspect: %w", err)
+	}
+	if result == nil {
+		return nil, fmt.Errorf("credential rejected by backend")
+	}
+
+	return newBroadcastSession(result.TokenID), nil
 }

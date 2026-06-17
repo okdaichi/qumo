@@ -7,22 +7,33 @@ Files
 - `Dockerfile` — image build used by CI (GHCR)
 - `docker-compose.yml` — single relay (local build)
 - `docker-compose.external.yml` — single relay (pre-built image)
-- `docker-compose.topology.yml` — **full 3-region topology** (bootstrap + hub + edge per region)
+- `docker-compose.static.yml` — **full 3-region topology** (hub + edge per region), wired with **static `PEERS`** (no discovery)
+- `docker-compose.nomad.yml` + `nomad/` — **real single-region Nomad cluster** that exercises the `LocalResolver` (Nomad service discovery) path; see [`nomad/README.md`](nomad/README.md)
+
+Quick start (single relay)
+
+```bash
+# Start a single relay
+docker compose -f docker/docker-compose.yml up --build
+
+# Check health
+curl http://localhost:4433/health
+
+# Stop
+docker compose -f docker/docker-compose.yml down
+```
 
 Quick start (3-region topology)
 
 ```bash
-# Start the full topology: 3 bootstraps + 3 hubs + 3 edges
-docker compose -f docker/docker-compose.topology.yml up --build
+# Start the full topology: 3 hubs + 3 edges
+docker compose -f docker/docker-compose.static.yml up --build
 
-# Check a bootstrap
-curl http://localhost:8091/peers
-
-# Check a relay
+# Check a relay health
 curl http://localhost:9001/health
 
 # Stop
-docker compose -f docker/docker-compose.topology.yml down
+docker compose -f docker/docker-compose.static.yml down
 ```
 
 Run pre-built image (GHCR)
@@ -53,17 +64,14 @@ Environment variables (relay)
 | `ROLE` | (empty) | `hub` or `edge` |
 | `ADVERTISE_ADDR` | (empty) | Public address for peers |
 | `INSECURE` | `false` | Auto-generate self-signed certs |
-| `BOOTSTRAP_URLS` | (empty) | Comma-separated bootstrap URLs |
-| `BOOTSTRAP_INTERVAL` | `15s` | Bootstrap poll interval |
 | `PEERS` | (empty) | Comma-separated static peer addresses |
-
-Environment variables (bootstrap)
-
-| Variable | Default | Description |
-|---|---|---|
-| `BOOTSTRAP_ADDR` | `:8080` | Bind address |
-| `BOOTSTRAP_TTL` | `30s` | Node TTL before expiration |
-| `BOOTSTRAP_MAX_PEERS` | `20` | Max peers returned per query |
+| `LOCAL_RESOLVER_ADDR` | `http://localhost:4646` | Nomad HTTP API address |
+| `LOCAL_RESOLVER_SERVICE_NAME` | `qumo-relay` | Nomad service name to query |
+| `LOCAL_RESOLVER_INTERVAL` | `15s` | Local resolver poll interval |
+| `REMOTE_RESOLVER_URL` | (empty) | Remote traffic resolver URL |
+| `REMOTE_AUTH_TOKEN` | (empty) | Bearer token for remote resolver |
+| `REMOTE_RESOLVE_INTERVAL` | `15s` | Remote resolver poll interval |
+| `REMOTE_TLS_ENABLED` | `false` | Enable TLS for remote resolver |
 
 Build locally
 
@@ -73,4 +81,4 @@ docker build -f docker/Dockerfile -t qumo:local .
 
 Notes
 - The container listens on port `4433` for QUIC (UDP) and also serves HTTP health/metrics on the same port (TCP).
-- If you previously used `config.relay.yaml` at the repo root, configuration is now driven entirely by environment variables — the binary reads env vars directly.
+- Configuration is driven entirely by environment variables — the binary reads env vars directly.

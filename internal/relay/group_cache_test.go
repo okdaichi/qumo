@@ -25,7 +25,7 @@ func TestGroupCache_Append(t *testing.T) {
 
 	frame := moqt.NewFrame(100)
 	frame.Write([]byte("test data"))
-	gc.append(frame)
+	gc.append(frame, DefaultFramePool)
 
 	require.Len(t, gc.frames, 1)
 	assert.NotSame(t, frame, gc.frames[0], "frame should be cloned")
@@ -36,7 +36,7 @@ func TestGroupCache_Append_ClonesData(t *testing.T) {
 
 	original := moqt.NewFrame(100)
 	original.Write([]byte("original"))
-	gc.append(original)
+	gc.append(original, DefaultFramePool)
 
 	original.Reset()
 	original.Write([]byte("modified"))
@@ -51,7 +51,7 @@ func TestGroupCache_Append_Multiple(t *testing.T) {
 	for range 5 {
 		f := moqt.NewFrame(100)
 		f.Write([]byte("data"))
-		gc.append(f)
+		gc.append(f, DefaultFramePool)
 	}
 
 	assert.Len(t, gc.frames, 5)
@@ -61,7 +61,7 @@ func TestGroupCache_Next(t *testing.T) {
 	gc := &groupCache{seq: 1, frames: make([]*moqt.Frame, 0)}
 	for range 3 {
 		frame := moqt.NewFrame(100)
-		gc.append(frame)
+		gc.append(frame, DefaultFramePool)
 	}
 
 	tests := map[string]struct {
@@ -92,7 +92,7 @@ func TestGroupCache_ConcurrentAppend(t *testing.T) {
 	gc := &groupCache{seq: 1, frames: make([]*moqt.Frame, 0)}
 
 	const goroutines = 10
-	const appendsPerGoroutine = 100
+	const appendsPerGoroutine = 20 // Stay under MaxFramesPerGroup (256)
 
 	var wg sync.WaitGroup
 	for range goroutines {
@@ -102,7 +102,7 @@ func TestGroupCache_ConcurrentAppend(t *testing.T) {
 			for range appendsPerGoroutine {
 				frame := moqt.NewFrame(100)
 				frame.Write([]byte("data"))
-				gc.append(frame)
+				gc.append(frame, DefaultFramePool)
 			}
 		}()
 	}
@@ -344,7 +344,7 @@ func TestGroupRing_Fill_NotifyCount(t *testing.T) {
 			src := &fakeFrameSource{frames: frames}
 
 			var calls atomic.Int32
-			ring.fill(src, cache, func() { calls.Add(1) })
+			ring.fill(src, cache, func(int) { calls.Add(1) })
 
 			assert.Equal(t, tt.expectedCalls, calls.Load())
 		})
@@ -424,7 +424,7 @@ func TestGroupRing_Fill_ConcurrentNotifyCount(t *testing.T) {
 	}
 
 	var total atomic.Int64
-	notify := func() { total.Add(1) }
+	notify := func(int) { total.Add(1) }
 
 	var wg sync.WaitGroup
 	for i := range numGroups {
@@ -564,7 +564,7 @@ func BenchmarkGroupCache_Append(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		gc.append(frame)
+		gc.append(frame, DefaultFramePool)
 	}
 }
 
@@ -575,7 +575,7 @@ func BenchmarkGroupCache_Next(b *testing.B) {
 	}
 	for range 100 {
 		frame := moqt.NewFrame(1500)
-		gc.append(frame)
+		gc.append(frame, DefaultFramePool)
 	}
 
 	b.ResetTimer()
@@ -596,3 +596,74 @@ func BenchmarkGroupRing_Get(b *testing.B) {
 		_ = ring.get(moqt.GroupSequence(i % ring.size))
 	}
 }
+
+func BenchmarkGroupRing_Ingest(b *testing.B) {
+	pool := NewFramePool(DefaultNewFrameCapacity)
+	ring := newGroupRing(DefaultGroupCacheSize, pool)
+	
+	frame := moqt.NewFrame(DefaultNewFrameCapacity)
+	frame.Write(make([]byte, 1000))
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		cache := ring.reserve(moqt.GroupSequence(i))
+		for j := 0; j < 10; j++ {
+			cache.append(frame, pool)
+		}
+		ring.decrRef(cache)
+	}
+}
+
+func TestGroupRing_Stress(t *testing.T) {
+	const numReaders = 10
+	const numGroups = 1000
+	const ringSize = 8
+
+	pool := NewFramePool(DefaultNewFrameCapacity)
+	ring := newGroupRing(ringSize, pool)
+
+	var wg sync.WaitGroup
+
+	// Start readers
+	for r := range numReaders {
+		wg.Add(1)
+		go func(readerID int) {
+			defer wg.Done()
+			for g := 1; g < numGroups; g++ {
+				// Sleep to simulate processing lag
+				time.Sleep(time.Duration(g%3) * time.Microsecond)
+
+				cache := ring.get(moqt.GroupSequence(g))
+				if cache != nil {
+					// Read frame
+					_ = cache.next(0)
+					ring.decrRef(cache)
+				}
+			}
+		}(r)
+	}
+
+	// Start writer (ingest)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for g := 1; g < numGroups; g++ {
+			cache := ring.reserve(moqt.GroupSequence(g))
+			
+			// Simulate concurrent fill
+			wg.Add(1)
+			go func(c *groupCache, groupSeq int) {
+				defer wg.Done()
+				time.Sleep(time.Duration(groupSeq%5) * time.Microsecond)
+				
+				src := &fakeFrameSource{
+					frames: [][]byte{[]byte("frame-data")},
+				}
+				ring.fill(src, c, nil)
+			}(cache, g)
+		}
+	}()
+
+	wg.Wait()
+}
+

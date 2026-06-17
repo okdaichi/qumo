@@ -2,19 +2,12 @@ package relay
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"log"
 	"log/slog"
-	"math/big"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -29,7 +22,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/quic-go/quic-go"
 	"github.com/qumo-dev/gomoqt/moqt"
-	"github.com/qumo-dev/qumo/internal/bootstrap"
 )
 
 // sanitizeLog strips CR and LF from s to prevent log injection.
@@ -41,24 +33,25 @@ func sanitizeLog(s string) string {
 //
 // Configuration is read from environment variables:
 //
-//	RELAY_ADDR          - listen address (default: "0.0.0.0:4433")
-//	CERT_FILE           - TLS certificate file (default: "certs/server.crt")
-//	KEY_FILE            - TLS key file (default: "certs/server.key")
-//	CA_FILE             - PEM CA certificate; enables mTLS when set:
-//	                        relay server verifies peer certs (but allows clients without one),
-//	                        dialer presents this node's cert to remote relays,
-//	                        bootstrap HTTP clients use it as root CA and present client cert.
-//	MTLS_REQUIRED       - "true" to require a client cert on every connection
-//	                        (default: false — cert verified if presented, browsers still allowed)
-//	RELAY_NAME          - node ID (default: "relay-" + hostname)
-//	REGION              - geographic region (default: "")
-//	ROLE                - node role: "hub" or "edge" (default: "")
-//	ADVERTISE_ADDR      - address advertised to peers (required when RELAY_ADDR is wildcard)
-//	GROUP_CACHE_SIZE    - max group caches (default: 100) [TODO: not yet wired to handler]
-//	FRAME_CAPACITY      - frame buffer size in bytes (default: 1500) [TODO: not yet wired to handler]
-//	PEERS               - comma-separated list of peer addresses
-//	BOOTSTRAP_URLS      - comma-separated list of bootstrap server URLs
-//	BOOTSTRAP_INTERVAL  - polling interval for bootstrap servers (default: "15s")
+//	RELAY_ADDR                   - listen address (default: "0.0.0.0:4433")
+//	CERT_FILE                    - TLS certificate file (default: "certs/server.crt")
+//	KEY_FILE                     - TLS key file (default: "certs/server.key")
+//	CA_FILE                      - PEM CA certificate; enables mTLS when set
+//	MTLS_REQUIRED                - "true" to require a client cert on every connection
+//	                               (default: false)
+//	RELAY_NAME                   - node ID (default: "relay-" + hostname)
+//	REGION                       - geographic region (default: "")
+//	ROLE                         - node role: "hub" or "edge" (default: "")
+//	ADVERTISE_ADDR               - address advertised to peers
+//	GROUP_CACHE_SIZE             - max group caches (default: 100) [TODO]
+//	FRAME_CAPACITY               - frame buffer size in bytes (default: 1500) [TODO]
+//	PEERS                        - comma-separated list of static peer addresses	//	LOCAL_RESOLVER_ADDR            - Nomad HTTP API address (default: http://localhost:4646)
+//	LOCAL_RESOLVER_SERVICE_NAME    - Nomad service name to query (default: "qumo-relay")
+//	LOCAL_RESOLVER_INTERVAL        - Nomad discovery polling interval (default: "15s")
+//	REMOTE_RESOLVER_URL      - remote traffic resolver URL (optional)
+//	REMOTE_AUTH_TOKEN        - bearer token for remote resolver
+//	REMOTE_RESOLVE_INTERVAL  - remote discovery polling interval (default: "15s")
+//	REMOTE_TLS_ENABLED       - "true" to enable TLS for remote resolver
 func Run(_ []string) error {
 	addr := envOr("RELAY_ADDR", "0.0.0.0:4433")
 	certFile := envOr("CERT_FILE", "certs/server.crt")
@@ -94,7 +87,7 @@ func Run(_ []string) error {
 		}
 	}
 
-	// Setup TLS before parsing bootstrap URLs so bootstrapClientTLS is in scope.
+	// Setup TLS before remote resolver TLS config is built.
 	tlsConfig, err := setupTLS(certFile, keyFile)
 	if err != nil {
 		return fmt.Errorf("failed to setup TLS: %w", err)
@@ -122,47 +115,38 @@ func Run(_ []string) error {
 		)
 	}
 
-	// Bootstrap client TLS: present this node's cert and trust only the CA pool.
+	// Remote resolver TLS: present this node's cert and trust only the CA pool.
 	// Built only when mTLS is active (caPool != nil).
-	var bootstrapClientTLS *tls.Config
+	var remoteResolverTLS *tls.Config
 	if caPool != nil {
-		bootstrapClientTLS = &tls.Config{
+		remoteResolverTLS = &tls.Config{
 			MinVersion:   tls.VersionTLS12,
 			Certificates: tlsConfig.Certificates, // relay cert used as client cert
 			RootCAs:      caPool,
 		}
 	}
 
-	var bootstraps []bootstrap.ClientConfig
-	if raw := os.Getenv("BOOTSTRAP_URLS"); raw != "" {
-		intervalStr := envOr("BOOTSTRAP_INTERVAL", "15s")
-		interval, parseErr := time.ParseDuration(intervalStr)
-		if parseErr != nil {
-			return fmt.Errorf("invalid BOOTSTRAP_INTERVAL %q: %w", intervalStr, parseErr)
-		}
-		authToken := os.Getenv("BOOTSTRAP_AUTH_TOKEN")
-		for u := range strings.SplitSeq(raw, ",") {
-			u = strings.TrimSpace(u)
-			if u != "" {
-				bootstraps = append(bootstraps, bootstrap.ClientConfig{
-					URL:       u,
-					Interval:  interval,
-					AuthToken: authToken,
-					TLSConfig: bootstrapClientTLS,
-				})
-			}
-		}
+	// Create peer resolvers.
+	localResolver := NewLocalResolver()
+	remoteResolver := NewRemoteResolver(remoteResolverTLS)
+
+	// Credential client: credential introspection + usage metering (optional).
+	credentialClient := NewCredentialClient()
+	var meter *Meter
+	if credentialClient != nil {
+		meter = newMeter(credentialClient)
 	}
 
 	relayCfg := Config{
-		NodeID:         nodeID,
-		Region:         os.Getenv("REGION"),
-		Role:           os.Getenv("ROLE"),
-		AdvertiseAddr:  advertiseAddr,
-		GroupCacheSize: groupCacheSize,
-		FrameCapacity:  frameCapacity,
-		Peers:          peers,
-		Bootstraps:     bootstraps,
+		NodeID:                 nodeID,
+		Region:                 os.Getenv("REGION"),
+		Role:                   os.Getenv("ROLE"),
+		AdvertiseAddr:          advertiseAddr,
+		GroupCacheSize:         groupCacheSize,
+		FrameCapacity:          frameCapacity,
+		Peers:                  peers,
+		LocalResolverInterval:  localResolver.Interval(),
+		RemoteResolverInterval: remoteResolver.Interval(),
 	}
 
 	// Setup signal handling for graceful shutdown
@@ -193,9 +177,6 @@ func Run(_ []string) error {
 	if caPool != nil {
 		dialerTLS.RootCAs = caPool
 	}
-	if os.Getenv("INSECURE") == "true" {
-		dialerTLS.InsecureSkipVerify = true //nolint:gosec // INSECURE mode only
-	}
 
 	trackMux := moqt.NewTrackMux(moqt.NewHopID())
 	relayServer := &Server{
@@ -209,8 +190,12 @@ func Run(_ []string) error {
 			TLSConfig:  dialerTLS,
 			QUICConfig: quicConfig,
 		},
-		Config:   &relayCfg,
-		TrackMux: trackMux,
+		Config:           &relayCfg,
+		TrackMux:         trackMux,
+		localResolver:    localResolver,
+		remoteResolver:   remoteResolver,
+		credentialClient: credentialClient,
+		meter:            meter,
 	}
 
 	httpMux.HandleFunc("/", relayServer.HandleWebTransport)
@@ -233,12 +218,23 @@ func Run(_ []string) error {
 	for _, p := range relayCfg.Peers {
 		log.Printf("\t%-8s: %s\n", "Peer", sanitizeLog(p.Address))
 	}
-	for _, b := range relayCfg.Bootstraps {
-		log.Printf("\t%-8s: %s (interval: %s)\n", "Bootstrap", sanitizeLog(b.URL), b.Interval)
+	if remoteResolver != nil {
+		log.Printf("\t%-8s: %s (interval: %s)\n", "Resolver", sanitizeLog(remoteResolver.url), remoteResolver.Interval())
+	}
+	if relayCfg.LocalResolverInterval > 0 {
+		log.Printf("\t%-8s: %s (interval: %s)\n", "Resolver", "local ("+localResolver.serviceName+")", localResolver.Interval())
+	}
+	if credentialClient != nil {
+		log.Printf("\t%-8s: %s (metering every 30s)\n", "Credentials", sanitizeLog(credentialClient.baseURL))
 	}
 
 	// Start peer connections in background
 	go relayServer.ConnectPeers(ctx)
+
+	// Start usage meter if credential features are active.
+	if meter != nil {
+		go meter.Run(ctx)
+	}
 
 	// Delegate to testable helper that runs servers until ctx is cancelled
 	if err := serveComponents(ctx, relayServer, httpServer, 10*time.Second); err != nil {
@@ -390,21 +386,6 @@ func loadCACertPool(caFile string) (*x509.CertPool, error) {
 }
 
 func setupTLS(certFile, keyFile string) (*tls.Config, error) {
-	// INSECURE mode: generate a self-signed certificate on the fly.
-	// Never use in production.
-	if os.Getenv("INSECURE") == "true" {
-		cert, err := generateSelfSignedCert()
-		if err != nil {
-			return nil, fmt.Errorf("failed to generate self-signed cert: %w", err)
-		}
-		slog.Warn("INSECURE mode: using ephemeral self-signed certificate")
-		return &tls.Config{
-			MinVersion:   tls.VersionTLS12,
-			Certificates: []tls.Certificate{cert},
-			NextProtos:   []string{"h3", moqt.NextProtoMOQ},
-		}, nil
-	}
-
 	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load TLS certificates: %w", err)
@@ -415,41 +396,4 @@ func setupTLS(certFile, keyFile string) (*tls.Config, error) {
 		Certificates: []tls.Certificate{cert},
 		NextProtos:   []string{"h3", moqt.NextProtoMOQ}, // HTTP/3 for WebTransport, MOQ native QUIC
 	}, nil
-}
-
-// generateSelfSignedCert creates an in-memory ECDSA P-256 self-signed certificate
-// valid for 365 days. Only used when INSECURE=true.
-func generateSelfSignedCert() (tls.Certificate, error) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return tls.Certificate{}, err
-	}
-
-	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
-	if err != nil {
-		return tls.Certificate{}, err
-	}
-
-	tmpl := &x509.Certificate{
-		SerialNumber: serial,
-		Subject:      pkix.Name{CommonName: "localhost"},
-		NotBefore:    time.Now().Add(-time.Minute),
-		NotAfter:     time.Now().Add(365 * 24 * time.Hour),
-		DNSNames:     []string{"localhost"},
-		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")},
-	}
-
-	derBytes, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
-	if err != nil {
-		return tls.Certificate{}, err
-	}
-
-	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
-	keyDER, err := x509.MarshalECPrivateKey(key)
-	if err != nil {
-		return tls.Certificate{}, err
-	}
-	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
-
-	return tls.X509KeyPair(certPEM, keyPEM)
 }

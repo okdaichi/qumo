@@ -55,12 +55,11 @@ mage build        # builds bin/qumo with version info
 
 ```bash
 qumo relay       # Start MoQ relay server (QUIC/MoQT, WebTransport, peer mesh)
-qumo bootstrap   # Start bootstrap discovery server (HTTP peer registry)
 qumo rtmp        # Start RTMP ingest server (bridges RTMP → MoQT)
 qumo version     # Print build-time version info
 ```
 
-For environment variables and configuration, see `relay-config.example.env` and `bootstrap-config.example.env`. For Docker-based deployment, see [docker/README.md](docker/README.md).
+For environment variables and configuration, see `relay-config.example.env`. For Docker-based deployment, see [docker/README.md](docker/README.md).
 
 ## Architecture
 
@@ -69,7 +68,6 @@ For environment variables and configuration, see `relay-config.example.env` and 
 ```mermaid
 graph LR
     Publisher["Publisher<br/>(Browser/WebTransport)"]
-    Bootstrap["Bootstrap Server<br/>(qumo bootstrap)"]
     Hub["Hub Relay<br/>(qumo relay)"]
     EdgeA["Edge Relay A<br/>(qumo relay)"]
     EdgeB["Edge Relay B<br/>(qumo relay)"]
@@ -79,18 +77,15 @@ graph LR
     EdgeA <-->|"ANNOUNCE_PLEASE<br/>QUIC peer"| Hub
     Hub <-->|"ANNOUNCE_PLEASE<br/>QUIC peer"| EdgeB
     EdgeB -->|"QUIC/MoQ<br/>WebTransport"| Subscriber
-
-    EdgeA -->|"POST /register (heartbeat)<br/>GET /peers (discovery)"| Bootstrap
-    Hub -->|"POST /register (heartbeat)<br/>GET /peers (discovery)"| Bootstrap
-    EdgeB -->|"POST /register (heartbeat)<br/>GET /peers (discovery)"| Bootstrap
 ```
 
-### Peer Discovery (Join Workflow)
+### Peer Discovery
 
-On startup, each relay runs two independent loops:
+On startup, each relay discovers peers through one or more `PeerResolver` implementations:
 
 1. **Static peers** (`PEERS`): dial each address directly and maintain the connection.
-2. **Bootstrap discovery** (`BOOTSTRAP_URLS`): register itself via `POST /register` (heartbeat), then periodically call `GET /peers` with `region`, `role`, and `limit` parameters. The returned peer list — which may include nodes from other regions — is dialed and maintained the same way as static peers.
+2. **Nomad native discovery** (within-cluster): automatically discovers peers within the same Nomad cluster via the Nomad service API. Edges discover all local hubs; hubs discover nothing locally (no local hub↔hub connections).
+3. **Remote resolver** (cross-cluster, optional): queries an external traffic resolver API (e.g. qumo-enterprise) for cross-cluster hub discovery. Hubs discover remote hubs; edges never query the remote resolver.
 
 Each connection dials QUIC with ALPN `moqt`, exchanges `ANNOUNCE_PLEASE` / `ANNOUNCE`, and registers the peer's tracks on the local `TrackMux`. On disconnect the connection is retried after 5 s.
 
@@ -99,12 +94,10 @@ graph TD
     Start["Relay Startup"]
 
     Start -->|"for each PEER"| ALPN
-    Start -->|"for each BOOTSTRAP_URL"| Register["POST /register\n(heartbeat loop)"]
+    Start -->|"Nomad API (within-cluster)"| Resolve["PeerResolver.ResolvePeers"]
+    Start -->|"Remote resolver (cross-cluster)"| Resolve
 
-    Register --> Tick["Periodic tick"]
-    Tick -->|"GET /peers?region=…&role=…&limit=…"| FetchPeers["Received peer list"]
-    FetchPeers -->|"for each new peer"| ALPN
-    FetchPeers --> Tick
+    Resolve -->|"returned peer list"| ALPN
 
     ALPN["QUIC dial (ALPN: moqt)"] --> Announce["ANNOUNCE_PLEASE / ANNOUNCE"]
     Announce --> TrackMux["Register tracks on local TrackMux"]
@@ -137,13 +130,14 @@ qumo/
 │   ├── Dockerfile              # Multi-stage container build
 │   ├── docker-compose.yml               # Single relay (local build)
 │   ├── docker-compose.external.yml      # Single relay (GHCR prebuilt)
-│   ├── docker-compose.topology.yml      # Full 3-region topology (bootstrap + hub + edge)
+│   ├── docker-compose.static.yml        # 3-region topology, static PEERS (no discovery)
+│   ├── docker-compose.nomad.yml         # Single-region Nomad cluster (LocalResolver)
+│   ├── nomad/                           # Nomad agent config + job spec
 │   └── README.md               # Docker usage guide
 │
 ├── internal/                   # Core implementation
 │   ├── cli/                    # CLI entrypoints & env-var config
-│   ├── relay/                  # Relay server (handlers, peer connections, caching)
-│   ├── bootstrap/              # Bootstrap server & client (peer discovery via HTTP)
+│   ├── relay/                  # Relay server (handlers, peer resolvers, caching)
 │   ├── rtmp/                   # RTMP utilities
 │   ├── ingest/                 # RTMP ingest & FLV parsing
 │   └── version/                # Version info
@@ -171,4 +165,3 @@ mage docker:build  # Build Docker image
 mage relay         # Run relay server locally
 mage smoke         # Run cross-region streaming smoke test
 ```
-

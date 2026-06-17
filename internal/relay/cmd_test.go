@@ -26,18 +26,6 @@ func TestSetupTLSEmptyPaths(t *testing.T) {
 	}
 }
 
-// TestSetupTLS_Insecure verifies that INSECURE=true generates a usable self-signed certificate.
-func TestSetupTLS_Insecure(t *testing.T) {
-	t.Setenv("INSECURE", "true")
-
-	tlsCfg, err := setupTLS("nonexistent.crt", "nonexistent.key")
-	require.NoError(t, err)
-	require.NotNil(t, tlsCfg)
-	assert.Len(t, tlsCfg.Certificates, 1, "expected exactly one certificate")
-	assert.Contains(t, tlsCfg.NextProtos, "h3")
-	assert.False(t, tlsCfg.InsecureSkipVerify, "server TLS config must not set InsecureSkipVerify")
-}
-
 // --- serveComponents tests ---
 
 type mockServer struct {
@@ -172,18 +160,4 @@ func TestRun_InvalidGroupCacheSize(t *testing.T) {
 	err := Run(nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "GROUP_CACHE_SIZE")
-}
-
-func TestRun_InvalidBootstrapInterval(t *testing.T) {
-	t.Setenv("RELAY_ADDR", "localhost:4433")
-	t.Setenv("ADVERTISE_ADDR", "localhost:4433")
-	t.Setenv("GROUP_CACHE_SIZE", "")
-	t.Setenv("FRAME_CAPACITY", "")
-	t.Setenv("INSECURE", "true") // skip cert-file lookup so we reach BOOTSTRAP_INTERVAL validation
-	t.Setenv("BOOTSTRAP_URLS", "http://bs:8080")
-	t.Setenv("BOOTSTRAP_INTERVAL", "bad-duration")
-
-	err := Run(nil)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "BOOTSTRAP_INTERVAL")
 }

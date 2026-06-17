@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"crypto/tls"
@@ -8,7 +9,7 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"strings"
+	"strconv"
 	"time"
 
 	"github.com/qumo-dev/gomoqt/moqt"
@@ -160,10 +161,16 @@ func run(ctx context.Context, pubURL, subURL string, numGroups, numFrames, frame
 // generateTestData creates deterministic test payloads.
 func generateTestData(numGroups, numFrames, frameSize int) [][]byte {
 	data := make([][]byte, numGroups*numFrames)
+	var buf []byte
 	for g := range numGroups {
 		for f := range numFrames {
-			pattern := fmt.Sprintf("group=%d frame=%d ", g, f)
-			payload := []byte(strings.Repeat(pattern, (frameSize/len(pattern))+1))[:frameSize]
+			buf = append(buf[:0], "group="...)
+			buf = strconv.AppendInt(buf, int64(g), 10)
+			buf = append(buf, " frame="...)
+			buf = strconv.AppendInt(buf, int64(f), 10)
+			buf = append(buf, ' ')
+
+			payload := bytes.Repeat(buf, (frameSize/len(buf))+1)[:frameSize]
 			data[g*numFrames+f] = payload
 		}
 	}

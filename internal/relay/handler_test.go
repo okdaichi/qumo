@@ -35,7 +35,7 @@ func TestTrackDistributor_ByteCounters(t *testing.T) {
 	nodeID := fmt.Sprintf("node-%d", time.Now().UnixNano())
 	trackID := "[" + nodeID + "]/live/cam1/video"
 
-	dist := newTrackDistributor(newTrackManager(), trackID)
+	dist := newTrackDistributor(newTrackManager(), trackID, nil)
 	defer close(dist.done)
 
 	// Verify the counters are wired to the correct Prometheus metric+label.
@@ -56,7 +56,7 @@ func TestTrackDistributor_ByteCounters(t *testing.T) {
 func TestTrackDistributor_Broadcast_SingleSubscriber(t *testing.T) {
 	dist := &trackDistributor{
 		ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-		subscribers: make(map[chan struct{}]struct{}),
+		subscribers: nil,
 	}
 
 	received := &atomic.Int32{}
@@ -80,7 +80,7 @@ func TestTrackDistributor_Broadcast_SingleSubscriber(t *testing.T) {
 	<-ready
 
 	dist.mu.RLock()
-	for ch := range dist.subscribers {
+	for _, ch := range dist.subscribers {
 		select {
 		case ch <- struct{}{}:
 		default:
@@ -107,7 +107,7 @@ func TestTrackDistributor_Broadcast_MultipleSubscribers(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			dist := &trackDistributor{
 				ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-				subscribers: make(map[chan struct{}]struct{}),
+				subscribers: nil,
 			}
 
 			received := &atomic.Int32{}
@@ -137,7 +137,7 @@ func TestTrackDistributor_Broadcast_MultipleSubscribers(t *testing.T) {
 
 			for i := 0; i < tt.broadcasts; i++ {
 				dist.mu.RLock()
-				for ch := range dist.subscribers {
+				for _, ch := range dist.subscribers {
 					select {
 					case ch <- struct{}{}:
 					default:
@@ -161,7 +161,7 @@ func TestTrackDistributor_Broadcast_MultipleSubscribers(t *testing.T) {
 func TestTrackDistributor_SubscriptionLifecycle(t *testing.T) {
 	dist := &trackDistributor{
 		ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-		subscribers: make(map[chan struct{}]struct{}),
+		subscribers: nil,
 	}
 
 	// Test basic subscribe
@@ -196,7 +196,7 @@ func TestTrackDistributor_SubscriptionLifecycle(t *testing.T) {
 func TestTrackDistributor_ConcurrentAccess(t *testing.T) {
 	dist := &trackDistributor{
 		ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-		subscribers: make(map[chan struct{}]struct{}),
+		subscribers: nil,
 	}
 
 	const goroutines = 50
@@ -217,7 +217,7 @@ func TestTrackDistributor_ConcurrentAccess(t *testing.T) {
 		wg.Go(func() {
 			for range iterations {
 				dist.mu.RLock()
-				for ch := range dist.subscribers {
+				for _, ch := range dist.subscribers {
 					select {
 					case ch <- struct{}{}:
 					default:
@@ -237,7 +237,7 @@ func TestTrackDistributor_ConcurrentAccess(t *testing.T) {
 func TestTrackDistributor_ChannelBuffering(t *testing.T) {
 	dist := &trackDistributor{
 		ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-		subscribers: make(map[chan struct{}]struct{}),
+		subscribers: nil,
 	}
 
 	ch := dist.subscribe()
@@ -275,7 +275,7 @@ func TestTrackDistributor_ChannelBuffering(t *testing.T) {
 func TestTrackDistributor_NoBroadcastBlocking(t *testing.T) {
 	dist := &trackDistributor{
 		ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-		subscribers: make(map[chan struct{}]struct{}),
+		subscribers: nil,
 	}
 
 	// Create subscribers but don't read
@@ -288,7 +288,7 @@ func TestTrackDistributor_NoBroadcastBlocking(t *testing.T) {
 	go func() {
 		for range 100 {
 			dist.mu.RLock()
-			for ch := range dist.subscribers {
+			for _, ch := range dist.subscribers {
 				select {
 				case ch <- struct{}{}:
 				default:
@@ -312,7 +312,7 @@ func TestTrackDistributor_EdgeCases(t *testing.T) {
 	t.Run("subscribe_to_empty_distributor", func(t *testing.T) {
 		dist := &trackDistributor{
 			ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-			subscribers: make(map[chan struct{}]struct{}),
+			subscribers: nil,
 		}
 
 		ch := dist.subscribe()
@@ -324,7 +324,7 @@ func TestTrackDistributor_EdgeCases(t *testing.T) {
 	t.Run("unsubscribe_nonexistent_channel", func(t *testing.T) {
 		dist := &trackDistributor{
 			ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-			subscribers: make(map[chan struct{}]struct{}),
+			subscribers: nil,
 		}
 
 		// Unsubscribe channel that was never subscribed
@@ -338,7 +338,7 @@ func TestTrackDistributor_EdgeCases(t *testing.T) {
 	t.Run("multiple_unsubscribe_same_channel", func(t *testing.T) {
 		dist := &trackDistributor{
 			ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-			subscribers: make(map[chan struct{}]struct{}),
+			subscribers: nil,
 		}
 
 		ch := dist.subscribe()
@@ -352,12 +352,12 @@ func TestTrackDistributor_EdgeCases(t *testing.T) {
 	t.Run("broadcast_to_zero_subscribers", func(t *testing.T) {
 		dist := &trackDistributor{
 			ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-			subscribers: make(map[chan struct{}]struct{}),
+			subscribers: nil,
 		}
 
 		// Should not panic
 		dist.mu.RLock()
-		for ch := range dist.subscribers {
+		for _, ch := range dist.subscribers {
 			select {
 			case ch <- struct{}{}:
 			default:
@@ -369,7 +369,7 @@ func TestTrackDistributor_EdgeCases(t *testing.T) {
 	t.Run("rapid_subscribe_unsubscribe", func(t *testing.T) {
 		dist := &trackDistributor{
 			ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-			subscribers: make(map[chan struct{}]struct{}),
+			subscribers: nil,
 		}
 
 		// Rapidly add and remove
@@ -391,7 +391,7 @@ func TestTrackDistributor_Stress(t *testing.T) {
 	t.Run("high_frequency_broadcasts", func(t *testing.T) {
 		dist := &trackDistributor{
 			ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-			subscribers: make(map[chan struct{}]struct{}),
+			subscribers: nil,
 		}
 
 		const numSubs = 100
@@ -403,7 +403,7 @@ func TestTrackDistributor_Stress(t *testing.T) {
 		go func() {
 			for range 10000 {
 				dist.mu.RLock()
-				for ch := range dist.subscribers {
+				for _, ch := range dist.subscribers {
 					select {
 					case ch <- struct{}{}:
 					default:
@@ -425,7 +425,7 @@ func TestTrackDistributor_Stress(t *testing.T) {
 	t.Run("subscriber_churn", func(t *testing.T) {
 		dist := &trackDistributor{
 			ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-			subscribers: make(map[chan struct{}]struct{}),
+			subscribers: nil,
 		}
 
 		var wg sync.WaitGroup
@@ -453,7 +453,7 @@ func TestTrackDistributor_Stress(t *testing.T) {
 						return
 					default:
 						dist.mu.RLock()
-						for ch := range dist.subscribers {
+						for _, ch := range dist.subscribers {
 							select {
 							case ch <- struct{}{}:
 							default:
@@ -483,7 +483,7 @@ func TestTrackDistributor_Scalability(t *testing.T) {
 		t.Run(fmt.Sprintf("%04d_subscribers", n), func(t *testing.T) {
 			dist := &trackDistributor{
 				ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-				subscribers: make(map[chan struct{}]struct{}),
+				subscribers: nil,
 			}
 
 			// Create n subscribers
@@ -494,7 +494,7 @@ func TestTrackDistributor_Scalability(t *testing.T) {
 			// Measure broadcast time
 			start := time.Now()
 			dist.mu.RLock()
-			for ch := range dist.subscribers {
+			for _, ch := range dist.subscribers {
 				select {
 				case ch <- struct{}{}:
 				default:
@@ -516,7 +516,7 @@ func TestTrackDistributor_MemoryBehavior(t *testing.T) {
 	t.Run("channel_garbage_collection", func(t *testing.T) {
 		dist := &trackDistributor{
 			ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-			subscribers: make(map[chan struct{}]struct{}),
+			subscribers: nil,
 		}
 
 		// Subscribe many
@@ -533,7 +533,7 @@ func TestTrackDistributor_MemoryBehavior(t *testing.T) {
 	t.Run("no_channel_leaks_on_unsubscribe", func(t *testing.T) {
 		dist := &trackDistributor{
 			ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-			subscribers: make(map[chan struct{}]struct{}),
+			subscribers: nil,
 		}
 
 		channels := make([]chan struct{}, 100)
@@ -562,7 +562,7 @@ func TestTrackDistributor_RaceConditions(t *testing.T) {
 	t.Run("concurrent_subscribe_and_broadcast", func(t *testing.T) {
 		dist := &trackDistributor{
 			ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-			subscribers: make(map[chan struct{}]struct{}),
+			subscribers: nil,
 		}
 
 		var wg sync.WaitGroup
@@ -579,7 +579,7 @@ func TestTrackDistributor_RaceConditions(t *testing.T) {
 			defer wg.Done()
 			for range 100 {
 				dist.mu.RLock()
-				for ch := range dist.subscribers {
+				for _, ch := range dist.subscribers {
 					select {
 					case ch <- struct{}{}:
 					default:
@@ -595,7 +595,7 @@ func TestTrackDistributor_RaceConditions(t *testing.T) {
 	t.Run("concurrent_unsubscribe_and_broadcast", func(t *testing.T) {
 		dist := &trackDistributor{
 			ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-			subscribers: make(map[chan struct{}]struct{}),
+			subscribers: nil,
 		}
 
 		channels := make([]chan struct{}, 100)
@@ -617,7 +617,7 @@ func TestTrackDistributor_RaceConditions(t *testing.T) {
 			defer wg.Done()
 			for range 100 {
 				dist.mu.RLock()
-				for ch := range dist.subscribers {
+				for _, ch := range dist.subscribers {
 					select {
 					case ch <- struct{}{}:
 					default:
@@ -636,7 +636,7 @@ func TestTrackDistributor_NotificationDelivery(t *testing.T) {
 	t.Run("all_subscribers_receive_notification", func(t *testing.T) {
 		dist := &trackDistributor{
 			ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-			subscribers: make(map[chan struct{}]struct{}),
+			subscribers: nil,
 		}
 
 		const numSubs = 50
@@ -668,7 +668,7 @@ func TestTrackDistributor_NotificationDelivery(t *testing.T) {
 		}
 
 		dist.mu.RLock()
-		for ch := range dist.subscribers {
+		for _, ch := range dist.subscribers {
 			select {
 			case ch <- struct{}{}:
 			default:
@@ -694,7 +694,7 @@ func TestTrackDistributor_NotificationDelivery(t *testing.T) {
 	t.Run("buffered_channel_prevents_loss", func(t *testing.T) {
 		dist := &trackDistributor{
 			ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-			subscribers: make(map[chan struct{}]struct{}),
+			subscribers: nil,
 		}
 
 		ch := dist.subscribe()
@@ -732,7 +732,7 @@ func TestTrackDistributor_NotifyTimeout(t *testing.T) {
 func TestTrackDistributor_GroupRingIntegration(t *testing.T) {
 	dist := &trackDistributor{
 		ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-		subscribers: make(map[chan struct{}]struct{}),
+		subscribers: nil,
 	}
 
 	// Verify ring is properly initialized
@@ -747,7 +747,7 @@ func TestTrackDistributor_GroupRingIntegration(t *testing.T) {
 
 // TestTrackDistributor_DoneChannel tests that the done channel is closed when ingest stops
 func TestTrackDistributor_DoneChannel(t *testing.T) {
-	dist := newTrackDistributor(newTrackManager(), "[test-node]/test/test")
+	dist := newTrackDistributor(newTrackManager(), "[test-node]/test/test", nil)
 
 	// done should not be closed initially
 	select {
@@ -772,7 +772,7 @@ func TestTrackDistributor_RingBehavior(t *testing.T) {
 	t.Run("ring_initialization", func(t *testing.T) {
 		dist := &trackDistributor{
 			ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-			subscribers: make(map[chan struct{}]struct{}),
+			subscribers: nil,
 		}
 
 		// Verify ring is initialized
@@ -786,7 +786,7 @@ func TestTrackDistributor_RingBehavior(t *testing.T) {
 	t.Run("earliest_available_at_start", func(t *testing.T) {
 		dist := &trackDistributor{
 			ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-			subscribers: make(map[chan struct{}]struct{}),
+			subscribers: nil,
 		}
 
 		earliest := dist.ring.earliestAvailable()
@@ -796,7 +796,7 @@ func TestTrackDistributor_RingBehavior(t *testing.T) {
 	t.Run("catchup_logic", func(t *testing.T) {
 		dist := &trackDistributor{
 			ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-			subscribers: make(map[chan struct{}]struct{}),
+			subscribers: nil,
 		}
 
 		// Initially head should be 0
@@ -825,7 +825,7 @@ func TestRelayHandler_ConcurrentSubscribe(t *testing.T) {
 	for i := range numTracks {
 		name := moqt.TrackName(fmt.Sprintf("track-%d", i))
 		trackID := "[test-node]/test/" + string(name)
-		d := newTrackDistributor(h.tracks, trackID)
+		d := newTrackDistributor(h.tracks, trackID, nil)
 		defer close(d.done)
 		h.tracks.store(trackID, d)
 	}
@@ -860,7 +860,7 @@ func TestRelayHandler_SingleflightDedup(t *testing.T) {
 	h := newTestRelayHandler(t.Context()) // nil session for test
 
 	// Pre-populate a distributor in the cache
-	existing := newTrackDistributor(newTrackManager(), "[test-node]/test/video")
+	existing := newTrackDistributor(newTrackManager(), "[test-node]/test/video", nil)
 	defer close(existing.done) // Cleanup goroutine
 	h.tracks.store("[test-node]/test/video", existing)
 
@@ -1062,6 +1062,76 @@ func TestIngest_WaitGroup_BlocksDoneUntilFillComplete(t *testing.T) {
 }
 
 // ============================================================================
+// trackDistributor metering integration tests
+// ============================================================================
+
+// TestTrackDistributor_MeteringIngress verifies that processGroup accumulates
+// ingress bytes into the attached broadcastSession as well as the Prometheus counter.
+func TestTrackDistributor_MeteringIngress(t *testing.T) {
+	nodeID := fmt.Sprintf("meter-node-%d", time.Now().UnixNano())
+	trackID := "[" + nodeID + "]/live/test/video"
+
+	sess := newBroadcastSession("tok-ingress")
+	dist := newTrackDistributor(newTrackManager(), trackID, sess)
+	t.Cleanup(func() { close(dist.done) })
+
+	payload := []byte("hello-world") // 11 bytes
+	src := &fakeFrameSource{frames: [][]byte{payload}}
+
+	var wg sync.WaitGroup
+	cache := dist.ring.reserve(moqt.GroupSequence(1))
+	ok := dist.processGroup(context.Background(), &wg, moqt.GroupSequence(1), src)
+	require.True(t, ok)
+	wg.Wait()
+
+	_ = cache // reserved above
+
+	assert.Equal(t, int64(len(payload)), sess.ingressBytes.Load(),
+		"processGroup must add ingress bytes to the broadcast session")
+	assert.Equal(t, 0.0+float64(len(payload)),
+		testutil.ToFloat64(metricRelayIngressBytesTotal.WithLabelValues(trackID)),
+		"Prometheus ingress counter must also be updated")
+}
+
+// TestTrackDistributor_MeteringEgress verifies that the egress path accumulates
+// egress bytes into the attached broadcastSession as well as the Prometheus counter.
+func TestTrackDistributor_MeteringEgress(t *testing.T) {
+	nodeID := fmt.Sprintf("meter-node-egress-%d", time.Now().UnixNano())
+	trackID := "[" + nodeID + "]/live/test/video"
+
+	sess := newBroadcastSession("tok-egress")
+	dist := newTrackDistributor(newTrackManager(), trackID, sess)
+	t.Cleanup(func() { close(dist.done) })
+
+	// Simulate the egress byte-counting path directly via the session methods,
+	// mirroring what egress() does on each frame write.
+	dist.egressCounter.Add(float64(512))
+	sess.addEgress(512)
+	dist.egressCounter.Add(float64(256))
+	sess.addEgress(256)
+
+	assert.Equal(t, int64(768), sess.egressBytes.Load(),
+		"session egress counter must accumulate across multiple writes")
+	assert.Equal(t, 768.0,
+		testutil.ToFloat64(metricRelayEgressBytesTotal.WithLabelValues(trackID)),
+		"Prometheus egress counter must also be updated")
+}
+
+// TestTrackDistributor_MeteringNilSession verifies that processGroup and the
+// egress path do not panic when no broadcastSession is attached.
+func TestTrackDistributor_MeteringNilSession(t *testing.T) {
+	dist := newTrackDistributor(newTrackManager(), "nil-session/test", nil)
+	t.Cleanup(func() { close(dist.done) })
+
+	src := &fakeFrameSource{frames: [][]byte{[]byte("frame")}}
+	var wg sync.WaitGroup
+	assert.NotPanics(t, func() {
+		dist.processGroup(context.Background(), &wg, moqt.GroupSequence(1), src)
+		wg.Wait()
+	})
+}
+
+// ============================================================================
 // trackDistributor.processGroup semaphore tests
 // ============================================================================
 
@@ -1076,7 +1146,7 @@ func TestTrackDistributor_ProcessGroup_SemaphoreLimitsConcurrency(t *testing.T) 
 		t.Cleanup(func() { MaxGroupFillsInFlight = orig })
 		MaxGroupFillsInFlight = limit
 
-		dist := newTrackDistributor(newTrackManager(), "test/sem")
+		dist := newTrackDistributor(newTrackManager(), "test/sem", nil)
 		t.Cleanup(func() { close(dist.done) }) // stop pollCacheDepth
 		require.Equal(t, limit, cap(dist.fillSem), "fillSem capacity must equal MaxGroupFillsInFlight")
 
@@ -1148,7 +1218,7 @@ func TestTrackDistributor_ProcessGroup_CtxCancelUnblocks(t *testing.T) {
 		t.Cleanup(func() { MaxGroupFillsInFlight = orig })
 		MaxGroupFillsInFlight = 1
 
-		dist := newTrackDistributor(newTrackManager(), "test/cancel")
+		dist := newTrackDistributor(newTrackManager(), "test/cancel", nil)
 		t.Cleanup(func() { close(dist.done) }) // stop pollCacheDepth
 
 		ctx, cancel := context.WithCancel(context.Background())
@@ -1354,4 +1424,30 @@ func TestRelayHandler_Drain_Idempotent(t *testing.T) {
 	assert.Eventually(t, func() bool {
 		return !h.RouteStats().Alive
 	}, 100*time.Millisecond, time.Millisecond)
+}
+
+func BenchmarkEgressHistogramObserve(b *testing.B) {
+	trackName := []byte("test-track-name")
+	start := time.Now()
+
+	b.Run("baseline", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			metricGroupDeliveryHistogram.WithLabelValues(string(trackName)).Observe(time.Since(start).Seconds())
+		}
+	})
+
+	b.Run("optimized", func(b *testing.B) {
+		trackNameStr := string(trackName)
+		for i := 0; i < b.N; i++ {
+			metricGroupDeliveryHistogram.WithLabelValues(trackNameStr).Observe(time.Since(start).Seconds())
+		}
+	})
+
+	b.Run("prebound", func(b *testing.B) {
+		observer := metricGroupDeliveryHistogram.WithLabelValues(string(trackName))
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			observer.Observe(time.Since(start).Seconds())
+		}
+	})
 }

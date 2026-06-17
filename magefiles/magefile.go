@@ -248,7 +248,7 @@ func Check() error {
 // Relay starts the qumo-relay server
 func Relay() error {
 	fmt.Println("📡 Starting qumo relay server...")
-	fmt.Println("   Config: via Docker environment (see docker/docker-compose.topology.yml)")
+	fmt.Println("   Config: via Docker environment (see docker/docker-compose.static.yml)")
 	fmt.Println("   Certs: certs/server.crt, certs/server.key (run 'mage cert')")
 	fmt.Println("   Host: https://localhost:4433 (WebTransport/QUIC)")
 	fmt.Println()
