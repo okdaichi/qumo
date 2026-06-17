@@ -51,11 +51,12 @@ func ParseSDP(data string) *SDP {
 				attr := aParts[0]
 				if len(aParts) == 2 {
 					currentMedia.Attributes[attr] = aParts[1]
-					if attr == "control" {
+					switch attr {
+					case "control":
 						currentMedia.Control = aParts[1]
-					} else if attr == "rtpmap" {
+					case "rtpmap":
 						currentMedia.RtpMap = aParts[1]
-					} else if attr == "fmtp" {
+					case "fmtp":
 						currentMedia.Fmtp = aParts[1]
 					}
 				} else {
