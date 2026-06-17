@@ -307,14 +307,23 @@ func ParseAACConfig(data []byte) (*AACConfig, error) {
 	}
 
 	asc := data[2:]
+	return parseAudioSpecificConfig(asc)
+}
+
+// parseAudioSpecificConfig parses a raw AAC AudioSpecificConfig (ISO 14496-3)
+// into an [AACConfig]. It is shared by the FLV and RTSP ingest paths, which
+// carry the same AudioSpecificConfig in different containers.
+//
+// AudioSpecificConfig layout (first 13 bits):
+//
+//	bits 0-4:   audioObjectType
+//	bits 5-8:   samplingFrequencyIndex
+//	bits 9-12:  channelConfiguration
+func parseAudioSpecificConfig(asc []byte) (*AACConfig, error) {
 	if len(asc) < 2 {
 		return nil, errors.New("flv: AudioSpecificConfig too short")
 	}
 
-	// AudioSpecificConfig (ISO 14496-3):
-	//   bits 0-4:   audioObjectType
-	//   bits 5-8:   samplingFrequencyIndex
-	//   bits 9-12:  channelConfiguration
 	objectType := (asc[0] >> 3) & 0x1F
 	freqIdx := ((asc[0] & 0x07) << 1) | (asc[1] >> 7)
 	chanCfg := (asc[1] >> 3) & 0x0F

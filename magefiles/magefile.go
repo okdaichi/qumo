@@ -309,6 +309,144 @@ func Dev() error {
 // Rtmp provides RTMP ingest commands.
 type Rtmp mg.Namespace
 
+// ... (existing Rtmp methods)
+
+// Rtsp provides RTSP ingest commands.
+type Rtsp mg.Namespace
+
+// Serve starts the RTSP ingest server (RTSP → MoQT bridge).
+func (Rtsp) Serve() error {
+	fmt.Println("📡 Starting RTSP ingest server...")
+	fmt.Println("   RTSP:   rtsp://localhost:8554/live/stream")
+	fmt.Println("   MoQT:   https://localhost:4433 (WebTransport/QUIC)")
+	fmt.Println()
+	fmt.Println("💡 Push a stream with ffmpeg:")
+	fmt.Println("   mage rtsp:stream")
+	fmt.Println()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+	go func() {
+		select {
+		case <-sigCh:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+
+	cmd := exec.CommandContext(ctx, "go", "run", ".", "rtsp")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return nil
+		}
+		if runtime.GOOS == "windows" {
+			return exec.Command("taskkill", "/F", "/T", "/PID",
+				strconv.Itoa(cmd.Process.Pid)).Run()
+		}
+		return cmd.Process.Kill()
+	}
+
+	err := cmd.Run()
+	if ctx.Err() != nil {
+		return nil
+	}
+	return err
+}
+
+// Stream pushes a test stream via ffmpeg to the RTSP ingest server.
+// Generates a 720p color-bar pattern with a 440 Hz sine tone.
+//
+// Environment variables:
+//
+//	RTSP_PATH=/live/demo  RTSP path          (default: /live/demo)
+//	RTSP_ADDR=host:port                (default: localhost:8554)
+func (Rtsp) Stream() error {
+	path := envOrDefault("RTSP_PATH", "/live/demo")
+	addr := envOrDefault("RTSP_ADDR", "localhost:8554")
+
+	rtspURL := "rtsp://" + addr + path
+
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		fmt.Println("❌ ffmpeg is not installed!")
+		return fmt.Errorf("ffmpeg not found")
+	}
+
+	fmt.Println("🎬 Pushing test stream via ffmpeg...")
+	fmt.Println("   RTSP URL:       ", rtspURL)
+	fmt.Println("   Video:           1280x720 30fps (H.264 baseline)")
+	fmt.Println("   Audio:           AAC 48kHz stereo")
+	fmt.Println()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+	go func() {
+		select {
+		case <-sigCh:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+
+	cmd := exec.CommandContext(ctx, "ffmpeg",
+		"-re",
+		"-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30",
+		"-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000",
+		"-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
+		"-profile:v", "baseline", "-g", "60",
+		"-c:a", "aac", "-ar", "48000", "-ac", "2",
+		"-f", "rtsp", "-rtsp_transport", "tcp", rtspURL,
+	)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return nil
+		}
+		if runtime.GOOS == "windows" {
+			return exec.Command("taskkill", "/F", "/T", "/PID",
+				strconv.Itoa(cmd.Process.Pid)).Run()
+		}
+		return cmd.Process.Kill()
+	}
+
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+// Demo prints instructions to run the full RTSP→MoQT demo pipeline.
+func (Rtsp) Demo() {
+	fmt.Println("╔══════════════════════════════════════════════════════════════╗")
+	fmt.Println("║                    RTSP → MoQT Demo                        ║")
+	fmt.Println("╚══════════════════════════════════════════════════════════════╝")
+	fmt.Println()
+	fmt.Println("Run each command in a separate terminal:")
+	fmt.Println()
+	fmt.Println("  Terminal 1 — Start the RTSP→MoQT server:")
+	fmt.Println("    $ mage rtsp:serve")
+	fmt.Println()
+	fmt.Println("  Terminal 2 — Start the web subscriber:")
+	fmt.Println("    $ mage web")
+	fmt.Println()
+	fmt.Println("  Terminal 3 — Push a test stream via ffmpeg:")
+	fmt.Println("    $ mage rtsp:stream")
+	fmt.Println()
+}
+
 // Serve starts the RTMP ingest server (RTMP → MoQT bridge).
 func (Rtmp) Serve() error {
 	fmt.Println("📡 Starting RTMP ingest server...")

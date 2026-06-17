@@ -13,6 +13,7 @@ var (
 	// overridable command handlers for easier unit-testing
 	runRelay = relay.Run
 	runRTMP  = ingest.RunRTMP
+	runRTSP  = ingest.RunRTSP
 )
 
 func main() {
@@ -42,6 +43,8 @@ func run(args []string) int {
 		err = runRelay(cmdArgs)
 	case "rtmp":
 		err = runRTMP(cmdArgs)
+	case "rtsp":
+		err = runRTSP(cmdArgs)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n", cmd)
 		printUsage()
@@ -61,6 +64,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "Commands:")
 	fmt.Fprintln(os.Stderr, "  relay      Start the MoQ relay server")
 	fmt.Fprintln(os.Stderr, "  rtmp       Start the RTMP ingest server")
+	fmt.Fprintln(os.Stderr, "  rtsp       Start the RTSP ingest server")
 	fmt.Fprintln(os.Stderr, "  version    Print version information")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Configuration:")
