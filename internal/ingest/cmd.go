@@ -15,7 +15,7 @@ import (
 
 const (
 	defaultRTMPIngestAddr = ":1935"
-	defaultRTSPIngestAddr = ":554"
+	defaultRTSPIngestAddr = ":8554"
 	defaultRTMPServeAddr  = ":4433"
 )
 
@@ -103,7 +103,7 @@ func RunRTMP(_ []string) error {
 //
 // Configuration is read from environment variables:
 //
-//	RTSP_INGEST_ADDR    - RTSP listen address (default: ":554")
+//	RTSP_INGEST_ADDR    - RTSP listen address (default: ":8554")
 //	RTSP_SERVE_ADDR     - MoQT listen address (default: ":4433")
 //	CERT_FILE           - TLS certificate file (default: "certs/server.crt")
 //	KEY_FILE            - TLS key file (default: "certs/server.key")

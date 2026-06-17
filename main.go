@@ -64,6 +64,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "Commands:")
 	fmt.Fprintln(os.Stderr, "  relay      Start the MoQ relay server")
 	fmt.Fprintln(os.Stderr, "  rtmp       Start the RTMP ingest server")
+	fmt.Fprintln(os.Stderr, "  rtsp       Start the RTSP ingest server")
 	fmt.Fprintln(os.Stderr, "  version    Print version information")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Configuration:")

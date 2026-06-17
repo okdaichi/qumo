@@ -135,6 +135,10 @@ func (s *RTSPServer) handleConn(ctx context.Context, conn *rtsp.Conn) {
 			resp.Header.Set("Public", "DESCRIBE, SETUP, TEARDOWN, PLAY, PAUSE, ANNOUNCE, RECORD")
 
 		case rtsp.MethodAnnounce:
+			if req.Body == nil {
+				resp.StatusCode = rtsp.StatusBadRequest
+				break
+			}
 			body, err := io.ReadAll(req.Body)
 			if err != nil {
 				resp.StatusCode = rtsp.StatusBadRequest
@@ -154,15 +158,23 @@ func (s *RTSPServer) handleConn(ctx context.Context, conn *rtsp.Conn) {
 			defer sess.Close()
 
 		case rtsp.MethodSetup:
+			if sdp == nil || sess == nil {
+				// SETUP before ANNOUNCE, or ANNOUNCE failed.
+				resp.StatusCode = rtsp.StatusBadRequest
+				break
+			}
 			transport := req.Header.Get("Transport")
 			if !strings.Contains(transport, "interleaved") {
 				resp.StatusCode = rtsp.StatusUnsupportedTransport
 				break
 			}
-			// Parse interleaved channels
+			// Parse interleaved channels.
 			var rtpChan, rtcpChan uint8
-			fmt.Sscanf(transport, "RTP/AVP/TCP;interleaved=%d-%d", &rtpChan, &rtcpChan)
-			
+			if _, err := fmt.Sscanf(transport, "RTP/AVP/TCP;interleaved=%d-%d", &rtpChan, &rtcpChan); err != nil {
+				resp.StatusCode = rtsp.StatusBadRequest
+				break
+			}
+
 			// Find corresponding media in SDP
 			var media *rtsp.SDPMedia
 			for i := range sdp.Medias {
@@ -185,16 +197,18 @@ func (s *RTSPServer) handleConn(ctx context.Context, conn *rtsp.Conn) {
 							sets := strings.Split(strings.Split(fmtp[idx+21:], ";")[0], ",")
 							var sps, pps [][]byte
 							for _, s := range sets {
-								b, _ := base64.StdEncoding.DecodeString(s)
-								if len(b) > 0 {
-									if (b[0] & 0x1F) == 7 {
-										sps = append(sps, b)
-									} else if (b[0] & 0x1F) == 8 {
-										pps = append(pps, b)
-									}
+								b, err := base64.StdEncoding.DecodeString(s)
+								if err != nil || len(b) == 0 {
+									continue
+								}
+								switch b[0] & 0x1F {
+								case 7:
+									sps = append(sps, b)
+								case 8:
+									pps = append(pps, b)
 								}
 							}
-							if len(sps) > 0 {
+							if len(sps) > 0 && len(sps[0]) >= 4 {
 								cfg := &AVCConfig{
 									ProfileIDC:    sps[0][1],
 									ProfileCompat: sps[0][2],
@@ -205,7 +219,9 @@ func (s *RTSPServer) handleConn(ctx context.Context, conn *rtsp.Conn) {
 									Width:  1920,
 									Height: 1080,
 								}
-								sess.RegisterVideo(cfg)
+								if err := sess.RegisterVideo(cfg); err != nil {
+									slog.Warn("failed to register video track", "error", err)
+								}
 								track.avcCfg = cfg
 							}
 						}
@@ -230,6 +246,10 @@ func (s *RTSPServer) handleConn(ctx context.Context, conn *rtsp.Conn) {
 		case rtsp.MethodTeardown:
 			_ = conn.WriteResponse(resp)
 			return
+
+		default:
+			// Unsupported method (e.g. DESCRIBE, PLAY) for a push-only ingest.
+			resp.StatusCode = rtsp.StatusMethodNotAllowed
 		}
 
 		if err := conn.WriteResponse(resp); err != nil {

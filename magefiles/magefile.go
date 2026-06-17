@@ -317,7 +317,7 @@ type Rtsp mg.Namespace
 // Serve starts the RTSP ingest server (RTSP → MoQT bridge).
 func (Rtsp) Serve() error {
 	fmt.Println("📡 Starting RTSP ingest server...")
-	fmt.Println("   RTSP:   rtsp://localhost:554/live/stream")
+	fmt.Println("   RTSP:   rtsp://localhost:8554/live/stream")
 	fmt.Println("   MoQT:   https://localhost:4433 (WebTransport/QUIC)")
 	fmt.Println()
 	fmt.Println("💡 Push a stream with ffmpeg:")
@@ -364,11 +364,11 @@ func (Rtsp) Serve() error {
 //
 // Environment variables:
 //
-//	PATH=/live/demo    RTSP path            (default: /live/demo)
-//	RTSP_ADDR=host:port                (default: localhost:554)
+//	RTSP_PATH=/live/demo  RTSP path          (default: /live/demo)
+//	RTSP_ADDR=host:port                (default: localhost:8554)
 func (Rtsp) Stream() error {
-	path := envOrDefault("PATH", "/live/demo")
-	addr := envOrDefault("RTSP_ADDR", "localhost:554")
+	path := envOrDefault("RTSP_PATH", "/live/demo")
+	addr := envOrDefault("RTSP_ADDR", "localhost:8554")
 
 	rtspURL := "rtsp://" + addr + path
 
