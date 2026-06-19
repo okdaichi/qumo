@@ -5,8 +5,11 @@ import (
 	"log"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
+	"slices"
+	"strings"
 	"syscall"
 	"time"
 
@@ -25,15 +28,17 @@ const (
 //
 // Configuration is read from environment variables:
 //
-//	RTMP_INGEST_ADDR    - RTMP listen address (default: ":1935")
-//	RTMP_SERVE_ADDR     - MoQT listen address (default: ":4433")
-//	CERT_FILE           - TLS certificate file (default: "certs/server.crt")
-//	KEY_FILE            - TLS key file (default: "certs/server.key")
+//	RTMP_INGEST_ADDR     - RTMP listen address (default: ":1935")
+//	RTMP_SERVE_ADDR      - MoQT listen address (default: ":4433")
+//	CERT_FILE            - TLS certificate file (default: "certs/server.crt")
+//	KEY_FILE             - TLS key file (default: "certs/server.key")
+//	CORS_ALLOWED_ORIGINS - comma-separated WebTransport origins (default: same-origin only; "*" allows any)
 func RunRTMP(_ []string) error {
 	ingestAddr := envOr("RTMP_INGEST_ADDR", defaultRTMPIngestAddr)
 	serveAddr := envOr("RTMP_SERVE_ADDR", defaultRTMPServeAddr)
 	certFile := envOr("CERT_FILE", "certs/server.crt")
 	keyFile := envOr("KEY_FILE", "certs/server.key")
+	allowedOrigins := loadAllowedOrigins()
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -48,10 +53,8 @@ func RunRTMP(_ []string) error {
 
 	// WebTransportHandler upgrades HTTP/3 requests into MoQT sessions.
 	wtHandler := &moqt.WebTransportHandler{
-		TrackMux: trackMux,
-		CheckOrigin: func(r *http.Request) bool {
-			return true // allow cross-origin (Vite dev server)
-		},
+		TrackMux:    trackMux,
+		CheckOrigin: newOriginChecker(allowedOrigins),
 		Handler: moqt.HandleFunc(func(sess *moqt.Session) {
 			defer sess.CloseWithError(moqt.NoError, moqt.NoError.String())
 			<-sess.Context().Done()
@@ -103,15 +106,17 @@ func RunRTMP(_ []string) error {
 //
 // Configuration is read from environment variables:
 //
-//	RTSP_INGEST_ADDR    - RTSP listen address (default: ":8554")
-//	RTSP_SERVE_ADDR     - MoQT listen address (default: ":4433")
-//	CERT_FILE           - TLS certificate file (default: "certs/server.crt")
-//	KEY_FILE            - TLS key file (default: "certs/server.key")
+//	RTSP_INGEST_ADDR     - RTSP listen address (default: ":8554")
+//	RTSP_SERVE_ADDR      - MoQT listen address (default: ":4433")
+//	CERT_FILE            - TLS certificate file (default: "certs/server.crt")
+//	KEY_FILE             - TLS key file (default: "certs/server.key")
+//	CORS_ALLOWED_ORIGINS - comma-separated WebTransport origins (default: same-origin only; "*" allows any)
 func RunRTSP(_ []string) error {
 	ingestAddr := envOr("RTSP_INGEST_ADDR", defaultRTSPIngestAddr)
 	serveAddr := envOr("RTSP_SERVE_ADDR", defaultRTMPServeAddr)
 	certFile := envOr("CERT_FILE", "certs/server.crt")
 	keyFile := envOr("KEY_FILE", "certs/server.key")
+	allowedOrigins := loadAllowedOrigins()
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -126,10 +131,8 @@ func RunRTSP(_ []string) error {
 
 	// WebTransportHandler upgrades HTTP/3 requests into MoQT sessions.
 	wtHandler := &moqt.WebTransportHandler{
-		TrackMux: trackMux,
-		CheckOrigin: func(r *http.Request) bool {
-			return true
-		},
+		TrackMux:    trackMux,
+		CheckOrigin: newOriginChecker(allowedOrigins),
 		Handler: moqt.HandleFunc(func(sess *moqt.Session) {
 			defer sess.CloseWithError(moqt.NoError, moqt.NoError.String())
 			<-sess.Context().Done()
@@ -181,4 +184,50 @@ func envOr(key, defaultVal string) string {
 		return v
 	}
 	return defaultVal
+}
+
+// loadAllowedOrigins reads the comma-separated CORS_ALLOWED_ORIGINS environment
+// variable consumed by the MoQT WebTransport origin.
+func loadAllowedOrigins() []string {
+	var out []string
+	for o := range strings.SplitSeq(envOr("CORS_ALLOWED_ORIGINS", ""), ",") {
+		if o = strings.TrimSpace(o); o != "" {
+			out = append(out, o)
+		}
+	}
+	return out
+}
+
+// newOriginChecker returns a WebTransport CheckOrigin callback that mitigates
+// cross-site request forgery on session upgrades. A request is accepted when:
+//   - it carries no Origin header (non-browser clients such as SDKs and CLIs),
+//   - its Origin is listed in allowed, or allowed contains the wildcard "*",
+//   - its Origin host matches the request Host (same-origin browser request).
+//
+// An empty allowed slice mirrors the underlying upgrader's default behaviour:
+// only headerless and same-origin requests pass. This matches how the relay
+// server configures its own WebTransportHandler (CheckOrigin left unset).
+func newOriginChecker(allowed []string) func(*http.Request) bool {
+	wildcard := slices.Contains(allowed, "*")
+	allowedSet := make(map[string]struct{}, len(allowed))
+	for _, o := range allowed {
+		allowedSet[o] = struct{}{}
+	}
+	return func(r *http.Request) bool {
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			return true
+		}
+		if wildcard {
+			return true
+		}
+		if _, ok := allowedSet[origin]; ok {
+			return true
+		}
+		u, err := url.Parse(origin)
+		if err != nil {
+			return false
+		}
+		return strings.EqualFold(u.Host, r.Host)
+	}
 }
