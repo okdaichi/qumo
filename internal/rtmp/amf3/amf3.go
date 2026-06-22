@@ -679,9 +679,11 @@ func sortedKeys[V any](m map[string]V) []string {
 	if len(m) == 0 {
 		return nil
 	}
-	keys := make([]string, 0, len(m))
+	keys := make([]string, len(m))
+	i := 0
 	for k := range m {
-		keys = append(keys, k)
+		keys[i] = k
+		i++
 	}
 	sort.Strings(keys)
 	return keys
