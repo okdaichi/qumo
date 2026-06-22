@@ -43,10 +43,9 @@ func sanitizeLog(s string) string {
 //	REGION                       - geographic region (default: "")
 //	ROLE                         - node role: "hub" or "edge" (default: "")
 //	ADVERTISE_ADDR               - address advertised to peers
-//	GROUP_CACHE_SIZE             - max group caches (default: 100) [TODO]
-//	FRAME_CAPACITY               - frame buffer size in bytes (default: 1500) [TODO]
-//	PEERS                        - comma-separated list of static peer addresses	//	LOCAL_RESOLVER_ADDR            - Nomad HTTP API address (default: http://localhost:4646)
-//	LOCAL_RESOLVER_SERVICE_NAME    - Nomad service name to query (default: "qumo-relay")
+//	PEERS                        - comma-separated list of static peer addresses
+//	LOCAL_RESOLVER_ADDR          - Nomad HTTP API address (default: http://localhost:4646)
+//	LOCAL_RESOLVER_SERVICE_NAME  - Nomad service name to query (default: "qumo-relay")
 //	LOCAL_RESOLVER_INTERVAL        - Nomad discovery polling interval (default: "15s")
 //	REMOTE_RESOLVER_URL      - remote traffic resolver URL (optional)
 //	REMOTE_AUTH_TOKEN        - bearer token for remote resolver
