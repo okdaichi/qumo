@@ -342,13 +342,15 @@ func writeObjectEnd(w io.Writer) error {
 }
 
 func writeByte(w io.Writer, b byte) error {
-	_, err := w.Write([]byte{b})
+	var buf [1]byte
+	buf[0] = b
+	_, err := w.Write(buf[:])
 	return err
 }
 
 func readByte(r io.Reader) (byte, error) {
-	buf := make([]byte, 1)
-	_, err := io.ReadFull(r, buf)
+	var buf [1]byte
+	_, err := io.ReadFull(r, buf[:])
 	if err != nil {
 		return 0, err
 	}
@@ -356,35 +358,35 @@ func readByte(r io.Reader) (byte, error) {
 }
 
 func writeU16(w io.Writer, v uint16) error {
-	buf := make([]byte, 2)
-	binary.BigEndian.PutUint16(buf, v)
-	_, err := w.Write(buf)
+	var buf [2]byte
+	binary.BigEndian.PutUint16(buf[:], v)
+	_, err := w.Write(buf[:])
 	return err
 }
 
 func readU16(r io.Reader) (uint16, error) {
-	buf := make([]byte, 2)
-	_, err := io.ReadFull(r, buf)
+	var buf [2]byte
+	_, err := io.ReadFull(r, buf[:])
 	if err != nil {
 		return 0, err
 	}
-	return binary.BigEndian.Uint16(buf), nil
+	return binary.BigEndian.Uint16(buf[:]), nil
 }
 
 func writeU32(w io.Writer, v uint32) error {
-	buf := make([]byte, 4)
-	binary.BigEndian.PutUint32(buf, v)
-	_, err := w.Write(buf)
+	var buf [4]byte
+	binary.BigEndian.PutUint32(buf[:], v)
+	_, err := w.Write(buf[:])
 	return err
 }
 
 func readU32(r io.Reader) (uint32, error) {
-	buf := make([]byte, 4)
-	_, err := io.ReadFull(r, buf)
+	var buf [4]byte
+	_, err := io.ReadFull(r, buf[:])
 	if err != nil {
 		return 0, err
 	}
-	return binary.BigEndian.Uint32(buf), nil
+	return binary.BigEndian.Uint32(buf[:]), nil
 }
 
 func readUTF8(r io.Reader) (string, error) {
