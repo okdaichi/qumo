@@ -9,20 +9,73 @@ import (
 	"sync"
 )
 
+type writeTask struct {
+	req   *Request
+	resp  *Response
+	frame *InterleavedFrame
+	errCh chan error
+}
+
 // Conn represents an RTSP connection.
 type Conn struct {
 	transport net.Conn
 	br        *bufio.Reader
 	bw        *bufio.Writer
 
-	mu sync.Mutex
+	writeChan chan writeTask
+	closeChan chan struct{}
+	closeOnce sync.Once
 }
 
 func newConn(transport net.Conn) *Conn {
-	return &Conn{
+	c := &Conn{
 		transport: transport,
 		br:        bufio.NewReader(transport),
 		bw:        bufio.NewWriter(transport),
+		writeChan: make(chan writeTask, 128),
+		closeChan: make(chan struct{}),
+	}
+	go c.writerLoop()
+	return c
+}
+
+func (c *Conn) writerLoop() {
+	defer c.Close()
+	for {
+		select {
+		case <-c.closeChan:
+			return
+		case task := <-c.writeChan:
+			var err error
+			if task.frame != nil {
+				var header [4]byte
+				header[0] = '$'
+				header[1] = task.frame.Channel
+				binary.BigEndian.PutUint16(header[2:], uint16(len(task.frame.Payload)))
+
+				if _, err = c.bw.Write(header[:]); err == nil {
+					if _, err = c.bw.Write(task.frame.Payload); err == nil {
+						err = c.bw.Flush()
+					}
+				}
+			} else if task.req != nil {
+				if err = task.req.Write(c.bw); err == nil {
+					err = c.bw.Flush()
+				}
+			} else if task.resp != nil {
+				if err = task.resp.Write(c.bw); err == nil {
+					err = c.bw.Flush()
+				}
+			}
+
+			if task.errCh != nil {
+				task.errCh <- err
+			}
+
+			if err != nil {
+				return
+			}
+		}
 	}
 }
 
@@ -84,48 +137,59 @@ func (c *Conn) readInterleavedFrame() (*InterleavedFrame, error) {
 
 // WriteRequest writes an RTSP request to the connection.
 func (c *Conn) WriteRequest(req *Request) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if err := req.Write(c.bw); err != nil {
-		return err
+	errCh := make(chan error, 1)
+	select {
+	case <-c.closeChan:
+		return net.ErrClosed
+	case c.writeChan <- writeTask{req: req, errCh: errCh}:
+		select {
+		case <-c.closeChan:
+			return net.ErrClosed
+		case err := <-errCh:
+			return err
+		}
 	}
-	return c.bw.Flush()
 }
 
 // WriteResponse writes an RTSP response to the connection.
 func (c *Conn) WriteResponse(resp *Response) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if err := resp.Write(c.bw); err != nil {
-		return err
+	errCh := make(chan error, 1)
+	select {
+	case <-c.closeChan:
+		return net.ErrClosed
+	case c.writeChan <- writeTask{resp: resp, errCh: errCh}:
+		select {
+		case <-c.closeChan:
+			return net.ErrClosed
+		case err := <-errCh:
+			return err
+		}
 	}
-	return c.bw.Flush()
 }
 
 // WriteInterleavedFrame writes an interleaved frame to the connection.
 func (c *Conn) WriteInterleavedFrame(frame *InterleavedFrame) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	var header [4]byte
-	header[0] = '$'
-	header[1] = frame.Channel
-	binary.BigEndian.PutUint16(header[2:], uint16(len(frame.Payload)))
-
-	if _, err := c.bw.Write(header[:]); err != nil {
-		return err
+	errCh := make(chan error, 1)
+	select {
+	case <-c.closeChan:
+		return net.ErrClosed
+	case c.writeChan <- writeTask{frame: frame, errCh: errCh}:
+		select {
+		case <-c.closeChan:
+			return net.ErrClosed
+		case err := <-errCh:
+			return err
+		}
 	}
-	if _, err := c.bw.Write(frame.Payload); err != nil {
-		return err
-	}
-	return c.bw.Flush()
 }
 
 // Close closes the connection.
 func (c *Conn) Close() error {
-	return c.transport.Close()
+	c.closeOnce.Do(func() {
+		close(c.closeChan)
+		c.transport.Close()
+	})
+	return nil
 }
 
 // RemoteAddr returns the remote network address.
