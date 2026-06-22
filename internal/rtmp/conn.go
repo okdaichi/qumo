@@ -89,18 +89,28 @@ type rawMessage struct {
 func newConn(transport net.Conn) *Conn {
 	cr := &countingReader{r: transport}
 	cw := &countingWriter{w: transport}
-	return &Conn{
+	c := &Conn{
 		transport:      transport,
 		counter:        cr,
 		writeCounter:   cw,
 		br:             bufio.NewReaderSize(cr, 4096),
 		bw:             bufio.NewWriterSize(cw, 4096),
+		writeChan:      make(chan writeTask, 64),
+		closeChan:      make(chan struct{}),
 		readChunkSize:  defaultReadChunkSize,
 		writeChunkSize: defaultWriteChunkSize,
 		readStates:     make(map[chunkStreamID]*chunkReadState),
 		windowAckSize:  defaultWindowAckSize,
 		nextStreamID:   1,
 	}
+	go c.writeLoop()
+	return c
+}
+
+type writeTask struct {
+	csid  chunkStreamID
+	msg   *rawMessage
+	errCh chan error
 }
 
 // Conn represents an RTMP connection over a TCP transport.
@@ -112,7 +122,10 @@ type Conn struct {
 	writeCounter *countingWriter
 	br           *bufio.Reader
 	bw           *bufio.Writer
-	writeMu      sync.Mutex
+
+	writeChan chan writeTask
+	closeChan chan struct{}
+	closeOnce sync.Once
 
 	readChunkSize  uint32
 	writeChunkSize uint32
@@ -270,10 +283,37 @@ func (c *Conn) readMessage() (*rawMessage, error) {
 	}
 }
 
+func (c *Conn) writeLoop() {
+	for {
+		select {
+		case <-c.closeChan:
+			return
+		case task := <-c.writeChan:
+			err := c.doWriteRawMessage(task.csid, task.msg)
+			if task.errCh != nil {
+				task.errCh <- err
+			}
+		}
+	}
+}
+
 // writeRawMessage writes a full RTMP message, splitting it into chunks.
 func (c *Conn) writeRawMessage(csid chunkStreamID, msg *rawMessage) error {
-	c.writeMu.Lock()
-	defer c.writeMu.Unlock()
+	errCh := make(chan error, 1)
+	select {
+	case c.writeChan <- writeTask{csid: csid, msg: msg, errCh: errCh}:
+		select {
+		case err := <-errCh:
+			return err
+		case <-c.closeChan:
+			return net.ErrClosed
+		}
+	case <-c.closeChan:
+		return net.ErrClosed
+	}
+}
+
+func (c *Conn) doWriteRawMessage(csid chunkStreamID, msg *rawMessage) error {
 
 	payload := msg.payload
 	msgLen := uint32(len(payload))
@@ -769,7 +809,12 @@ func (c *Conn) LocalAddr() net.Addr { return c.transport.LocalAddr() }
 func (c *Conn) RemoteAddr() net.Addr { return c.transport.RemoteAddr() }
 
 // Close closes the underlying TCP connection.
-func (c *Conn) Close() error { return c.transport.Close() }
+func (c *Conn) Close() error {
+	c.closeOnce.Do(func() {
+		close(c.closeChan)
+	})
+	return c.transport.Close()
+}
 
 // ---------------------------------------------------------------------------
 // MessageReader / MessageWriter
