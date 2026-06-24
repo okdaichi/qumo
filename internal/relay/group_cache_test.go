@@ -600,7 +600,7 @@ func BenchmarkGroupRing_Get(b *testing.B) {
 func BenchmarkGroupRing_Ingest(b *testing.B) {
 	pool := NewFramePool(DefaultNewFrameCapacity)
 	ring := newGroupRing(DefaultGroupCacheSize, pool)
-	
+
 	frame := moqt.NewFrame(DefaultNewFrameCapacity)
 	frame.Write(make([]byte, 1000))
 
@@ -649,13 +649,13 @@ func TestGroupRing_Stress(t *testing.T) {
 		defer wg.Done()
 		for g := 1; g < numGroups; g++ {
 			cache := ring.reserve(moqt.GroupSequence(g))
-			
+
 			// Simulate concurrent fill
 			wg.Add(1)
 			go func(c *groupCache, groupSeq int) {
 				defer wg.Done()
 				time.Sleep(time.Duration(groupSeq%5) * time.Microsecond)
-				
+
 				src := &fakeFrameSource{
 					frames: [][]byte{[]byte("frame-data")},
 				}
@@ -666,4 +666,3 @@ func TestGroupRing_Stress(t *testing.T) {
 
 	wg.Wait()
 }
-
