@@ -29,7 +29,7 @@ type groupCache struct {
 	seq      moqt.GroupSequence
 	frames   []*moqt.Frame
 	frameLen atomic.Int32 // Number of frames in frames slice (for lockless reads)
-	complete atomic.Bool // True when all frames have been added
+	complete atomic.Bool  // True when all frames have been added
 	refCount atomic.Int32
 	evicted  atomic.Bool
 	released atomic.Bool

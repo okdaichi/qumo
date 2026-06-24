@@ -46,22 +46,24 @@ func ParseSDP(data string) *SDP {
 			sdp.Medias = append(sdp.Medias, *currentMedia)
 			currentMedia = &sdp.Medias[len(sdp.Medias)-1]
 		case "a":
-			if currentMedia != nil {
-				aParts := strings.SplitN(val, ":", 2)
-				attr := aParts[0]
-				if len(aParts) == 2 {
-					currentMedia.Attributes[attr] = aParts[1]
-					switch attr {
-					case "control":
-						currentMedia.Control = aParts[1]
-					case "rtpmap":
-						currentMedia.RtpMap = aParts[1]
-					case "fmtp":
-						currentMedia.Fmtp = aParts[1]
-					}
-				} else {
-					currentMedia.Attributes[attr] = ""
-				}
+			if currentMedia == nil {
+				continue
+			}
+			aParts := strings.SplitN(val, ":", 2)
+			attr := aParts[0]
+			attrVal := ""
+			if len(aParts) == 2 {
+				attrVal = aParts[1]
+			}
+			currentMedia.Attributes[attr] = attrVal
+
+			switch attr {
+			case "control":
+				currentMedia.Control = attrVal
+			case "rtpmap":
+				currentMedia.RtpMap = attrVal
+			case "fmtp":
+				currentMedia.Fmtp = attrVal
 			}
 		}
 	}
