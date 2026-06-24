@@ -27,14 +27,14 @@ const (
 )
 
 const (
-	StatusOK                  = 200
-	StatusBadRequest          = 400
-	StatusUnauthorized        = 401
-	StatusNotFound            = 404
-	StatusMethodNotAllowed    = 405
-	StatusSessionNotFound     = 454
+	StatusOK                   = 200
+	StatusBadRequest           = 400
+	StatusUnauthorized         = 401
+	StatusNotFound             = 404
+	StatusMethodNotAllowed     = 405
+	StatusSessionNotFound      = 454
 	StatusUnsupportedTransport = 461
-	StatusInternalServerError = 500
+	StatusInternalServerError  = 500
 )
 
 // Request represents an RTSP request.
