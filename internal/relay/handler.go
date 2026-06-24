@@ -73,12 +73,7 @@ type Drainable interface {
 
 // RouteReporter is implemented by handlers that can report routing quality
 // metrics for a relayed broadcast path. Use a type assertion on the
-// TrackHandler returned by TrackMux.TrackHandler:
-//
-//	_, h := mux.TrackHandler(path)
-//	if rr, ok := h.(relay.RouteReporter); ok {
-//		stats := rr.RouteStats()
-//	}
+// TrackHandler returned by TrackMux.TrackHandler.
 //
 // Evaluation is intentionally performed only when a new route candidate
 // arrives, not periodically, to preserve cache hit rates and playback
