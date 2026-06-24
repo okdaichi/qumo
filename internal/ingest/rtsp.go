@@ -139,7 +139,8 @@ func (s *RTSPServer) handleConn(ctx context.Context, conn *rtsp.Conn) {
 				resp.StatusCode = rtsp.StatusBadRequest
 				break
 			}
-			body, err := io.ReadAll(req.Body)
+			// Limit SDP size to 64KB to prevent unbounded memory allocation.
+			body, err := io.ReadAll(io.LimitReader(req.Body, 64*1024))
 			if err != nil {
 				resp.StatusCode = rtsp.StatusBadRequest
 				break
