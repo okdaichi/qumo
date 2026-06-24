@@ -351,8 +351,8 @@ func newTrackDistributor(manager *trackManager, trackID string, broadSess *broad
 		egressCounter:     metricRelayEgressBytesTotal.WithLabelValues(trackID),
 		deliveryHistogram: metricGroupDeliveryHistogram.WithLabelValues(trackID),
 		session:           broadSess,
-		fillSem: make(chan struct{}, maxGroupFillsInFlightOrPanic()),
-		done:    make(chan struct{}),
+		fillSem:           make(chan struct{}, maxGroupFillsInFlightOrPanic()),
+		done:              make(chan struct{}),
 	}
 	go d.pollCacheDepth()
 	return d
@@ -448,13 +448,8 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 				for {
 					frame := cache.next(frameIdx)
 					if frame != nil {
-						if err := gw.WriteFrame(frame); err != nil {
+						if err := d.writeFrame(gw, frame); err != nil {
 							return true
-						}
-						n := frame.Len()
-						d.egressCounter.Add(float64(n))
-						if d.session != nil {
-							d.session.addEgress(int64(n))
 						}
 						frameIdx++
 						continue
@@ -513,6 +508,19 @@ func (d *trackDistributor) subscribe() chan struct{} {
 	d.subscribers = append(d.subscribers, ch)
 	d.mu.Unlock()
 	return ch
+}
+
+// writeFrame writes a single frame and updates relevant egress counters.
+func (d *trackDistributor) writeFrame(gw *moqt.GroupWriter, frame *moqt.Frame) error {
+	if err := gw.WriteFrame(frame); err != nil {
+		return err
+	}
+	n := frame.Len()
+	d.egressCounter.Add(float64(n))
+	if d.session != nil {
+		d.session.addEgress(int64(n))
+	}
+	return nil
 }
 
 // unsubscribe removes a subscriber using swap-delete to keep O(1) removal.
