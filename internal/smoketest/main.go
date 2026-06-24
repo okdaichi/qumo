@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"log"
@@ -142,7 +143,7 @@ func run(ctx context.Context, pubURL, subURL string, numGroups, numFrames, frame
 		groupCount++
 	}
 
-	recvHash := fmt.Sprintf("%x", h.Sum(nil))
+	recvHash := hex.EncodeToString(h.Sum(nil))
 
 	log.Printf("subscribe: received %d groups, %d frames ✓", groupCount, frameCount)
 
@@ -185,5 +186,5 @@ func hashAllFlat(data [][]byte, numGroups, numFrames int) string {
 			h.Write(data[g*numFrames+f])
 		}
 	}
-	return fmt.Sprintf("%x", h.Sum(nil))
+	return hex.EncodeToString(h.Sum(nil))
 }
