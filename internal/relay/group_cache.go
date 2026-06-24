@@ -180,8 +180,6 @@ func (ring *groupRing) reserve(seq moqt.GroupSequence) *groupCache {
 // for different groups.
 func (ring *groupRing) fill(group frameSource, cache *groupCache, onFrame func(n int)) {
 	buf := ring.pool.Get()
-	defer ring.pool.Put(buf)
-	defer ring.decrRef(cache) // filler completes and releases its reference
 
 	frameCount := 0
 	for frame := range group.Frames(buf) {
@@ -197,6 +195,9 @@ func (ring *groupRing) fill(group frameSource, cache *groupCache, onFrame func(n
 	if onFrame != nil {
 		onFrame(0) // signals group completion; no new bytes
 	}
+
+	ring.decrRef(cache) // filler completes and releases its reference
+	ring.pool.Put(buf)
 }
 
 func (ring *groupRing) get(seq moqt.GroupSequence) *groupCache {
