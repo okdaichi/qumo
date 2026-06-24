@@ -10,8 +10,7 @@
 // create a [Session] per publish stream, register tracks when codec
 // configuration becomes available, and push frames:
 //
-//	sess, err := ingest.NewSession(trackMux, "/app/stream")
-//	if err != nil { /* handle */ }
+//	sess, _ := ingest.NewSession(trackMux, "/app/stream")
 //	defer sess.Close()
 //	sess.RegisterVideo(avcCfg)
 //	sess.RegisterAudio(aacCfg)

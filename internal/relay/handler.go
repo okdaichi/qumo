@@ -351,8 +351,8 @@ func newTrackDistributor(manager *trackManager, trackID string, broadSess *broad
 		egressCounter:     metricRelayEgressBytesTotal.WithLabelValues(trackID),
 		deliveryHistogram: metricGroupDeliveryHistogram.WithLabelValues(trackID),
 		session:           broadSess,
-		fillSem: make(chan struct{}, maxGroupFillsInFlightOrPanic()),
-		done:    make(chan struct{}),
+		fillSem:           make(chan struct{}, maxGroupFillsInFlightOrPanic()),
+		done:              make(chan struct{}),
 	}
 	go d.pollCacheDepth()
 	return d
