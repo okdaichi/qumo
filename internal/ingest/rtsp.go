@@ -193,37 +193,22 @@ func (s *RTSPServer) handleConn(ctx context.Context, conn *rtsp.Conn) {
 					track.kind = trackKindVideo
 					// Extract SPS/PPS
 					if fmtp := media.Fmtp; fmtp != "" {
-						if idx := strings.Index(fmtp, "sprop-parameter-sets="); idx != -1 {
-							sets := strings.Split(strings.Split(fmtp[idx+21:], ";")[0], ",")
-							var sps, pps [][]byte
-							for _, s := range sets {
-								b, err := base64.StdEncoding.DecodeString(s)
-								if err != nil || len(b) == 0 {
-									continue
-								}
-								switch b[0] & 0x1F {
-								case 7:
-									sps = append(sps, b)
-								case 8:
-									pps = append(pps, b)
-								}
+						sps, pps := extractParameterSets(fmtp)
+						if len(sps) > 0 && len(sps[0]) >= 4 {
+							cfg := &AVCConfig{
+								ProfileIDC:    sps[0][1],
+								ProfileCompat: sps[0][2],
+								LevelIDC:      sps[0][3],
+								SPS:           sps,
+								PPS:           pps,
+								// Width/Height should be parsed from SPS, but using placeholder for now
+								Width:  1920,
+								Height: 1080,
 							}
-							if len(sps) > 0 && len(sps[0]) >= 4 {
-								cfg := &AVCConfig{
-									ProfileIDC:    sps[0][1],
-									ProfileCompat: sps[0][2],
-									LevelIDC:      sps[0][3],
-									SPS:           sps,
-									PPS:           pps,
-									// Width/Height should be parsed from SPS, but using placeholder for now
-									Width:  1920,
-									Height: 1080,
-								}
-								if err := sess.RegisterVideo(cfg); err != nil {
-									slog.Warn("failed to register video track", "error", err)
-								}
-								track.avcCfg = cfg
+							if err := sess.RegisterVideo(cfg); err != nil {
+								slog.Warn("failed to register video track", "error", err)
 							}
+							track.avcCfg = cfg
 						}
 					}
 				} else if media.Type == "audio" && strings.Contains(media.RtpMap, "mpeg4-generic") {
@@ -344,4 +329,25 @@ func (t *rtspTrack) pushNALU(timestamp uint32, nalu []byte) {
 	pts := int64(timestamp) * 1000 / 90 // 90kHz clock to microseconds
 	isKey := (nalu[0] & 0x1F) == 5
 	t.session.PushVideo(pts, data, isKey)
+}
+
+func extractParameterSets(fmtp string) (sps, pps [][]byte) {
+	idx := strings.Index(fmtp, "sprop-parameter-sets=")
+	if idx == -1 {
+		return nil, nil
+	}
+	sets := strings.Split(strings.Split(fmtp[idx+21:], ";")[0], ",")
+	for _, s := range sets {
+		b, err := base64.StdEncoding.DecodeString(s)
+		if err != nil || len(b) == 0 {
+			continue
+		}
+		switch b[0] & 0x1F {
+		case 7:
+			sps = append(sps, b)
+		case 8:
+			pps = append(pps, b)
+		}
+	}
+	return sps, pps
 }
