@@ -127,6 +127,9 @@ jobs:
         if: always()
         run: |
           if [ ! -f results.sarif ]; then
+            # "$schema" is a literal JSON key, not a shell variable — the
+            # single-quoted echo is correct and SC2016 is a false positive here.
+            # shellcheck disable=SC2016
             echo '{"version":"2.1.0","$schema":"https://json.schemastore.org/sarif-2.1.0.json","runs":[{"tool":{"driver":{"name":"golangci-lint","rules":[]}},"results":[]}]}' > results.sarif
           fi
 
