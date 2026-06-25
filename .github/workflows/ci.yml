@@ -127,6 +127,9 @@ jobs:
         if: always()
         run: |
           if [ ! -f results.sarif ]; then
+            # "$schema" is a literal JSON key, not a shell variable — the
+            # single-quoted echo is correct and SC2016 is a false positive here.
+            # shellcheck disable=SC2016
             echo '{"version":"2.1.0","$schema":"https://json.schemastore.org/sarif-2.1.0.json","runs":[{"tool":{"driver":{"name":"golangci-lint","rules":[]}},"results":[]}]}' > results.sarif
           fi
 
@@ -159,3 +162,27 @@ jobs:
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@v1.4.0
           govulncheck ./...
+
+  workflows:
+    name: Workflows (actionlint)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install actionlint
+        # Pinned to an explicit version (not @latest) to avoid a mutable-ref
+        # supply-chain risk — same rationale as the govulncheck/benchstat pins.
+        run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+
+      - name: Run actionlint
+        # Lints every .github/workflows/*.yml: catches dangling matrix/secrets/
+        # env/needs refs, invalid job dependencies, malformed expressions, etc.
+        # Run with no args so actionlint auto-discovers all workflow files.
+        run: actionlint
