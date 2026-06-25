@@ -154,6 +154,8 @@ jobs:
         # Fails the check when a dependency carries an unfixed CVE affecting
         # this code. Complements the nightly.yml scheduled run, which catches
         # CVEs disclosed after a dependency was already merged.
+        # govulncheck is pinned to an explicit version (not @latest) to avoid a
+        # mutable-ref supply-chain risk; the vuln DB is still fetched live per run.
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
+          go install golang.org/x/vuln/cmd/govulncheck@v1.4.0
           govulncheck ./...
