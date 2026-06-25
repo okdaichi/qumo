@@ -21,6 +21,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     name: Build Image
@@ -41,3 +45,15 @@ jobs:
           tags: qumo:ci-test
           cache-from: type=gha
           cache-to: type=gha,mode=min
+
+      - name: Scan image for vulnerabilities
+        # SHA: aquasecurity/trivy-action@0.35.0 (commit 57a97c7).
+        # Pinned by SHA, not tag: trivy-action tags were force-pushed in the
+        # March 2026 supply-chain attack (CVE-2026-26189 / GHSA-69fq-xp46-6x23).
+        # dependabot (github-actions ecosystem) keeps this SHA current.
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
+        with:
+          image-ref: qumo:ci-test
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: 1

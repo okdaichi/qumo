@@ -1,0 +1,36 @@
+name: Nightly
+
+# Daily govulncheck against main: catches CVEs disclosed *after* a dependency
+# was merged, not just at PR time (ci.yml's vulncheck job only sees what's in
+# the PR diff at merge time). A scheduled failure here surfaces a known vuln in
+# a shipped dependency that the PR-time check would have missed.
+
+on:
+  schedule:
+    - cron: '17 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  govulncheck:
+    name: Govulncheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run govulncheck
+        # Pinned to an explicit version (not @latest) to avoid a mutable-ref
+        # supply-chain risk; keep in sync with ci.yml's vulncheck job. The vuln
+        # DB is fetched live per run, so pinning only freezes analysis logic.
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.4.0
+          govulncheck ./...

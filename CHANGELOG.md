@@ -23,6 +23,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **CORS origin check hardened (`internal/ingest`):** `WebTransportHandler.CheckOrigin` no longer accepts every origin for the RTMP and RTSP ingest servers. Origins are validated against a comma-separated `CORS_ALLOWED_ORIGINS` environment variable (supporting a `*` wildcard), with a same-origin fallback, closing a WebTransport cross-site request forgery risk.
 - **TLS configuration hardened (`internal/relay`):** Removed `InsecureSkipVerify` from the relay dialer, enforcing proper TLS verification on outgoing connections to prevent Man-in-the-Middle attacks.
 - **Removed dynamic TLS generation:** Removed the capability to dynamically generate self-signed TLS certificates in production binaries when `INSECURE=true`. Test suites have been updated to utilize dynamically generated temporary certificates.
+- **Dependency and image vulnerability scanning (`.github/workflows`):** Added a
+  `govulncheck` job to `ci.yml` that runs on every PR/push and fails when a dependency
+  carries a known Go vulnerability, plus a new `nightly.yml` that re-scans `main` on a
+  daily schedule to catch CVEs disclosed after a dependency was already merged. Added a
+  SHA-pinned Trivy scan to `docker.yml` (`severity: CRITICAL,HIGH`, `ignore-unfixed`,
+  `exit-code: 1`) over the locally-built image. Trivy is pinned to commit `57a97c7`
+  (`trivy-action@0.35.0`) rather than a mutable tag: `trivy-action` tags were
+  force-pushed in the March 2026 supply-chain attack (CVE-2026-26189 / GHSA-69fq-xp46-6x23).
 
 ### Performance
 
@@ -100,6 +108,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (foalk-inc/qumo-deploy#535). A peer's role now falls back to the queried role only
   when the response omits it. Prevents silently dropping every hub once the registry
   stops returning `role`. (#93)
+- **CI Go version source and concurrency (`.github/workflows`):** Switched `setup-go`
+  in `ci.yml`, `release.yml`, and `nightly.yml` from a hardcoded `go-version: '1.26'` to
+  `go-version-file: go.mod`, making `go.mod` the single source of truth (matching
+  `bench.yml`). Added `concurrency` groups with `cancel-in-progress: true` to `ci.yml`
+  and `docker.yml` to cancel superseded runs; intentionally omitted from `release.yml`
+  so tag-triggered releases are never canceled mid-run.
 
 ### Added
 
