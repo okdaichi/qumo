@@ -100,15 +100,12 @@ func BenchmarkGroupCache_ConcurrentAppendAndNext(b *testing.B) {
 			go func() {
 				defer wg.Done()
 				for i := 0; i < b.N/writers; i++ {
+					// No trim: append self-limits at MaxFramesPerGroup, so frames
+					// never shrinks — the invariant the lockless next() below relies
+					// on. Trimming here set len(frames) to 0 while leaving the
+					// atomic frameLen stale, so concurrent readers passed next()'s
+					// bounds check and indexed a zero-length slice (panic).
 					gc.append(frame, pool)
-					// groupCache.append grows frames without bound; trim
-					// periodically (under the same lock append uses) to keep
-					// memory bounded at high b.N.
-					if i%framesCap == 0 {
-						gc.mu.Lock()
-						gc.frames = gc.frames[:0]
-						gc.mu.Unlock()
-					}
 				}
 			}()
 		}
@@ -338,15 +335,12 @@ func BenchmarkLockPressure_GroupCache(b *testing.B) {
 				go func() {
 					defer wg.Done()
 					for i := 0; i < b.N/tt.writers; i++ {
+						// No trim: append self-limits at MaxFramesPerGroup, so frames
+						// never shrinks - the invariant the lockless next() below relies
+						// on. Trimming here set len(frames) to 0 while leaving frameLen
+						// stale, so concurrent readers passed next()'s bounds check and
+						// indexed a zero-length slice (panic).
 						gc.append(frame, pool)
-						// groupCache.append grows frames without bound; trim
-						// periodically (under the same lock append uses) to
-						// keep memory bounded at high b.N.
-						if i%framesCap == 0 {
-							gc.mu.Lock()
-							gc.frames = gc.frames[:0]
-							gc.mu.Unlock()
-						}
 					}
 				}()
 			}
