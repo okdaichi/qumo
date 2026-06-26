@@ -43,6 +43,11 @@ jobs:
           context: .
           file: docker/Dockerfile
           push: false
+          # With the docker-container buildx driver (setup-buildx-action's default),
+          # a build is kept in BuildKit's cache and never reaches the local Docker
+          # daemon unless `load: true` exports it. Without this, the subsequent
+          # Trivy step fails with "No such image: qumo:ci-test".
+          load: true
           tags: qumo:ci-test
           cache-from: type=gha
           cache-to: type=gha,mode=min
