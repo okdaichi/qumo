@@ -59,7 +59,7 @@ func run(ctx context.Context, pubURL, subURL string, numGroups, numFrames, frame
 	pubMux.PublishFunc(ctx, moqt.BroadcastPath(broadcastPath), func(tw *moqt.TrackWriter) {
 		defer tw.Close()
 		for g := range numGroups {
-			gw, err := tw.OpenGroup()
+			gw, err := tw.OpenGroup(ctx)
 			if err != nil {
 				log.Printf("publish: OpenGroup: %v", err)
 				return

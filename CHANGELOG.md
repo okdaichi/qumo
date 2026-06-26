@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Bumped gomoqt to v0.16.0 (`go.mod`):** Upgraded the MoQT library from v0.15.0. Notable upstream fixes carried in by this release include a critical OOM denial-of-service fix for unconstrained varint allocation, `Server.Close()` no longer hanging with active connections, and `OpenGroup`/`OpenGroupAt` backpressuring on the QUIC uni-stream limit instead of aborting. `OpenGroup`/`OpenGroupAt` now require a `context.Context`; call sites in `internal/ingest`, `internal/relay`, and `internal/smoketest` were updated accordingly.
+
 ### Performance
 
 - **Relay Handler Egress Allocation Optimization:** Extracted `string(tw.TrackName)` conversion outside the wait loop in the track distributor egress handler, preventing unnecessary memory allocations in the tight loop.

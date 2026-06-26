@@ -434,7 +434,7 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 			}
 
 			shouldExit := func() bool {
-				gw, err := tw.OpenGroupAt(cache.seq)
+				gw, err := tw.OpenGroupAt(twCtx, cache.seq)
 				if err != nil {
 					d.ring.decrRef(cache)
 					return true

@@ -338,7 +338,7 @@ func (b *trackBuffer) serve(ctx context.Context, tw *moqt.TrackWriter) {
 				continue
 			}
 
-			gw, err := tw.OpenGroupAt(g.seq)
+			gw, err := tw.OpenGroupAt(ctx, g.seq)
 			if err != nil {
 				metricSubscribeErrorsTotal.WithLabelValues("open_group_failed").Inc()
 				return
