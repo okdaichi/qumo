@@ -182,6 +182,12 @@ jobs:
           # Count significant per-benchmark changes (exclude the geomean rows).
           regress=$(grep -E ' \+[0-9]+\.[0-9]+% ' benchstat-full.txt | grep -vc '^geomean' || true)
           improv=$(grep -E ' -[0-9]+\.[0-9]+% ' benchstat-full.txt | grep -vc '^geomean' || true)
+          # Count benchmark runs that panicked or failed to build. A failure
+          # means the base-vs-PR comparison is incomplete even when the
+          # surviving benchmarks show no delta, so the summary must not read
+          # as "No significant changes". The per-package headers written above
+          # are "### ❌ <pkg> — base/PR build/run failed".
+          failed=$(grep -c 'build/run failed' build-errors.md 2>/dev/null || true)
 
           # Summary line: relevant metered changes only.
           summary=""
@@ -189,6 +195,10 @@ jobs:
           if [ "$improv" -gt 0 ]; then
             [ -n "$summary" ] && summary="$summary  •  "
             summary="${summary}✅ **${improv} improvement(s)**"
+          fi
+          if [ "$failed" -gt 0 ]; then
+            [ -n "$summary" ] && summary="$summary  •  "
+            summary="${summary}⚠️ **${failed} benchmark run(s) failed — comparison incomplete**"
           fi
           if [ -z "$summary" ]; then
             echo "✅ **No significant changes** — all benchmarks within measurement noise." >> report.md
