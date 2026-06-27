@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 
@@ -48,13 +49,49 @@ func BenchmarkFramePool_LargeFrame(b *testing.B) {
 
 // ============================================================================
 // Group Cache Benchmarks
+//
+// BenchmarkGroupCache_ReadFanOut is the PRIMARY benchmark for this component:
+// it models the real production access pattern (1 ingress writer, N subscriber
+// readers fanning out). BenchmarkGroupCache_ConcurrentAppendAndNext below is
+// SYNTHETIC — a relay never has 10 writers on one group — and is kept only to
+// stress the append CAS path under contention.
 // ============================================================================
 
-func BenchmarkGroupCache_Next_HitRate(b *testing.B) {
-	gc := &groupCache{
-		seq:    1,
-		frames: make([]*moqt.Frame, 0),
+// BenchmarkGroupCache_ReadFanOut measures N concurrent readers draining a
+// pre-filled cache — the production read hot path (many subscribers per group).
+// No writer, so no at-limit artifact; isolates how read cost scales with fan-out,
+// which is the regime a relay is designed for. This is the benchmark that
+// reflects real groupCache behavior; treat the multi-writer benchmarks as
+// supplemental.
+func BenchmarkGroupCache_ReadFanOut(b *testing.B) {
+	frame := moqt.NewFrame(DefaultNewFrameCapacity)
+	frame.Write([]byte("fanout"))
+	for _, readers := range []int{1, 10, 50, 100, 200, 500} {
+		b.Run(fmt.Sprintf("%dr", readers), func(b *testing.B) {
+			gc := newGroupCache(1, MaxFramesPerGroup)
+			pool := NewFramePool(DefaultNewFrameCapacity)
+			for i := 0; i < 120; i++ {
+				gc.append(frame, pool)
+			}
+			b.ResetTimer()
+			b.ReportAllocs()
+			var wg sync.WaitGroup
+			wg.Add(readers)
+			for range readers {
+				go func() {
+					defer wg.Done()
+					for i := 0; i < b.N; i++ {
+						_ = gc.next(i % 120)
+					}
+				}()
+			}
+			wg.Wait()
+		})
 	}
+}
+
+func BenchmarkGroupCache_Next_HitRate(b *testing.B) {
+	gc := newGroupCache(1, 0)
 
 	pool := NewFramePool(DefaultNewFrameCapacity)
 	frame := moqt.NewFrame(DefaultNewFrameCapacity)
@@ -71,6 +108,11 @@ func BenchmarkGroupCache_Next_HitRate(b *testing.B) {
 	}
 }
 
+// BenchmarkGroupCache_ConcurrentAppendAndNext is SYNTHETIC: it runs 10
+// concurrent writers, which does not match the production model (a single
+// ingress filler per group, appending frames in order). It is kept only to
+// stress the append copy-on-write CAS path under contention. For the realistic
+// 1-writer/N-reader access pattern, see BenchmarkGroupCache_ReadFanOut.
 func BenchmarkGroupCache_ConcurrentAppendAndNext(b *testing.B) {
 	const (
 		writers   = 10
@@ -80,10 +122,7 @@ func BenchmarkGroupCache_ConcurrentAppendAndNext(b *testing.B) {
 
 	b.Run("10writers_10readers", func(b *testing.B) {
 		pool := NewFramePool(DefaultNewFrameCapacity)
-		gc := &groupCache{
-			seq:    1,
-			frames: make([]*moqt.Frame, 0, framesCap),
-		}
+		gc := newGroupCache(1, framesCap)
 		frame := moqt.NewFrame(DefaultNewFrameCapacity)
 		frame.Write([]byte("test data"))
 
@@ -101,13 +140,10 @@ func BenchmarkGroupCache_ConcurrentAppendAndNext(b *testing.B) {
 				defer wg.Done()
 				for i := 0; i < b.N/writers; i++ {
 					gc.append(frame, pool)
-					// groupCache.append grows frames without bound; trim
-					// periodically (under the same lock append uses) to keep
-					// memory bounded at high b.N.
+					// Reset periodically so the working set stays bounded at
+					// high b.N (append otherwise self-limits at MaxFramesPerGroup).
 					if i%framesCap == 0 {
-						gc.mu.Lock()
-						gc.frames = gc.frames[:0]
-						gc.mu.Unlock()
+						gc.resetForReuse()
 					}
 				}
 			}()
@@ -262,10 +298,7 @@ func BenchmarkMemAllocs_GroupCache_Append(b *testing.B) {
 	const framesCap = 4096
 
 	pool := NewFramePool(DefaultNewFrameCapacity)
-	gc := &groupCache{
-		seq:    1,
-		frames: make([]*moqt.Frame, 0, framesCap),
-	}
+	gc := newGroupCache(1, framesCap)
 
 	frame := moqt.NewFrame(DefaultNewFrameCapacity)
 	frame.Write([]byte("test"))
@@ -278,9 +311,7 @@ func BenchmarkMemAllocs_GroupCache_Append(b *testing.B) {
 		// groupCache.append grows frames without bound; trim periodically to
 		// bound memory without distorting the amortized allocs/op measurement.
 		if i%framesCap == 0 {
-			gc.mu.Lock()
-			gc.frames = gc.frames[:0]
-			gc.mu.Unlock()
+			gc.resetForReuse()
 		}
 	}
 }
@@ -318,10 +349,7 @@ func BenchmarkLockPressure_GroupCache(b *testing.B) {
 	for _, tt := range tests {
 		b.Run(tt.name, func(b *testing.B) {
 			pool := NewFramePool(DefaultNewFrameCapacity)
-			gc := &groupCache{
-				seq:    1,
-				frames: make([]*moqt.Frame, 0, framesCap),
-			}
+			gc := newGroupCache(1, framesCap)
 
 			frame := moqt.NewFrame(DefaultNewFrameCapacity)
 			frame.Write([]byte("test"))
@@ -343,9 +371,7 @@ func BenchmarkLockPressure_GroupCache(b *testing.B) {
 						// periodically (under the same lock append uses) to
 						// keep memory bounded at high b.N.
 						if i%framesCap == 0 {
-							gc.mu.Lock()
-							gc.frames = gc.frames[:0]
-							gc.mu.Unlock()
+							gc.resetForReuse()
 						}
 					}
 				}()
