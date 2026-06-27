@@ -51,10 +51,7 @@ func BenchmarkFramePool_LargeFrame(b *testing.B) {
 // ============================================================================
 
 func BenchmarkGroupCache_Next_HitRate(b *testing.B) {
-	gc := &groupCache{
-		seq:    1,
-		frames: make([]*moqt.Frame, 0),
-	}
+	gc := newGroupCache(1, 0)
 
 	pool := NewFramePool(DefaultNewFrameCapacity)
 	frame := moqt.NewFrame(DefaultNewFrameCapacity)
@@ -80,10 +77,7 @@ func BenchmarkGroupCache_ConcurrentAppendAndNext(b *testing.B) {
 
 	b.Run("10writers_10readers", func(b *testing.B) {
 		pool := NewFramePool(DefaultNewFrameCapacity)
-		gc := &groupCache{
-			seq:    1,
-			frames: make([]*moqt.Frame, 0, framesCap),
-		}
+		gc := newGroupCache(1, framesCap)
 		frame := moqt.NewFrame(DefaultNewFrameCapacity)
 		frame.Write([]byte("test data"))
 
@@ -105,9 +99,7 @@ func BenchmarkGroupCache_ConcurrentAppendAndNext(b *testing.B) {
 					// periodically (under the same lock append uses) to keep
 					// memory bounded at high b.N.
 					if i%framesCap == 0 {
-						gc.mu.Lock()
-						gc.frames = gc.frames[:0]
-						gc.mu.Unlock()
+						gc.resetForReuse()
 					}
 				}
 			}()
@@ -262,10 +254,7 @@ func BenchmarkMemAllocs_GroupCache_Append(b *testing.B) {
 	const framesCap = 4096
 
 	pool := NewFramePool(DefaultNewFrameCapacity)
-	gc := &groupCache{
-		seq:    1,
-		frames: make([]*moqt.Frame, 0, framesCap),
-	}
+	gc := newGroupCache(1, framesCap)
 
 	frame := moqt.NewFrame(DefaultNewFrameCapacity)
 	frame.Write([]byte("test"))
@@ -278,9 +267,7 @@ func BenchmarkMemAllocs_GroupCache_Append(b *testing.B) {
 		// groupCache.append grows frames without bound; trim periodically to
 		// bound memory without distorting the amortized allocs/op measurement.
 		if i%framesCap == 0 {
-			gc.mu.Lock()
-			gc.frames = gc.frames[:0]
-			gc.mu.Unlock()
+			gc.resetForReuse()
 		}
 	}
 }
@@ -318,10 +305,7 @@ func BenchmarkLockPressure_GroupCache(b *testing.B) {
 	for _, tt := range tests {
 		b.Run(tt.name, func(b *testing.B) {
 			pool := NewFramePool(DefaultNewFrameCapacity)
-			gc := &groupCache{
-				seq:    1,
-				frames: make([]*moqt.Frame, 0, framesCap),
-			}
+			gc := newGroupCache(1, framesCap)
 
 			frame := moqt.NewFrame(DefaultNewFrameCapacity)
 			frame.Write([]byte("test"))
@@ -343,9 +327,7 @@ func BenchmarkLockPressure_GroupCache(b *testing.B) {
 						// periodically (under the same lock append uses) to
 						// keep memory bounded at high b.N.
 						if i%framesCap == 0 {
-							gc.mu.Lock()
-							gc.frames = gc.frames[:0]
-							gc.mu.Unlock()
+							gc.resetForReuse()
 						}
 					}
 				}()

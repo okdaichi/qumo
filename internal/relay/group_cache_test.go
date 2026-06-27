@@ -18,21 +18,18 @@ import (
 // ============================================================================
 
 func TestGroupCache_Append(t *testing.T) {
-	gc := &groupCache{
-		seq:    1,
-		frames: make([]*moqt.Frame, 0),
-	}
+	gc := newGroupCache(1, 0)
 
 	frame := moqt.NewFrame(100)
 	frame.Write([]byte("test data"))
 	gc.append(frame, DefaultFramePool)
 
-	require.Len(t, gc.frames, 1)
-	assert.NotSame(t, frame, gc.frames[0], "frame should be cloned")
+	require.Len(t, gc.snapshot(), 1)
+	assert.NotSame(t, frame, gc.snapshot()[0], "frame should be cloned")
 }
 
 func TestGroupCache_Append_ClonesData(t *testing.T) {
-	gc := &groupCache{seq: 1, frames: make([]*moqt.Frame, 0)}
+	gc := newGroupCache(1, 0)
 
 	original := moqt.NewFrame(100)
 	original.Write([]byte("original"))
@@ -41,12 +38,12 @@ func TestGroupCache_Append_ClonesData(t *testing.T) {
 	original.Reset()
 	original.Write([]byte("modified"))
 
-	cached := gc.frames[0]
+	cached := gc.snapshot()[0]
 	assert.NotEqual(t, 0, cached.Len(), "cached frame should retain original data")
 }
 
 func TestGroupCache_Append_Multiple(t *testing.T) {
-	gc := &groupCache{seq: 1, frames: make([]*moqt.Frame, 0)}
+	gc := newGroupCache(1, 0)
 
 	for range 5 {
 		f := moqt.NewFrame(100)
@@ -54,11 +51,11 @@ func TestGroupCache_Append_Multiple(t *testing.T) {
 		gc.append(f, DefaultFramePool)
 	}
 
-	assert.Len(t, gc.frames, 5)
+	assert.Len(t, gc.snapshot(), 5)
 }
 
 func TestGroupCache_Next(t *testing.T) {
-	gc := &groupCache{seq: 1, frames: make([]*moqt.Frame, 0)}
+	gc := newGroupCache(1, 0)
 	for range 3 {
 		frame := moqt.NewFrame(100)
 		gc.append(frame, DefaultFramePool)
@@ -89,7 +86,7 @@ func TestGroupCache_Next(t *testing.T) {
 }
 
 func TestGroupCache_ConcurrentAppend(t *testing.T) {
-	gc := &groupCache{seq: 1, frames: make([]*moqt.Frame, 0)}
+	gc := newGroupCache(1, 0)
 
 	const goroutines = 10
 	const appendsPerGoroutine = 20 // Stay under MaxFramesPerGroup (256)
@@ -108,11 +105,11 @@ func TestGroupCache_ConcurrentAppend(t *testing.T) {
 	}
 	wg.Wait()
 
-	assert.Len(t, gc.frames, goroutines*appendsPerGoroutine)
+	assert.Len(t, gc.snapshot(), goroutines*appendsPerGoroutine)
 }
 
 func TestGroupCache_IsComplete(t *testing.T) {
-	gc := &groupCache{seq: 1, frames: make([]*moqt.Frame, 0)}
+	gc := newGroupCache(1, 0)
 
 	assert.False(t, gc.isComplete(), "should not be complete before markComplete")
 	gc.markComplete()
@@ -172,7 +169,7 @@ func TestGroupRing_EarliestAvailable_AtBoundary(t *testing.T) {
 func TestGroupRing_Get(t *testing.T) {
 	ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
 
-	testCache := &groupCache{seq: 5, frames: make([]*moqt.Frame, 0)}
+	testCache := newGroupCache(5, 0)
 	idx := uint64(5) % uint64(ring.size)
 	ring.caches[idx].Store(testCache)
 
@@ -212,10 +209,7 @@ func TestGroupRing_ConcurrentAccess(t *testing.T) {
 	for i := range 10 {
 		go func(id int) {
 			for j := range 100 {
-				cache := &groupCache{
-					seq:    moqt.GroupSequence(id*100 + j),
-					frames: make([]*moqt.Frame, 0),
-				}
+				cache := newGroupCache(moqt.GroupSequence(id*100 + j), 0)
 				idx := (id*100 + j) % ring.size
 				ring.caches[idx].Store(cache)
 				ring.pos.Add(1)
@@ -555,10 +549,7 @@ func TestGroupRing_Fill_WaitGroupBlocksDone(t *testing.T) {
 // ============================================================================
 
 func BenchmarkGroupCache_Append(b *testing.B) {
-	gc := &groupCache{
-		seq:    1,
-		frames: make([]*moqt.Frame, 0, b.N),
-	}
+	gc := newGroupCache(1, b.N)
 	frame := moqt.NewFrame(1500)
 	frame.Write(make([]byte, 1000))
 
@@ -569,10 +560,7 @@ func BenchmarkGroupCache_Append(b *testing.B) {
 }
 
 func BenchmarkGroupCache_Next(b *testing.B) {
-	gc := &groupCache{
-		seq:    1,
-		frames: make([]*moqt.Frame, 0, 100),
-	}
+	gc := newGroupCache(1, 100)
 	for range 100 {
 		frame := moqt.NewFrame(1500)
 		gc.append(frame, DefaultFramePool)
@@ -587,7 +575,7 @@ func BenchmarkGroupCache_Next(b *testing.B) {
 func BenchmarkGroupRing_Get(b *testing.B) {
 	ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
 	for i := range ring.size {
-		cache := &groupCache{seq: moqt.GroupSequence(i), frames: make([]*moqt.Frame, 0)}
+		cache := newGroupCache(moqt.GroupSequence(i), 0)
 		ring.caches[i].Store(cache)
 	}
 
