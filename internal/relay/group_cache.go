@@ -84,6 +84,14 @@ func (gc *groupCache) incrRef() {
 // O(N) copy per append). The published snapshot is immutable, so concurrent next()
 // readers are data-race-free.
 func (gc *groupCache) append(f *moqt.Frame, pool *FramePool) {
+	// Fast path: if the group is already full, bail before paying for the clone.
+	// Racy with concurrent appends (re-checked under the CAS below), but skipping
+	// the pool.Get/WriteTo on the common at-limit path avoids a wasted frame copy.
+	if old := gc.frames.Load(); old != nil && len(*old) >= MaxFramesPerGroup {
+		slog.Warn("group exceeded max frame limit", "seq", gc.seq, "max", MaxFramesPerGroup)
+		return
+	}
+
 	// Clone outside the CAS loop: the clone is private until a CAS succeeds and is
 	// reused across retries (a failed attempt discards only its throwaway slice).
 	clone := pool.Get()
@@ -93,8 +101,7 @@ func (gc *groupCache) append(f *moqt.Frame, pool *FramePool) {
 		oldPtr := gc.frames.Load()
 		old := *oldPtr
 		if len(old) >= MaxFramesPerGroup {
-			pool.Put(clone)
-			slog.Warn("group exceeded max frame limit", "seq", gc.seq, "max", MaxFramesPerGroup)
+			pool.Put(clone) // raced past the limit between the fast check and here
 			return
 		}
 		// Copy-on-write: build a new immutable snapshot = old + clone, then publish.
