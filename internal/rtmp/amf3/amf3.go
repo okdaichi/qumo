@@ -667,8 +667,11 @@ func writeByte(w io.Writer, b byte) error {
 }
 
 func readByte(r io.Reader) (byte, error) {
-	buf := make([]byte, 1)
-	_, err := io.ReadFull(r, buf)
+	if br, ok := r.(io.ByteReader); ok {
+		return br.ReadByte()
+	}
+	var buf [1]byte
+	_, err := io.ReadFull(r, buf[:])
 	if err != nil {
 		return 0, err
 	}
