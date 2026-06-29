@@ -19,9 +19,6 @@ const (
 	flvAACRaw         = 1  // AACPacketType: raw AAC frame data
 )
 
-// Annex-B start code prefix.
-var startCode = []byte{0x00, 0x00, 0x00, 0x01}
-
 // Errors returned by the FLV parsing functions.
 var (
 	ErrShortVideoTag = errors.New("flv: video tag too short")
@@ -29,7 +26,7 @@ var (
 	ErrNotAVC        = errors.New("flv: codec is not H.264/AVC")
 	ErrNotAAC        = errors.New("flv: codec is not AAC")
 	ErrBadAVCConfig  = errors.New("flv: invalid AVCDecoderConfigurationRecord")
-	ErrBadNALUnit    = errors.New("flv: invalid NALU length in AVCC data")
+	ErrBadAACConfig  = errors.New("flv: invalid AudioSpecificConfig")
 )
 
 // AVCConfig holds the parsed AVCDecoderConfigurationRecord extracted from
@@ -53,12 +50,13 @@ type AVCConfig struct {
 	Height int
 }
 
-// CodecString returns the codec identifier string (e.g. "avc3.64001f")
-// used in MSF catalog entries. The "avc3" prefix indicates that parameter
-// sets (SPS/PPS) are carried inline in the bitstream (Annex-B format),
-// which matches the output of [AVCCToAnnexB].
+// CodecString returns the codec identifier string (e.g. "avc1.64001f") used in
+// MSF catalog entries. The "avc1" prefix denotes AVCC (length-prefixed) sample
+// stream with parameter sets carried in the catalog initData, which is what
+// RTMP ingest forwards unchanged and what a browser WebCodecs VideoDecoder
+// consumes.
 func (c *AVCConfig) CodecString() string {
-	return fmt.Sprintf("avc3.%02x%02x%02x", c.ProfileIDC, c.ProfileCompat, c.LevelIDC)
+	return fmt.Sprintf("avc1.%02x%02x%02x", c.ProfileIDC, c.ProfileCompat, c.LevelIDC)
 }
 
 // ParseAVCConfig parses an AVCDecoderConfigurationRecord from an FLV
@@ -83,6 +81,78 @@ func ParseAVCConfig(data []byte) (*AVCConfig, error) {
 		return nil, fmt.Errorf("flv: expected sequence header (type 0), got %d", data[1])
 	}
 	return parseAVCDecoderConfigurationRecord(data[5:])
+}
+
+// BuildAVCDecoderConfigurationRecord serializes an [AVCConfig] into an
+// ISO/IEC 14496-15 AVCDecoderConfigurationRecord — the codec initialization
+// blob a browser WebCodecs VideoDecoder expects as its `description`, and the
+// same shape the browser-publish path emits as Base64-encoded track initData.
+// It is the inverse of [parseAVCDecoderConfigurationRecord]. Pure: no I/O, no
+// globals, deterministic.
+//
+// Wire layout:
+//
+//	configurationVersion(1)                      = 0x01
+//	AVCProfileIndication(1)                      = ProfileIDC
+//	profile_compatibility(1)                     = ProfileCompat
+//	AVCLevelIndication(1)                        = LevelIDC
+//	reserved(0b111111) | lengthSizeMinusOne(2)   = 0xFC | (NALULenSize-1)
+//	reserved(0b111)   | numOfSequenceParameterSets(5) = 0xE0 | len(SPS)
+//	for each SPS: uint16BE(length) + NALU
+//	numOfPictureParameterSets(1)                 = len(PPS)
+//	for each PPS: uint16BE(length) + NALU
+func BuildAVCDecoderConfigurationRecord(cfg *AVCConfig) ([]byte, error) {
+	if cfg == nil {
+		return nil, ErrBadAVCConfig
+	}
+	if cfg.NALULenSize < 1 || cfg.NALULenSize > 4 {
+		return nil, ErrBadAVCConfig
+	}
+	if len(cfg.SPS) == 0 || len(cfg.SPS) > 31 {
+		return nil, ErrBadAVCConfig
+	}
+	if len(cfg.PPS) > 255 {
+		return nil, ErrBadAVCConfig
+	}
+
+	buf := make([]byte, 0, 6+1+sinkParamLen(cfg.SPS)+sinkParamLen(cfg.PPS))
+	buf = append(buf,
+		0x01,                  // configurationVersion
+		cfg.ProfileIDC,        // AVCProfileIndication
+		cfg.ProfileCompat,     // profile_compatibility
+		cfg.LevelIDC,          // AVCLevelIndication
+		0xFC|byte(cfg.NALULenSize-1), // reserved | lengthSizeMinusOne
+		0xE0|byte(len(cfg.SPS)),      // reserved | numOfSequenceParameterSets
+	)
+	var lenBuf [2]byte
+	for _, sps := range cfg.SPS {
+		if len(sps) > 0xFFFF {
+			return nil, ErrBadAVCConfig
+		}
+		binary.BigEndian.PutUint16(lenBuf[:], uint16(len(sps)))
+		buf = append(buf, lenBuf[:]...)
+		buf = append(buf, sps...)
+	}
+	buf = append(buf, byte(len(cfg.PPS))) // numOfPictureParameterSets
+	for _, pps := range cfg.PPS {
+		if len(pps) > 0xFFFF {
+			return nil, ErrBadAVCConfig
+		}
+		binary.BigEndian.PutUint16(lenBuf[:], uint16(len(pps)))
+		buf = append(buf, lenBuf[:]...)
+		buf = append(buf, pps...)
+	}
+	return buf, nil
+}
+
+// sinkParamLen returns the total wire bytes for a NALU slice: 2-byte length
+// prefix per entry. It is a small helper for sizing the output buffer.
+func sinkParamLen(nalus [][]byte) int {
+	n := 2 * len(nalus)
+	for _, nalu := range nalus {
+		n += len(nalu)
+	}
+	return n
 }
 
 // parseAVCDecoderConfigurationRecord parses the ISO 14496-15 record.
@@ -174,93 +244,23 @@ func parseAVCDecoderConfigurationRecord(buf []byte) (*AVCConfig, error) {
 	return cfg, nil
 }
 
-// AVCCToAnnexB converts AVCC-formatted NALU data (from an FLV video NALU
-// tag) to Annex-B format. On keyframes, SPS and PPS from the provided
-// AVCConfig are prepended.
+// parseFLVVideoCTS extracts the 24-bit signed Composition Time Offset (in ms)
+// from an FLV AVC NALU tag's bytes 2-4. RTMP ingest forwards AVCC NALUs
+// unchanged and uses this to compute presentation timestamps (PTS = DTS + CTS),
+// preserving B-frame timing.
 //
 // FLV video NALU tag layout:
 //
 //	byte 0: FrameType(4) | CodecID(4)
 //	byte 1: AVCPacketType (1 = NALU)
 //	bytes 2-4: CompositionTimeOffset (24-bit signed, in ms)
-//	bytes 5+: one or more length-prefixed NALUs
-//
-// Returns the Annex-B bitstream and the composition time offset in
-// milliseconds.
-func AVCCToAnnexB(data []byte, cfg *AVCConfig) (annexB []byte, cts int32, err error) {
-	if len(data) < 5 {
-		return nil, 0, ErrShortVideoTag
-	}
-	codecID := data[0] & 0x0F
-	if codecID != flvCodecIDAVC {
-		return nil, 0, ErrNotAVC
-	}
-	if data[1] != flvAVCNALU {
-		return nil, 0, fmt.Errorf("flv: expected NALU packet (type 1), got %d", data[1])
-	}
-
-	// Composition time offset: 24-bit signed integer (SI24).
-	cts = int32(data[2])<<16 | int32(data[3])<<8 | int32(data[4])
+//	bytes 5+: one or more length-prefixed NALUs (forwarded unchanged as AVCC)
+func parseFLVVideoCTS(data []byte) int32 {
+	cts := int32(data[2])<<16 | int32(data[3])<<8 | int32(data[4])
 	if cts&0x800000 != 0 {
 		cts |= ^0xFFFFFF // sign-extend
 	}
-
-	isKeyframe := (data[0]>>4)&0x07 == flvKeyframe
-	naluSize := cfg.NALULenSize
-	avcc := data[5:]
-
-	// Estimate output size: start codes + NALUs + optional SPS/PPS.
-	estSize := len(avcc) + 32 // NALUs + start codes headroom
-	if isKeyframe {
-		for _, sps := range cfg.SPS {
-			estSize += len(startCode) + len(sps)
-		}
-		for _, pps := range cfg.PPS {
-			estSize += len(startCode) + len(pps)
-		}
-	}
-	out := make([]byte, 0, estSize)
-
-	// Prepend SPS/PPS on keyframes.
-	if isKeyframe {
-		for _, sps := range cfg.SPS {
-			out = append(out, startCode...)
-			out = append(out, sps...)
-		}
-		for _, pps := range cfg.PPS {
-			out = append(out, startCode...)
-			out = append(out, pps...)
-		}
-	}
-
-	// Convert each AVCC NALU to Annex-B.
-	off := 0
-	for off < len(avcc) {
-		if off+naluSize > len(avcc) {
-			return nil, 0, ErrBadNALUnit
-		}
-		var naluLen int
-		switch naluSize {
-		case 4:
-			naluLen = int(binary.BigEndian.Uint32(avcc[off:]))
-		case 3:
-			naluLen = int(avcc[off])<<16 | int(avcc[off+1])<<8 | int(avcc[off+2])
-		case 2:
-			naluLen = int(binary.BigEndian.Uint16(avcc[off:]))
-		case 1:
-			naluLen = int(avcc[off])
-		}
-		off += naluSize
-
-		if naluLen <= 0 || off+naluLen > len(avcc) {
-			return nil, 0, ErrBadNALUnit
-		}
-		out = append(out, startCode...)
-		out = append(out, avcc[off:off+naluLen]...)
-		off += naluLen
-	}
-
-	return out, cts, nil
+	return cts
 }
 
 // AACConfig holds the parsed AudioSpecificConfig extracted from an FLV
@@ -337,6 +337,52 @@ func parseAudioSpecificConfig(asc []byte) (*AACConfig, error) {
 		ObjectType:    objectType,
 		SampleRate:    sampleRate,
 		ChannelConfig: int(chanCfg),
+	}, nil
+}
+
+// aacSampleRateIndex is the reverse of [aacSampleRates]: it maps a sample rate
+// in Hz to its 4-bit samplingFrequencyIndex, used when serializing an
+// AudioSpecificConfig. ok is false for rates not in the indexed table (which
+// would require the explicit 24-bit frequency form, unsupported here — all
+// common AAC rates are indexed).
+func aacSampleRateIndex(hz int) (idx int, ok bool) {
+	for i, r := range aacSampleRates {
+		if r == hz {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+// BuildAudioSpecificConfig serializes an [AACConfig] into an MPEG-4
+// AudioSpecificConfig (ISO/IEC 14496-3) — the codec initialization blob a
+// browser WebCodecs AudioDecoder expects as its `description`, and the same
+// shape the browser-publish path emits as Base64-encoded track initData. It is
+// the inverse of [parseAudioSpecificConfig] for the common (indexed-rate,
+// AAC-LC and friends) configurations. Pure: no I/O, no globals, deterministic.
+//
+// Two-byte layout (first 13 bits):
+//
+//	bits 0-4:  audioObjectType
+//	bits 5-8:  samplingFrequencyIndex (mapped from SampleRate)
+//	bits 9-12: channelConfiguration
+func BuildAudioSpecificConfig(cfg *AACConfig) ([]byte, error) {
+	if cfg == nil {
+		return nil, ErrBadAACConfig
+	}
+	if cfg.ObjectType < 1 || cfg.ObjectType > 31 {
+		return nil, ErrBadAACConfig
+	}
+	if cfg.ChannelConfig < 1 || cfg.ChannelConfig > 15 {
+		return nil, ErrBadAACConfig
+	}
+	freqIdx, ok := aacSampleRateIndex(cfg.SampleRate)
+	if !ok {
+		return nil, ErrBadAACConfig
+	}
+	return []byte{
+		(cfg.ObjectType << 3) | byte(freqIdx>>1),
+		(byte(freqIdx&0x01) << 7) | byte(cfg.ChannelConfig<<3),
 	}, nil
 }
 

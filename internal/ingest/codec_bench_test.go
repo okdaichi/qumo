@@ -22,27 +22,6 @@ func BenchmarkParseAVCConfig(b *testing.B) {
 	}
 }
 
-// BenchmarkAVCCToAnnexB measures the per-frame AVCC→Annex-B conversion on the
-// RTMP ingest hot path (keyframe path, which prepends SPS/PPS).
-func BenchmarkAVCCToAnnexB(b *testing.B) {
-	cfg := &AVCConfig{
-		NALULenSize: 4,
-		SPS:         [][]byte{{0x67, 0x64, 0x00, 0x1F}},
-		PPS:         [][]byte{{0x68, 0xEB}},
-	}
-	idrNALU := make([]byte, 1024) // ~1kB slice NALU, typical encoded frame
-	idrNALU[0] = 0x65
-	data := buildAVCNALUTag(1, 0, idrNALU)
-
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if _, _, err := AVCCToAnnexB(data, cfg); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
 // BenchmarkAACDepacketizer_Depacketize measures mpeg4-generic RTP → AAC access
 // unit depacketization on the RTSP audio hot path.
 func BenchmarkAACDepacketizer_Depacketize(b *testing.B) {

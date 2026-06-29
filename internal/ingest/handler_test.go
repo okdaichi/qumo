@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"sync"
 	"sync/atomic"
@@ -517,6 +518,9 @@ func TestRegisterVideo(t *testing.T) {
 		ProfileIDC:    0x64,
 		ProfileCompat: 0x00,
 		LevelIDC:      0x1F,
+		NALULenSize:   4,
+		SPS:           [][]byte{{0x67, 0x64, 0x00, 0x1F, 0xAC}},
+		PPS:           [][]byte{{0x68, 0xEB}},
 		Width:         1920,
 		Height:        1080,
 	}
@@ -539,7 +543,15 @@ func TestRegisterVideo(t *testing.T) {
 
 	var codec string
 	require.NoError(t, json.Unmarshal(tracks[0]["codec"], &codec))
-	assert.Equal(t, "avc3.64001f", codec)
+	assert.Equal(t, "avc1.64001f", codec)
+
+	// initData carries the Base64-encoded AVCDecoderConfigurationRecord.
+	var initData string
+	require.NoError(t, json.Unmarshal(tracks[0]["initData"], &initData))
+	decoded, err := base64.StdEncoding.DecodeString(initData)
+	require.NoError(t, err)
+	require.NotEmpty(t, decoded)
+	assert.Equal(t, byte(0x01), decoded[0], "configurationVersion")
 }
 
 func TestRegisterAudio(t *testing.T) {
@@ -571,6 +583,13 @@ func TestRegisterAudio(t *testing.T) {
 	var codec string
 	require.NoError(t, json.Unmarshal(tracks[0]["codec"], &codec))
 	assert.Equal(t, "mp4a.40.2", codec)
+
+	// initData carries the Base64-encoded AudioSpecificConfig (2 bytes for AAC-LC).
+	var initData string
+	require.NoError(t, json.Unmarshal(tracks[0]["initData"], &initData))
+	decoded, err := base64.StdEncoding.DecodeString(initData)
+	require.NoError(t, err)
+	assert.Len(t, decoded, 2)
 }
 
 func TestRegisterVideoAndAudio(t *testing.T) {
@@ -581,6 +600,9 @@ func TestRegisterVideoAndAudio(t *testing.T) {
 		ProfileIDC:    0x64,
 		ProfileCompat: 0x00,
 		LevelIDC:      0x1F,
+		NALULenSize:   4,
+		SPS:           [][]byte{{0x67, 0x64, 0x00, 0x1F, 0xAC}},
+		PPS:           [][]byte{{0x68, 0xEB}},
 		Width:         1920,
 		Height:        1080,
 	}
