@@ -1,8 +1,10 @@
 package ingest
 
 import (
+	"bytes"
 	"testing"
 
+	"github.com/qumo-dev/gomoqt/moqt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -113,4 +115,31 @@ func TestEncodeMediaFrame_ZeroTimestamp(t *testing.T) {
 	assert.Equal(t, byte(0x00), frame[0]) // timestamp = 0
 	assert.Equal(t, byte(0x01), frame[1]) // data length = 1
 	assert.Equal(t, byte(0x01), frame[2]) // data
+}
+
+// TestWriteMediaFrame_EquivalentToBuild proves the direct-to-frame path used by
+// Session.PushVideo/PushAudio produces byte-identical output to buildMediaFrame
+// across varint width boundaries (1/2/4-byte timestamps and data lengths).
+func TestWriteMediaFrame_EquivalentToBuild(t *testing.T) {
+	cases := []struct {
+		name string
+		ts   int64
+		data []byte
+	}{
+		{"zero ts, tiny data", 0, []byte{0x01}},
+		{"1-byte ts", 50, []byte("hello")},
+		{"2-byte ts (90000)", 90_000, bytes.Repeat([]byte{0xAB}, 200)},
+		{"4-byte ts (1e9)", 1_000_000_000, bytes.Repeat([]byte{0xCD}, 70_000)}, // data len crosses 2→4 byte varint
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			want := buildMediaFrame(c.ts, c.data)
+
+			f := moqt.NewFrame(mediaFrameSize(c.ts, len(c.data)))
+			writeMediaFrame(f, c.ts, c.data)
+
+			assert.Equal(t, len(want), f.Len(), "frame length matches envelope")
+			assert.Equal(t, want, f.Body(), "frame body is byte-identical to buildMediaFrame")
+		})
+	}
 }
