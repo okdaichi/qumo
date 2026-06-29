@@ -1,10 +1,4 @@
-// Package interop provides the reusable subscription-gate collector and
-// evaluation logic used by the OBS/ffmpeg interop tests (PRD #147, M5/M6).
-//
-// The [Collector] subscribes to a broadcast over MoQT and drains its catalog
-// and media tracks into an [Observation]. [Evaluate] is a pure gate over that
-// [Observation], assertable independently of a live relay.
-package interop
+package integration
 
 import (
 	"encoding/binary"

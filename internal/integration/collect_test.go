@@ -1,4 +1,6 @@
-package interop
+//go:build integration
+
+package integration
 
 import (
 	"context"

@@ -1,4 +1,12 @@
-package interop
+// Package integration holds the reusable subscription-gate collector and
+// evaluation logic for the OBS/ffmpeg interop tests (PRD #147, M5/M6).
+//
+// [Evaluate] is a pure gate over an [Observation] and is unit-tested in the
+// default test run. The live [Collector] (which subscribes over MoQT and needs
+// a relay) lives in collect_test.go behind the "integration" build tag, so it
+// is compiled only by `go test -tags=integration` and cannot be imported by
+// production code.
+package integration
 
 import (
 	"fmt"
