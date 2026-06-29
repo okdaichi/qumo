@@ -44,7 +44,7 @@ export function ConnectionStatus(props: {
 			{props.certHashProblem && (
 				<span class="status-warn">
 					{CERT_WARN[props.certHashProblem]} Run <code>mage cert</code> and set{" "}
-					<code>VITE_CERT_HASH</code> in <code>solid-deno/.env</code>.
+					<code>VITE_CERT_HASH</code> in <code>playground/.env</code>.
 				</span>
 			)}
 		</div>

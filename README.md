@@ -114,7 +114,7 @@ graph TD
 ### Requirements
 
 - **Go 1.26+** — [Download](https://golang.org/dl/) or use your package manager
-- **Deno** (optional, for web demo) — [Download](https://deno.land/) — see [solid-deno/README.md](solid-deno/README.md) for setup
+- **Deno** (optional, for web demo) — [Download](https://deno.land/) — see [playground/README.md](playground/README.md) for setup
 - **Mage** — Build automation tool
   ```bash
   go install github.com/magefile/mage@latest
@@ -147,7 +147,7 @@ qumo/
 ├── magefiles/                  # Build automation (Mage tasks)
 │
 ├── docs/                       # Design docs
-├── solid-deno/                 # Web demo (Deno)
+├── playground/                 # Web demo / relay test client (Deno + Solid)
 ├── .github/workflows/          # CI/CD pipelines
 ├── go.mod & go.sum             # Go dependencies
 └── main.go                     # Entry point (CLI dispatch)

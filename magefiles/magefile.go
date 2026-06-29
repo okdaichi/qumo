@@ -635,8 +635,8 @@ func Web() error {
 	fmt.Println("   ./bin/qumo-relay  # or: mage relay")
 	fmt.Println()
 
-	// Start Vite dev server in the solid-deno project
-	webDir := "solid-deno"
+	// Start Vite dev server in the playground project
+	webDir := "playground"
 	cmd := exec.Command("deno", "task", "dev")
 	cmd.Dir = webDir
 	cmd.Stdout = os.Stdout
@@ -649,7 +649,7 @@ func WebBuild() error {
 	fmt.Println("🔨 Building web demo...")
 
 	cmd := exec.Command("npm", "run", "build")
-	cmd.Dir = "solid-deno"
+	cmd.Dir = "playground"
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
@@ -658,12 +658,12 @@ func WebBuild() error {
 // WebClean cleans web build artifacts
 func WebClean() error {
 	fmt.Println("🧹 Cleaning web artifacts...")
-	return sh.Rm("solid-deno/dist")
+	return sh.Rm("playground/dist")
 }
 
 // Cert generates a short-lived self-signed ECDSA certificate for WebTransport development.
 // Chrome's serverCertificateHashes requires the certificate validity to be ≤14 days.
-// The SHA-256 fingerprint is automatically written to solid-deno/.env as VITE_CERT_HASH.
+// The SHA-256 fingerprint is automatically written to playground/.env as VITE_CERT_HASH.
 func Cert() error {
 	fmt.Println("🔐 Generating WebTransport-compatible TLS certificate...")
 
@@ -726,7 +726,7 @@ func Cert() error {
 		return err
 	}
 
-	// Compute SHA-256 fingerprint and write to solid-deno/.env
+	// Compute SHA-256 fingerprint and write to playground/.env
 	fingerprint := sha256.Sum256(certDER)
 	hexStr := hex.EncodeToString(fingerprint[:])
 
@@ -738,7 +738,7 @@ func Cert() error {
 	fmt.Println("✅ Certificate generated (valid 14 days)!")
 	fmt.Printf("   📄 certs/server.crt  (expires %s)\n", notAfter.Format("2006-01-02"))
 	fmt.Println("   🔑 certs/server.key")
-	fmt.Println("   🔐 VITE_CERT_HASH written to solid-deno/.env")
+	fmt.Println("   🔐 VITE_CERT_HASH written to playground/.env")
 	fmt.Println()
 	fmt.Println("💡 Re-run 'mage cert' when the certificate expires")
 	return nil
@@ -764,10 +764,10 @@ func computeCertHash() (string, error) {
 	return hexStr, nil
 }
 
-// writeCertHashToEnv writes or updates the VITE_CERT_HASH entry in solid-deno/.env.
+// writeCertHashToEnv writes or updates the VITE_CERT_HASH entry in playground/.env.
 // Other existing entries in the file are preserved.
 func writeCertHashToEnv(hash string) error {
-	envPath := filepath.Join("solid-deno", ".env")
+	envPath := filepath.Join("playground", ".env")
 	lines := []string{}
 	found := false
 
@@ -785,7 +785,7 @@ func writeCertHashToEnv(hash string) error {
 	if !found {
 		if len(lines) == 0 {
 			// Start from .env.example if .env doesn't exist
-			if tpl, err := os.ReadFile(filepath.Join("solid-deno", ".env.example")); err == nil {
+			if tpl, err := os.ReadFile(filepath.Join("playground", ".env.example")); err == nil {
 				lines = strings.Split(string(tpl), "\n")
 			}
 		}
@@ -1087,7 +1087,7 @@ type Demo mg.Namespace
 
 // Up starts the demo environment: relay (MoQ-MoQ echo) + RTMP + RTSP origins.
 // It generates the WebTransport cert via Cert() if missing (Cert also writes
-// VITE_CERT_HASH into solid-deno/.env). The ffmpeg test-pattern pushers are
+// VITE_CERT_HASH into playground/.env). The ffmpeg test-pattern pushers are
 // opt-in — see Push.
 func (Demo) Up() error {
 	if err := ensureDemoCert(); err != nil {
@@ -1112,7 +1112,7 @@ func (Demo) Up() error {
 	fmt.Println()
 	fmt.Println("   RTMP/RTSP subscribe path: /live/demo")
 	fmt.Println()
-	fmt.Println("💡 Browser: set VITE_RELAY_URL in solid-deno/.env to the origin you want,")
+	fmt.Println("💡 Browser: set VITE_RELAY_URL in playground/.env to the origin you want,")
 	fmt.Println("            then run `mage web`. (Scenario selector lands in #137.)")
 	fmt.Println("💡 Push test streams: mage demo:push")
 	fmt.Println("📋 Logs:             mage demo:logs")

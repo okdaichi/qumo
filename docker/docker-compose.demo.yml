@@ -13,7 +13,7 @@
 # All three mount the SAME mage cert (SANs cover localhost), so a single pinned
 # VITE_CERT_HASH validates every origin.
 #
-# Prerequisite: `mage cert` (also writes VITE_CERT_HASH into solid-deno/.env).
+# Prerequisite: `mage cert` (also writes VITE_CERT_HASH into playground/.env).
 # Or just use `mage demo:up`, which generates the cert if missing.
 #
 # Usage:
