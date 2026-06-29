@@ -11,9 +11,14 @@ export function Dashborad() {
 
 	const transportOptions: WebTransportOptions = {};
 	if (certHash) {
-		const bytes = new Uint8Array(certHash.length / 2);
-		for (let i = 0; i < certHash.length; i += 2) {
-			bytes[i / 2] = parseInt(certHash.substring(i, i + 2), 16);
+		const len = certHash.length;
+		const bytes = new Uint8Array(len / 2);
+		for (let i = 0; i < len; i += 2) {
+			let hi = certHash.charCodeAt(i);
+			let lo = certHash.charCodeAt(i + 1);
+			hi = hi >= 97 ? hi - 87 : hi >= 65 ? hi - 55 : hi - 48;
+			lo = lo >= 97 ? lo - 87 : lo >= 65 ? lo - 55 : lo - 48;
+			bytes[i / 2] = (hi << 4) | lo;
 		}
 		transportOptions.serverCertificateHashes = [
 			{ algorithm: "sha-256", value: bytes },
