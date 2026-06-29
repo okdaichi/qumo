@@ -1,4 +1,4 @@
-import { createSignal, onCleanup, onMount, Show } from "solid-js";
+import { type Accessor, createSignal, onCleanup, onMount, Show } from "solid-js";
 import { AudioDecodeNode, VideoContext, VideoDecodeNode } from "@okdaichi/av-nodes";
 import { type Session, SubscribeErrorCode } from "@qumo/moq";
 import { parseCatalog } from "@qumo/moq/msf";
@@ -6,15 +6,11 @@ import { deserializeMediaFrame } from "../publish/media_frame.ts";
 import { background, withCancel } from "@okdaichi/golikejs/context";
 import type { BroadcastPath } from "@qumo/moq";
 
-export function SubscribeBoard(props: { session: Promise<Session> }) {
+export function SubscribeBoard(props: { session: Promise<Session>; path: Accessor<string> }) {
 	const [isSubscribed, setIsSubscribed] = createSignal(false);
 	const [error, setError] = createSignal<string | null>(null);
 	const [canvasWidth, setCanvasWidth] = createSignal(1280);
 	const [canvasHeight, setCanvasHeight] = createSignal(720);
-
-	// Editable broadcast path — defaults to /live/demo for RTMP ingest demo.
-	const [broadcastPathInput, setBroadcastPathInput] = createSignal("/live/demo");
-	const broadcastPath = (): BroadcastPath => broadcastPathInput() as BroadcastPath;
 
 	let canvasEle: HTMLCanvasElement | undefined;
 	let videoContext: VideoContext | undefined;
@@ -52,7 +48,7 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 			}
 
 			const session = await props.session;
-			const subscribePath = broadcastPath(); // snapshot at subscription start
+			const subscribePath = props.path() as BroadcastPath; // snapshot at subscription start
 
 			// Gate: the video loop awaits this before feeding any frames to the decoder.
 			// Resolved the moment the first catalog group is received.
@@ -293,18 +289,6 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 			<h2>Subscribe Board</h2>
 
 			<div class="controls">
-				<div class="path-input">
-					<label>Broadcast Path:</label>
-					<input
-						type="text"
-						value={broadcastPathInput()}
-						onInput={(e) => setBroadcastPathInput(e.currentTarget.value)}
-						disabled={isSubscribed()}
-						placeholder="/live/demo"
-						style={{ "font-family": "monospace", padding: "4px 8px" }}
-					/>
-				</div>
-
 				<div class="stream-controls">
 					<Show
 						when={!isSubscribed()}
@@ -329,7 +313,7 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 
 			<Show when={isSubscribed()}>
 				<div class="status-message">
-					Subscribing to: {broadcastPath()}
+					Subscribing to: {props.path()}
 				</div>
 			</Show>
 

@@ -3,13 +3,15 @@
   "specifiers": {
     "jsr:@okdaichi/av-nodes@0.10.1": "0.10.1",
     "jsr:@okdaichi/golikejs@0.9.0": "0.9.0",
+    "jsr:@qumo/moq@*": "0.16.1",
     "jsr:@qumo/moq@~0.16.1": "0.16.1",
     "npm:@deno/vite-plugin@^1.0.6": "1.0.6_vite@7.3.2__@types+node@25.6.0_@types+node@25.6.0",
     "npm:@types/node@^25.6.0": "25.6.0",
     "npm:solid-js@^1.9.12": "1.9.12",
     "npm:typescript@~5.9.3": "5.9.3",
     "npm:vite-plugin-solid@^2.11.12": "2.11.12_solid-js@1.9.12_vite@7.3.2__@types+node@25.6.0_@types+node@25.6.0",
-    "npm:vite@^7.3.2": "7.3.2_@types+node@25.6.0"
+    "npm:vite@^7.3.2": "7.3.2_@types+node@25.6.0",
+    "npm:zod@^3.24.2": "3.25.76"
   },
   "jsr": {
     "@okdaichi/av-nodes@0.10.1": {
@@ -24,7 +26,8 @@
     "@qumo/moq@0.16.1": {
       "integrity": "1c42e3bcd8630bb8f18bb6eaf0b3f4d20b17c7814eb1f03a71f718a36cdc018d",
       "dependencies": [
-        "jsr:@okdaichi/golikejs"
+        "jsr:@okdaichi/golikejs",
+        "npm:zod"
       ]
     }
   },

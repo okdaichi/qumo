@@ -1,4 +1,4 @@
-import { createEffect, createSignal, onMount, Show } from "solid-js";
+import { type Accessor, createEffect, createSignal, onMount, Show } from "solid-js";
 import { type BroadcastPath, type GroupWriter, TrackMux } from "@qumo/moq";
 import { Broadcast, type Track } from "@qumo/moq/msf";
 import {
@@ -12,7 +12,6 @@ import {
 import { getMediaStream, type MediaSourceType } from "./media.ts";
 import { background, type CancelFunc, type Context, withCancel } from "@okdaichi/golikejs/context";
 import { MediaFrame } from "./media_frame.ts";
-import { useBroadcastPath } from "../useBroadcastPath.ts";
 
 // Encode an ArrayBuffer or ArrayBufferView as a Base64 string.
 function encodeBase64(buf: ArrayBufferLike | ArrayBufferView): string {
@@ -26,8 +25,7 @@ function encodeBase64(buf: ArrayBufferLike | ArrayBufferView): string {
 
 const GOP_DURATION = 1000; // 1 second
 
-export function PublishBoard(props: { mux: TrackMux }) {
-	const broadcastPath: BroadcastPath = useBroadcastPath();
+export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 	const mux = props.mux;
 
 	const [sourceType, setSourceType] = createSignal<MediaSourceType>("camera");
@@ -300,7 +298,7 @@ export function PublishBoard(props: { mux: TrackMux }) {
 		// Announce to relay — Broadcast routes "catalog" and "video" internally.
 		mux.publish(
 			publishCtx.done(),
-			broadcastPath,
+			props.path() as BroadcastPath,
 			broadcast,
 		);
 
