@@ -1,9 +1,13 @@
 import { Show } from "solid-js";
 
 // WebTransport session lifecycle as surfaced to the user (issue #134).
-// "connecting" until the session promise settles; "connected" on success;
-// "failed" with a concise reason on rejection or mid-session close.
+// "connecting" until the connect() promise settles; "connected" on success;
+// "failed" with a concise reason on rejection.
 export type ConnectionState = "connecting" | "connected" | "failed";
+
+// Why the cert hash can't pin the relay cert: not configured, or present but
+// not a valid 64-char hex SHA-256.
+export type CertHashProblem = "missing" | "malformed";
 
 const LABELS: Record<ConnectionState, string> = {
 	connecting: "Connecting to relay…",
@@ -11,17 +15,20 @@ const LABELS: Record<ConnectionState, string> = {
 	failed: "Connection failed",
 };
 
-// Connection status indicator + actionable guidance.
-//
-// - Always shows the live transport state (connecting / connected / failed).
-// - On failure, shows a concise, user-facing reason.
-// - When the cert hash is missing, shows the remediation step up front — a
-//   self-signed relay cert will be rejected by WebTransport without it, so a
-//   first-time user otherwise sees only a silent console.warn.
+// User-facing guidance shown whenever the cert hash can't pin the relay cert.
+const CERT_WARN: Record<CertHashProblem, string> = {
+	missing: "Certificate hash not set — WebTransport will reject the relay's self-signed cert.",
+	malformed:
+		"VITE_CERT_HASH is malformed (expected 64 hex chars) — WebTransport can't pin the relay cert.",
+};
+
+// Connection status indicator: live transport state (dot + label), a concise
+// failure reason, and up-front remediation when the cert hash is missing or
+// malformed.
 export function ConnectionStatus(props: {
 	state: ConnectionState;
 	error: string | null;
-	certHashMissing: boolean;
+	certHashProblem: CertHashProblem | null;
 }) {
 	return (
 		<div class="connection-status" data-state={props.state}>
@@ -32,24 +39,24 @@ export function ConnectionStatus(props: {
 				<span class="status-reason">{props.error}</span>
 			</Show>
 
-			<Show when={props.certHashMissing}>
+			{props.certHashProblem && (
 				<span class="status-warn">
-					Certificate hash not set — WebTransport will reject the relay's
-					self-signed cert. Run <code>mage cert</code> and set{" "}
+					{CERT_WARN[props.certHashProblem]} Run <code>mage cert</code> and set{" "}
 					<code>VITE_CERT_HASH</code> in <code>solid-deno/.env</code>.
 				</span>
-			</Show>
+			)}
 		</div>
 	);
 }
 
 // Map a raw WebTransport connect failure to a concise, actionable message.
-// The cert-hash case is called out specifically because it is by far the most
-// common first-run failure and has a one-command fix.
-export function friendlyConnError(err: unknown, certHashMissing: boolean): string {
-	if (certHashMissing) {
-		return "No certificate hash configured — WebTransport rejected the relay's self-signed cert. Run 'mage cert' and set VITE_CERT_HASH.";
-	}
+// Returns null when the failure is cert-related — ConnectionStatus already
+// shows the cert remediation, so a duplicate reason would only clutter the bar.
+export function friendlyConnError(
+	err: unknown,
+	certHashProblem: CertHashProblem | null,
+): string | null {
+	if (certHashProblem) return null;
 	const raw = err instanceof Error ? err.message : String(err);
 	return `Could not connect to the relay: ${raw}`;
 }

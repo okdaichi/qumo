@@ -3,14 +3,15 @@
   "specifiers": {
     "jsr:@okdaichi/av-nodes@0.10.1": "0.10.1",
     "jsr:@okdaichi/golikejs@0.9.0": "0.9.0",
-    "jsr:@qumo/moq@0.15": "0.15.0",
+    "jsr:@qumo/moq@*": "0.16.0",
+    "jsr:@qumo/moq@0.16": "0.16.0",
+    "jsr:@qumo/moq@0.16.0": "0.16.0",
     "npm:@deno/vite-plugin@^1.0.6": "1.0.6_vite@7.3.2__@types+node@25.6.0_@types+node@25.6.0",
     "npm:@types/node@^25.6.0": "25.6.0",
     "npm:solid-js@^1.9.12": "1.9.12",
     "npm:typescript@~5.9.3": "5.9.3",
     "npm:vite-plugin-solid@^2.11.12": "2.11.12_solid-js@1.9.12_vite@7.3.2__@types+node@25.6.0_@types+node@25.6.0",
-    "npm:vite@^7.3.2": "7.3.2_@types+node@25.6.0",
-    "npm:zod@^3.24.2": "3.25.76"
+    "npm:vite@^7.3.2": "7.3.2_@types+node@25.6.0"
   },
   "jsr": {
     "@okdaichi/av-nodes@0.10.1": {
@@ -22,11 +23,10 @@
     "@okdaichi/golikejs@0.9.0": {
       "integrity": "9e99fab2a4a96c6b04143b37ecd5d18e9783fce4b5cdb716a3cabdb44fc5c00e"
     },
-    "@qumo/moq@0.15.0": {
-      "integrity": "ef23e83a79acc927fb94324f1c36be0aa1dbf71cf4ad472e595efb4c2c32dfe2",
+    "@qumo/moq@0.16.0": {
+      "integrity": "896b294b4aeb7a2fe468a1c084382a91498cd37bf2d627e0d1bbc532df3d49ec",
       "dependencies": [
-        "jsr:@okdaichi/golikejs",
-        "npm:zod"
+        "jsr:@okdaichi/golikejs"
       ]
     }
   },
@@ -806,7 +806,7 @@
     "dependencies": [
       "jsr:@okdaichi/av-nodes@0.10.1",
       "jsr:@okdaichi/golikejs@0.9.0",
-      "jsr:@qumo/moq@0.15"
+      "jsr:@qumo/moq@0.16"
     ],
     "packageJson": {
       "dependencies": [
