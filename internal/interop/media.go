@@ -55,6 +55,9 @@ func decodeMediaFrame(body []byte) (ptsUS int64, data []byte, err error) {
 	if uint64(len(rest)) < dataLen {
 		return 0, nil, ErrShortMediaFrame
 	}
+	// ts and dataLen are QUIC varints, whose encoding bounds them at 2^62-1
+	// (see readQuicVarint). That is well within int64's 2^63-1 range, so this
+	// conversion cannot overflow.
 	return int64(ts), rest[:dataLen], nil
 }
 

@@ -11,6 +11,14 @@ import (
 
 const defaultGroupTimeout = 5 * time.Second
 
+// Resource ceilings: the collector subscribes to a relay and must not trust it
+// to be well-behaved. A malformed/buggy relay could otherwise grow memory
+// without bound (a giant catalog) or loop forever (a stream of tiny frames).
+const (
+	maxCatalogBytes    = 1 << 20 // 1 MiB; a real MSF catalog is a few KiB.
+	maxFramesPerTrack  = 1_000_000
+)
+
 // Collector subscribes to a broadcast over MoQT, drains its catalog and media
 // tracks, and returns an [Observation]. It is the live peer of the pure
 // [Evaluate] gate; the gate's logic is unit-tested separately against synthetic
@@ -78,6 +86,9 @@ func (c *Collector) collectCatalog(ctx context.Context, sess *moqt.Session, obs 
 	buf := moqt.NewFrame(4096)
 	var raw []byte
 	for frame := range gr.Frames(buf) {
+		if len(raw)+len(frame.Body()) > maxCatalogBytes {
+			return fmt.Errorf("catalog exceeds %d-byte cap", maxCatalogBytes)
+		}
 		raw = append(raw, frame.Body()...)
 	}
 
@@ -119,7 +130,7 @@ func (c *Collector) collectMedia(ctx context.Context, sess *moqt.Session, t *Tra
 	buf := moqt.NewFrame(1500)
 	timeout := c.groupTimeout()
 
-	for c.MaxGroups <= 0 || t.GroupCount < c.MaxGroups {
+	for (c.MaxGroups <= 0 || t.GroupCount < c.MaxGroups) && len(t.Frames) < maxFramesPerTrack {
 		if ctx.Err() != nil {
 			return
 		}
