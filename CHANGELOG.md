@@ -46,6 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Demo UI foundation (`solid-deno`):** Turned the unmodified Vite+Solid template into a usable AV streaming demo. Defined all previously-undefined board CSS classes and made the layout responsive — a 2-column board grid that stacks on narrow viewports with video previews scaling to their track — plus light/dark theme tokens (#133). Renamed the misspelled `Dashborad` component to `Dashboard`, set a real `<title>`, and replaced the template README with demo run instructions (`mage cert` / `mage relay` / `mage web`) (#132). Added a live WebTransport connection-status indicator (connecting → connected → failed) with a user-facing failure reason and cert-hash-missing remediation, instead of a silent `console.warn` (#134).
 - **RTSP Ingest Server (`internal/ingest`, `internal/rtsp`):** Implemented a complete RTSP 1.0 ingest server to bridge IP cameras and traditional encoders to MoQT.
   - *Protocol Stack*: Custom RTSP implementation including request/response parsing, interleaved binary framing over TCP, and SDP/RTP support.
   - *Media De-packetization*: H.264 (FU-A fragmentation) and AAC (mpeg4-generic, RFC 3640) RTP de-packetizers reconstruct NAL units and audio access units for MoQT delivery.
