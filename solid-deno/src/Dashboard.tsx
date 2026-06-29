@@ -54,16 +54,30 @@ export function Dashboard() {
 	const mux = DefaultTrackMux;
 
 	// Transport lifecycle surfaced to the UI (issue #134). Starts "connecting"
-	// the moment we dial; resolves to "connected"/"failed" when the connect()
-	// promise settles. Mid-session disconnect is NOT detectable here —
-	// @qumo/moq's Session exposes no public `closed` signal — so the indicator
-	// only reflects the initial handshake outcome.
+	// the moment we dial; moves to "connected" on a successful handshake. The
+	// session's `closed` promise then surfaces a mid-session disconnect — it
+	// resolves with a close info on a graceful (relay-initiated) close and
+	// rejects on a transport error, so the two are distinguished.
 	const [connState, setConnState] = createSignal<ConnectionState>("connecting");
 	const [connError, setConnError] = createSignal<string | null>(null);
 
 	const session: Promise<Session> = connect(relayUrl, { mux, transportOptions });
 	session.then(
-		() => setConnState("connected"),
+		(s) => {
+			setConnState("connected");
+			// Mid-session disconnect detection: closed resolves on graceful
+			// close (→ "closed"), rejects on a transport error (→ "failed").
+			s.closed.then(
+				(info) => {
+					setConnError(info.reason || "Connection closed by the relay.");
+					setConnState("closed");
+				},
+				(e) => {
+					setConnError(e instanceof Error ? e.message : String(e));
+					setConnState("failed");
+				},
+			);
+		},
 		(e) => {
 			setConnError(friendlyConnError(e, certHashProblem));
 			setConnState("failed");

@@ -81,6 +81,9 @@
 .connection-status[data-state="connected"] .status-dot {
 	background: var(--ok);
 }
+.connection-status[data-state="closed"] .status-dot {
+	background: var(--warn);
+}
 .connection-status[data-state="failed"] .status-dot {
 	background: var(--err);
 }

@@ -2,8 +2,9 @@ import { Show } from "solid-js";
 
 // WebTransport session lifecycle as surfaced to the user (issue #134).
 // "connecting" until the connect() promise settles; "connected" on success;
-// "failed" with a concise reason on rejection.
-export type ConnectionState = "connecting" | "connected" | "failed";
+// "closed" when the relay ends the session gracefully mid-stream; "failed"
+// with a concise reason on a handshake rejection or transport error.
+export type ConnectionState = "connecting" | "connected" | "closed" | "failed";
 
 // Why the cert hash can't pin the relay cert: not configured, or present but
 // not a valid 64-char hex SHA-256.
@@ -12,6 +13,7 @@ export type CertHashProblem = "missing" | "malformed";
 const LABELS: Record<ConnectionState, string> = {
 	connecting: "Connecting to relay…",
 	connected: "Connected to relay",
+	closed: "Connection closed",
 	failed: "Connection failed",
 };
 
@@ -35,7 +37,7 @@ export function ConnectionStatus(props: {
 			<span class="status-dot" />
 			<span class="status-label">{LABELS[props.state]}</span>
 
-			<Show when={props.state === "failed" && props.error}>
+			<Show when={(props.state === "failed" || props.state === "closed") && props.error}>
 				<span class="status-reason">{props.error}</span>
 			</Show>
 
