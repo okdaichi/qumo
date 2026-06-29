@@ -56,6 +56,7 @@ mage build        # builds bin/qumo with version info
 ```bash
 qumo relay       # Start MoQ relay server (QUIC/MoQT, WebTransport, peer mesh)
 qumo rtmp        # Start RTMP ingest server (bridges RTMP → MoQT)
+qumo rtsp        # Start RTSP ingest server (bridges RTSP → MoQT)
 qumo version     # Print build-time version info
 ```
 
@@ -136,20 +137,20 @@ qumo/
 │   └── README.md               # Docker usage guide
 │
 ├── internal/                   # Core implementation
-│   ├── cli/                    # CLI entrypoints & env-var config
 │   ├── relay/                  # Relay server (handlers, peer resolvers, caching)
+│   ├── ingest/                 # RTMP & RTSP ingest, FLV parsing
 │   ├── rtmp/                   # RTMP utilities
-│   ├── ingest/                 # RTMP ingest & FLV parsing
+│   ├── rtsp/                   # RTSP protocol stack & RTP de-packetization
+│   ├── smoketest/              # Cross-region streaming smoke test harness
 │   └── version/                # Version info
 │
 ├── magefiles/                  # Build automation (Mage tasks)
 │
-├── certs/                      # TLS certificate examples
-├── benchmarks/                 # Performance benchmarks
-├── examples/                   # Usage examples
+├── docs/                       # Design docs
+├── solid-deno/                 # Web demo (Deno)
 ├── .github/workflows/          # CI/CD pipelines
 ├── go.mod & go.sum             # Go dependencies
-└── main.go                     # Entry point
+└── main.go                     # Entry point (CLI dispatch)
 ```
 
 ### Build System (Mage)
