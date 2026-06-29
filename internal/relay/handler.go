@@ -592,9 +592,11 @@ func (d *trackDistributor) processGroup(ctx context.Context, wg *sync.WaitGroup,
 func (d *trackDistributor) broadcast() {
 	d.mu.RLock()
 	for _, ch := range d.subscribers {
-		select {
-		case ch <- struct{}{}:
-		default:
+		if len(ch) == 0 {
+			select {
+			case ch <- struct{}{}:
+			default:
+			}
 		}
 	}
 	d.mu.RUnlock()
