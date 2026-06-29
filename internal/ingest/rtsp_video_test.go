@@ -120,6 +120,34 @@ func TestReassembleFU(t *testing.T) {
 		track := &rtspTrack{}
 		assert.Nil(t, track.reassembleFU([]byte{fuIndicator(3)})) // only indicator, no FU header
 	})
+
+	t.Run("middle/end fragment without an active start is dropped", func(t *testing.T) {
+		track := &rtspTrack{}
+		const nalType uint8 = 5
+		// End fragment with no preceding start: must not build a malformed,
+		// headerless NAL unit.
+		got := track.reassembleFU([]byte{fuIndicator(3), 0x40 | nalType, 0xAA, 0xBB})
+		assert.Nil(t, got)
+		assert.Nil(t, track.fuBuffer, "no reassembly should have started")
+	})
+
+	t.Run("buffer cap discards an over-large NAL and resets", func(t *testing.T) {
+		const nalType uint8 = 5
+		track := &rtspTrack{}
+
+		// Shrink the cap so the test does not allocate 16 MiB.
+		old := maxFUBufferSize
+		maxFUBufferSize = 8
+		t.Cleanup(func() { maxFUBufferSize = old })
+
+		// Start, then a continuation that blows past the 8-byte cap.
+		track.reassembleFU([]byte{fuIndicator(3), 0x80 | nalType, 0x01}) // start
+		assert.Nil(t, track.reassembleFU([]byte{fuIndicator(3), nalType, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09}))
+		assert.Nil(t, track.fuBuffer, "over-large reassembly must reset fuBuffer")
+
+		// A subsequent middle fragment (no start) must be dropped while idle.
+		assert.Nil(t, track.reassembleFU([]byte{fuIndicator(3), nalType, 0x0A}))
+	})
 }
 
 // TestHandleVideoRTP_Paths exercises the single-NAL and FU-A routing branches
