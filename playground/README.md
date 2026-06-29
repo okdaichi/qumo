@@ -16,7 +16,7 @@ scenarios tracked in the [Demo UI Improvements milestone][milestone].
 The demo needs a running relay plus the Vite dev server. From the **repo root**:
 
 ```bash
-# 1. Generate a WebTransport cert (writes VITE_CERT_HASH to solid-deno/.env)
+# 1. Generate a WebTransport cert (writes VITE_CERT_HASH to playground/.env)
 mage cert
 
 # 2. Terminal A — start the relay
@@ -34,7 +34,7 @@ self-signed cert without it, so without `VITE_CERT_HASH` the connection fails.
 
 ### Configuration
 
-Environment variables live in `solid-deno/.env` (see `.env.example`):
+Environment variables live in `playground/.env` (see `.env.example`):
 
 | Variable          | Description                                              |
 | ----------------- | -------------------------------------------------------- |

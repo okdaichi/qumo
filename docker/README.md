@@ -52,7 +52,7 @@ mage demo:up
 mage demo:push
 
 # 3. Web demo: point it at the scenario's origin and run it
-#    set VITE_RELAY_URL in solid-deno/.env, then:
+#    set VITE_RELAY_URL in playground/.env, then:
 mage web
 
 # Stop everything (pushers included)
@@ -68,7 +68,7 @@ Scenarios and their WebTransport origins (browser `VITE_RELAY_URL`):
 | RTSP ingest | `https://localhost:4543` | `/live/demo` | RTSP → `localhost:8554/live/demo` |
 
 Until the in-demo scenario selector (#137) lands, switch origin by setting
-`VITE_RELAY_URL` in `solid-deno/.env` and reloading the Vite dev server.
+`VITE_RELAY_URL` in `playground/.env` and reloading the Vite dev server.
 
 Run pre-built image (GHCR)
 

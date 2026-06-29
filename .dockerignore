@@ -42,7 +42,7 @@ docs/
 
 # Node modules
 **/node_modules/
-solid-deno/
+playground/
 
 # Magefiles
 magefiles/
