@@ -1,0 +1,185 @@
+# Demo scenario environment — all three pipelines up at once for local testing.
+#
+# Unlike the topology compose files, this brings up three INDEPENDENT origins,
+# one per demo scenario, so the browser demo can exercise each without
+# reconfiguring:
+#
+#   relay (echo)  MoQ-MoQ round-trip.           https://localhost:4433
+#   rtmp          RTMP ingest origin.           https://localhost:4443  (push RTMP :1935)
+#   rtsp          RTSP ingest origin.           https://localhost:4543  (push RTSP :8554)
+#
+# The RTMP/RTSP servers do NOT dial the relay — each runs its own in-process
+# WebTransport origin, so subscribers connect to the matching origin directly.
+# All three mount the SAME mage cert (SANs cover localhost), so a single pinned
+# VITE_CERT_HASH validates every origin.
+#
+# Prerequisite: `mage cert` (also writes VITE_CERT_HASH into solid-deno/.env).
+# Or just use `mage demo:up`, which generates the cert if missing.
+#
+# Usage:
+#   mage demo:up                 # relay + rtmp + rtsp
+#   mage demo:push               # opt-in: ffmpeg test-pattern pushers (profile: push)
+#   mage demo:down
+#
+# Test pushers push to /live/demo (RTMP app/streamkey, RTSP URL path) — the
+# demo's default subscribe path.
+
+x-qumo-base: &qumo-base
+  build:
+    context: ..
+    dockerfile: docker/Dockerfile
+  restart: unless-stopped
+  # Single qumo binary; the subcommand selects relay/rtmp/rtsp. Certs come from
+  # `mage cert` (CERT_FILE/KEY_FILE default to the mounted paths below).
+  environment: &qumo-env
+    CERT_FILE: "certs/server.crt"
+    KEY_FILE: "certs/server.key"
+  volumes:
+    - ../certs:/app/certs:ro
+  networks:
+    - qumo-net
+
+services:
+
+  # ─── Echo origin (MoQ-MoQ) ──────────────────────────────────────────────
+  relay:
+    <<: *qumo-base
+    container_name: qumo-demo-relay
+    command: ["relay"]
+    environment:
+      <<: *qumo-env
+      RELAY_ADDR: "0.0.0.0:4433"
+      ADVERTISE_ADDR: "localhost:4433"
+      RELAY_NAME: "demo-relay"
+    ports:
+      - "4433:4433/udp"   # MoQT (QUIC)
+      - "4433:4433/tcp"   # HTTP health/metrics
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:4433/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
+
+  # ─── RTMP ingest origin ─────────────────────────────────────────────────
+  # ffmpeg/OBS pushes RTMP to :1935; subscribers connect via WebTransport :4443.
+  rtmp:
+    <<: *qumo-base
+    container_name: qumo-demo-rtmp
+    command: ["rtmp"]
+    environment:
+      <<: *qumo-env
+      RTMP_INGEST_ADDR: ":1935"
+      RTMP_SERVE_ADDR: ":4433"
+      CORS_ALLOWED_ORIGINS: "*"
+    ports:
+      - "1935:1935/tcp"      # RTMP ingest (push here)
+      - "4443:4433/udp"      # MoQT (QUIC) — subscribe here
+      - "4443:4433/tcp"      # HTTP / WebTransport upgrade
+
+  # ─── RTSP ingest origin ─────────────────────────────────────────────────
+  # ffmpeg/camera announces RTSP to :8554; subscribers connect via :4543.
+  rtsp:
+    <<: *qumo-base
+    container_name: qumo-demo-rtsp
+    command: ["rtsp"]
+    environment:
+      <<: *qumo-env
+      RTSP_INGEST_ADDR: ":8554"
+      RTSP_SERVE_ADDR: ":4433"
+      CORS_ALLOWED_ORIGINS: "*"
+    ports:
+      - "8554:8554/tcp"      # RTSP ingest (announce here)
+      - "4543:4433/udp"      # MoQT (QUIC) — subscribe here
+      - "4543:4433/tcp"      # HTTP / WebTransport upgrade
+
+  # ─── Opt-in test-pattern pushers (profile: push) ────────────────────────
+  # Started via `mage demo:push` (or `docker compose --profile push up rtmp-push rtsp-push`).
+  # Any ffmpeg image with libx264 + aac works; the debian `:4` build is full-featured.
+  rtmp-push:
+    profiles: ["push"]
+    image: jrottenberg/ffmpeg:4
+    container_name: qumo-demo-rtmp-push
+    depends_on:
+      rtmp:
+        condition: service_started
+    restart: on-failure
+    entrypoint: ["ffmpeg"]
+    command:
+      - "-re"
+      - "-f"
+      - "lavfi"
+      - "-i"
+      - "testsrc2=size=1280x720:rate=30"
+      - "-f"
+      - "lavfi"
+      - "-i"
+      - "sine=frequency=440:sample_rate=48000"
+      - "-c:v"
+      - "libx264"
+      - "-preset"
+      - "veryfast"
+      - "-tune"
+      - "zerolatency"
+      - "-profile:v"
+      - "baseline"
+      - "-g"
+      - "60"
+      - "-c:a"
+      - "aac"
+      - "-ar"
+      - "48000"
+      - "-ac"
+      - "2"
+      - "-f"
+      - "flv"
+      - "rtmp://rtmp:1935/live/demo"
+    networks:
+      - qumo-net
+
+  rtsp-push:
+    profiles: ["push"]
+    image: jrottenberg/ffmpeg:4
+    container_name: qumo-demo-rtsp-push
+    depends_on:
+      rtsp:
+        condition: service_started
+    restart: on-failure
+    entrypoint: ["ffmpeg"]
+    command:
+      - "-re"
+      - "-f"
+      - "lavfi"
+      - "-i"
+      - "testsrc2=size=1280x720:rate=30"
+      - "-f"
+      - "lavfi"
+      - "-i"
+      - "sine=frequency=440:sample_rate=48000"
+      - "-c:v"
+      - "libx264"
+      - "-preset"
+      - "veryfast"
+      - "-tune"
+      - "zerolatency"
+      - "-profile:v"
+      - "baseline"
+      - "-g"
+      - "60"
+      - "-c:a"
+      - "aac"
+      - "-ar"
+      - "48000"
+      - "-ac"
+      - "2"
+      - "-f"
+      - "rtsp"
+      - "-rtsp_transport"
+      - "tcp"
+      - "rtsp://rtsp:8554/live/demo"
+    networks:
+      - qumo-net
+
+networks:
+  qumo-net:
+    driver: bridge

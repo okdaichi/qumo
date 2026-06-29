@@ -69,10 +69,12 @@ go build -ldflags "-s -w \
 
 > **Note:** Docker files (Dockerfile, compose manifests, etc.) are located in the `docker/` directory. See `docker/README.md` for manual Docker usage and examples.
 
-### 🎮 Demo
-- `mage demo:up` - Start demo environment (3 peer-connected relays) — uses `docker/docker-compose.simple.yml`
-- `mage demo:down` - Stop demo environment
-- `mage demo:status` - Check demo status
+### 🎮 Demo (local scenarios)
+- `mage demo:up` - Start relay (echo) + RTMP + RTSP origins (generates cert if missing) — `docker/docker-compose.demo.yml`
+- `mage demo:push` - Start opt-in ffmpeg test-pattern pushers (RTMP/RTSP → `/live/demo`)
+- `mage demo:down` - Stop the demo environment (pushers included)
+- `mage demo:logs` - Tail demo logs
+- `mage demo:ps` - List demo containers
 
 ### 🔧 Utilities
 - `mage cert` - Generate TLS certificates
