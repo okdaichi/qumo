@@ -46,6 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Local multi-scenario demo environment (`docker/docker-compose.demo.yml`, `magefiles`):** Brings the relay (MoQ-MoQ echo) and the RTMP/RTSP ingest origins up together so every demo pipeline is testable locally without reconfiguring. The RTMP/RTSP servers are standalone WebTransport origins (they do not dial the relay), so all three share one `mage cert` cert and a single pinned `VITE_CERT_HASH`. Adds a `mage demo:` namespace (`up`/`push`/`down`/`logs`/`ps`) — `demo:up` generates the cert only if missing — plus opt-in ffmpeg test-pattern pushers (compose profile `push`) feeding `/live/demo`. Also corrects stale `INSECURE` Docker docs (auto-self-sign was removed; mount certs / use `mage cert`).
 - **RTSP Ingest Server (`internal/ingest`, `internal/rtsp`):** Implemented a complete RTSP 1.0 ingest server to bridge IP cameras and traditional encoders to MoQT.
   - *Protocol Stack*: Custom RTSP implementation including request/response parsing, interleaved binary framing over TCP, and SDP/RTP support.
   - *Media De-packetization*: H.264 (FU-A fragmentation) and AAC (mpeg4-generic, RFC 3640) RTP de-packetizers reconstruct NAL units and audio access units for MoQT delivery.

@@ -107,6 +107,13 @@ func Help() error {
 	fmt.Println("    mage docker:ps    - List running containers")
 	fmt.Println("    mage smoke      - Run cross-region streaming smoke test")
 	fmt.Println()
+	fmt.Println("  🎬 Demo (local scenarios):")
+	fmt.Println("    mage demo:up      - relay + rtmp + rtsp origins (generates cert if missing)")
+	fmt.Println("    mage demo:push    - opt-in ffmpeg test-pattern pushers (RTMP/RTSP → /live/demo)")
+	fmt.Println("    mage demo:down    - stop the demo environment")
+	fmt.Println("    mage demo:logs    - tail demo logs")
+	fmt.Println("    mage demo:ps      - list demo containers")
+	fmt.Println()
 
 	fmt.Println("  �🔧 Utilities:")
 	fmt.Println("    mage cert         - Generate TLS certificates using mkcert")
@@ -1068,6 +1075,101 @@ func (Docker) Restart() error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+// demoComposeFile is the manifest for the local multi-scenario demo environment.
+const demoComposeFile = "docker/docker-compose.demo.yml"
+
+// Demo provides commands for the local multi-scenario demo environment, which
+// brings up the relay (echo) and the RTMP/RTSP ingest origins together so every
+// demo pipeline is testable without reconfiguring. See docker/docker-compose.demo.yml.
+type Demo mg.Namespace
+
+// Up starts the demo environment: relay (MoQ-MoQ echo) + RTMP + RTSP origins.
+// It generates the WebTransport cert via Cert() if missing (Cert also writes
+// VITE_CERT_HASH into solid-deno/.env). The ffmpeg test-pattern pushers are
+// opt-in — see Push.
+func (Demo) Up() error {
+	if err := ensureDemoCert(); err != nil {
+		return err
+	}
+
+	fmt.Println("🚀 Starting demo environment (relay + rtmp + rtsp)...")
+
+	cmd := exec.Command("docker", "compose", "-f", demoComposeFile, "up", "-d")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return err
+	}
+
+	fmt.Println()
+	fmt.Println("✅ Demo environment started!")
+	fmt.Println("   WebTransport origins:")
+	fmt.Println("     echo (relay): https://localhost:4433")
+	fmt.Println("     rtmp:         https://localhost:4443   (push RTMP → localhost:1935/live/demo)")
+	fmt.Println("     rtsp:         https://localhost:4543   (announce RTSP → localhost:8554/live/demo)")
+	fmt.Println()
+	fmt.Println("   RTMP/RTSP subscribe path: /live/demo")
+	fmt.Println()
+	fmt.Println("💡 Browser: set VITE_RELAY_URL in solid-deno/.env to the origin you want,")
+	fmt.Println("            then run `mage web`. (Scenario selector lands in #137.)")
+	fmt.Println("💡 Push test streams: mage demo:push")
+	fmt.Println("📋 Logs:             mage demo:logs")
+	return nil
+}
+
+// Push starts the opt-in ffmpeg test-pattern pushers for the RTMP/RTSP scenarios
+// (compose profile: push). Requires the ingest origins to be up (Demo.Up).
+func (Demo) Push() error {
+	fmt.Println("🎬 Starting test-pattern pushers (RTMP + RTSP → /live/demo)...")
+	cmd := exec.Command("docker", "compose", "-f", demoComposeFile, "--profile", "push", "up", "-d", "rtmp-push", "rtsp-push")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return err
+	}
+	fmt.Println("✅ Pushers started. Subscribe at /live/demo on the rtmp/rtsp origins.")
+	return nil
+}
+
+// Down stops the demo environment and any running pushers.
+func (Demo) Down() error {
+	fmt.Println("🛑 Stopping demo environment...")
+	cmd := exec.Command("docker", "compose", "-f", demoComposeFile, "--profile", "push", "down")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+// Logs tails demo service logs.
+func (Demo) Logs() error {
+	fmt.Println("📋 Demo logs:")
+	cmd := exec.Command("docker", "compose", "-f", demoComposeFile, "logs", "-f")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+// Ps lists running demo containers.
+func (Demo) Ps() error {
+	fmt.Println("📦 Demo containers:")
+	cmd := exec.Command("docker", "compose", "-f", demoComposeFile, "ps")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+// ensureDemoCert generates the WebTransport cert via Cert() only when missing,
+// so `mage demo:up` does not churn the cert (and VITE_CERT_HASH) on every run.
+func ensureDemoCert() error {
+	if _, err := os.Stat("certs/server.crt"); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	fmt.Println("🔐 certs/server.crt not found — generating (mage cert)...")
+	return Cert()
 }
 
 // Smoke runs a cross-region streaming smoke test against the topology.
