@@ -1,6 +1,10 @@
 package ingest
 
-import "encoding/binary"
+import (
+	"encoding/binary"
+
+	"github.com/qumo-dev/gomoqt/moqt"
+)
 
 // mediaFrameSize returns the total byte length of a MediaFrame-encoded
 // payload: [varint:timestamp][varint:dataLen][data].
@@ -29,6 +33,20 @@ func buildMediaFrame(timestampUS int64, data []byte) []byte {
 	buf := make([]byte, size)
 	encodeMediaFrame(buf, timestampUS, data)
 	return buf
+}
+
+// writeMediaFrame writes the MediaFrame envelope (the same layout as
+// encodeMediaFrame) directly into a pre-sized *moqt.Frame, avoiding the
+// intermediate payload slice that buildMediaFrame would allocate. The caller
+// must construct the frame with at least mediaFrameSize(timestampUS, len(data))
+// bytes of capacity so no reallocation occurs on Write.
+func writeMediaFrame(f *moqt.Frame, timestampUS int64, data []byte) {
+	var tmp [8]byte
+	n := putQuicVarint(tmp[:], uint64(timestampUS))
+	_, _ = f.Write(tmp[:n])
+	n = putQuicVarint(tmp[:], uint64(len(data)))
+	_, _ = f.Write(tmp[:n])
+	_, _ = f.Write(data)
 }
 
 // QUIC varint encoding (RFC 9000, Section 16).

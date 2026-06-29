@@ -299,25 +299,61 @@ func (t *rtspTrack) handleVideoRTP(p *rtsp.RTPPacket) {
 		// Single NAL unit
 		t.pushNALU(p.Header.Timestamp, p.Payload)
 	case typ == 28:
-		// FU-A
-		if len(p.Payload) < 2 {
-			return
-		}
-		fuHeader := p.Payload[1]
-		start := (fuHeader >> 7) & 1
-		end := (fuHeader >> 6) & 1
-		nalType := fuHeader & 0x1F
-
-		if start == 1 {
-			t.fuBuffer = []byte{(p.Payload[0] & 0xE0) | nalType}
-		}
-		t.fuBuffer = append(t.fuBuffer, p.Payload[2:]...)
-
-		if end == 1 {
-			t.pushNALU(p.Header.Timestamp, t.fuBuffer)
-			t.fuBuffer = nil
+		// FU-A fragmentation: reassemble across packets, push on the final fragment.
+		if nalu := t.reassembleFU(p.Payload); nalu != nil {
+			t.pushNALU(p.Header.Timestamp, nalu)
 		}
 	}
+}
+
+// maxFUBufferSize caps a single reassembled H.264 NAL unit. A real NAL is far
+// smaller (even a 4K intra frame is a few MB), so this purely bounds memory
+// against a malformed or hostile RTSP publisher that streams FU-A continuation
+// fragments without ever setting the end bit. A var (not const) so tests can
+// shrink it.
+var maxFUBufferSize = 16 << 20 // 16 MiB
+
+// reassembleFU handles H.264 FU-A (RFC 6184 §5.8) fragmentation. Each
+// fragment's payload is appended to fuBuffer; the completed NAL unit is
+// returned when the final (end) fragment arrives, and nil while a NAL unit is
+// still in flight. The reconstructed first byte combines the FU indicator's
+// forbidden-zero-bit + NRI (top 3 bits, 0xE0) with the FU header's NAL type
+// (low 5 bits). Callers push the returned NAL unit via pushNALU.
+//
+// Safety: a middle/end fragment with no active reassembly (no preceding start)
+// is dropped rather than appended to a nil buffer, which would yield a NAL
+// missing its reconstructed header byte. If fuBuffer exceeds maxFUBufferSize
+// the in-flight NAL is discarded and reassembly resets, bounding memory.
+func (t *rtspTrack) reassembleFU(payload []byte) []byte {
+	if len(payload) < 2 {
+		return nil
+	}
+	fuHeader := payload[1]
+	start := (fuHeader >> 7) & 1
+	end := (fuHeader >> 6) & 1
+	nalType := fuHeader & 0x1F
+
+	if start == 1 {
+		t.fuBuffer = []byte{(payload[0] & 0xE0) | nalType}
+	} else if t.fuBuffer == nil {
+		// Middle/end fragment without an active reassembly: drop it instead of
+		// building a headerless (malformed) NAL unit.
+		return nil
+	}
+	t.fuBuffer = append(t.fuBuffer, payload[2:]...)
+
+	if len(t.fuBuffer) > maxFUBufferSize {
+		// Exceeds the cap: abandon this NAL and reset, bounding memory.
+		t.fuBuffer = nil
+		return nil
+	}
+
+	if end == 1 {
+		complete := t.fuBuffer
+		t.fuBuffer = nil
+		return complete
+	}
+	return nil
 }
 
 func (t *rtspTrack) pushNALU(timestamp uint32, nalu []byte) {

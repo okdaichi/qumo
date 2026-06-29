@@ -7,23 +7,28 @@ import (
 	"time"
 )
 
-// mockConn implements net.Conn to count bytes written and simulate blocking I/O.
-type mockConn struct {
-	net.Conn
+// benchSinkConn is a net.Conn fake for write benchmarks. It discards written
+// bytes (counting only) so b.N iterations do not accumulate memory. It does
+// NOT reuse mockConn from conn_test.go: that fake sinks writes into a
+// bytes.Buffer, which would OOM under benchmark load.
+type benchSinkConn struct {
 	written int
 }
 
-func (m *mockConn) Read(b []byte) (n int, err error) { return 0, nil }
-func (m *mockConn) Write(b []byte) (n int, err error) {
-	// Simulate blocking I/O.
-	time.Sleep(10 * time.Microsecond)
+func (m *benchSinkConn) Read(b []byte) (int, error) { return 0, nil }
+func (m *benchSinkConn) Write(b []byte) (int, error) {
 	m.written += len(b)
 	return len(b), nil
 }
-func (m *mockConn) Close() error { return nil }
+func (m *benchSinkConn) Close() error                       { return nil }
+func (m *benchSinkConn) LocalAddr() net.Addr                { return nil }
+func (m *benchSinkConn) RemoteAddr() net.Addr               { return nil }
+func (m *benchSinkConn) SetDeadline(t time.Time) error      { return nil }
+func (m *benchSinkConn) SetReadDeadline(t time.Time) error  { return nil }
+func (m *benchSinkConn) SetWriteDeadline(t time.Time) error { return nil }
 
 func BenchmarkConnWriteRequest(b *testing.B) {
-	conn := newConn(&mockConn{})
+	conn := newConn(&benchSinkConn{})
 
 	u, err := url.Parse("rtsp://example.com/media.mp4")
 	if err != nil {
@@ -44,7 +49,7 @@ func BenchmarkConnWriteRequest(b *testing.B) {
 }
 
 func BenchmarkConnWriteInterleavedFrame(b *testing.B) {
-	conn := newConn(&mockConn{})
+	conn := newConn(&benchSinkConn{})
 	frame := &InterleavedFrame{Channel: 0, Payload: make([]byte, 1024)}
 
 	b.ResetTimer()
@@ -56,7 +61,7 @@ func BenchmarkConnWriteInterleavedFrame(b *testing.B) {
 }
 
 func BenchmarkConnWriteInterleavedFrame_Concurrent(b *testing.B) {
-	conn := newConn(&mockConn{})
+	conn := newConn(&benchSinkConn{})
 	frame := &InterleavedFrame{Channel: 0, Payload: make([]byte, 1024)}
 
 	b.ResetTimer()
