@@ -86,9 +86,9 @@ func (s *Session) RegisterAudio(cfg *AACConfig) error {
 	return s.handler.registerAudio(cfg)
 }
 
-// PushVideo appends converted video data (Annex-B bitstream) as a MoQT
-// frame wrapped in a MediaFrame envelope. When isKeyframe is true a new
-// MoQT group is opened (GOP boundary).
+// PushVideo appends video data (codec-specific: AVCC length-prefixed NALUs
+// for both RTMP and RTSP ingest) as a MoQT frame wrapped in a MediaFrame
+// envelope. When isKeyframe is true a new MoQT group is opened (GOP boundary).
 //
 // timestampUS is the presentation timestamp in microseconds.
 func (s *Session) PushVideo(timestampUS int64, data []byte, isKeyframe bool) {

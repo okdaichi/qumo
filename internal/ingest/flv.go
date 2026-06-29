@@ -30,8 +30,9 @@ var (
 )
 
 // AVCConfig holds the parsed AVCDecoderConfigurationRecord extracted from
-// an FLV video sequence header. It provides the SPS/PPS parameter sets
-// needed for Annex-B conversion and the codec string for the MSF catalog.
+// an FLV video sequence header. It provides the SPS/PPS parameter sets used
+// to build the catalog initData (AVCDecoderConfigurationRecord) and the codec
+// string for the MSF catalog.
 type AVCConfig struct {
 	// ProfileIDC, ProfileCompat, and LevelIDC form the codec string
 	// "avc1.PPCCLL" (hex-encoded).
@@ -248,6 +249,9 @@ func parseAVCDecoderConfigurationRecord(buf []byte) (*AVCConfig, error) {
 // from an FLV AVC NALU tag's bytes 2-4. RTMP ingest forwards AVCC NALUs
 // unchanged and uses this to compute presentation timestamps (PTS = DTS + CTS),
 // preserving B-frame timing.
+//
+// Requires: len(data) >= 5. The caller is responsible for the length check
+// (the RTMP ingest path guards with len(frame.Data) < 5 before calling).
 //
 // FLV video NALU tag layout:
 //

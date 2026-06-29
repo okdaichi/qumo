@@ -165,9 +165,9 @@ func (s *RTMPServer) handleConn(ctx context.Context, conn *rtmp.Conn) {
 // publisher disconnects, or ctx is cancelled.
 //
 // FLV video/audio sequence headers are parsed to extract codec
-// configuration. Subsequent video NALUs are converted from AVCC to
-// Annex-B format and wrapped in MediaFrame envelopes. AAC raw frames
-// have the FLV header stripped.
+// configuration. Subsequent video NALUs are forwarded unchanged as AVCC
+// (length-prefixed) inside MediaFrame envelopes; SPS/PPS are carried in
+// the catalog initData. AAC raw frames have the FLV header stripped.
 func ingestRTMP(ctx context.Context, mr *rtmp.MessageReader, sess *Session) {
 	var (
 		avcCfg *AVCConfig

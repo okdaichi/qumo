@@ -170,3 +170,17 @@ func TestHandleVideoRTP_Paths(t *testing.T) {
 		track.handleVideoRTP(&rtsp.RTPPacket{Payload: []byte{fuIndicator(3), 0x40 | nalType, 0xBB}})
 	})
 }
+
+// TestWrapAVCC verifies the AVCC length-prefix framing RTSP pushes for each
+// NAL unit — it must be a 4-byte big-endian length followed by the NALU, the
+// sample-stream format matching the avc1 codec string + initData.
+func TestWrapAVCC(t *testing.T) {
+	nalu := []byte{0x65, 0xDE, 0xAD, 0xBE, 0xEF}
+	got := wrapAVCC(nalu)
+
+	require.Len(t, got, 4+len(nalu))
+	// 4-byte big-endian length prefix.
+	assert.Equal(t, []byte{0x00, 0x00, 0x00, byte(len(nalu))}, got[:4])
+	assert.Equal(t, nalu, got[4:])
+}
+
