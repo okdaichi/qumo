@@ -3,6 +3,9 @@
 interface ImportMetaEnv {
 	readonly VITE_RELAY_URL: string;
 	readonly VITE_APP_NAME: string;
+	// SHA-256 hash of the relay's WebTransport cert (hex). Optional in dev —
+	// when unset the demo surfaces remediation guidance in the UI.
+	readonly VITE_CERT_HASH?: string;
 }
 
 interface ImportMeta {
