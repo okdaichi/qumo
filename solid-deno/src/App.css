@@ -1,27 +1,229 @@
-#root {
-	max-width: 1280px;
+/* ----------------------------------------------------------------------- *
+ * Demo layout + board styling (issue #133).
+ * Functional, responsive, light/dark-aware. Visual polish is a separate
+ * pass (#140); this defines every referenced class so the UI is no longer
+ * unstyled and lays out cleanly on phone and desktop widths.
+ * ----------------------------------------------------------------------- */
+
+.app {
+	max-width: var(--app-max-width);
 	margin: 0 auto;
-	padding: 2rem;
-	text-align: center;
+	padding: 24px 20px 48px;
+	text-align: left;
 }
 
-.logo {
-	height: 6em;
-	padding: 1.5em;
-	will-change: filter;
-	transition: filter 300ms;
-}
-.logo:hover {
-	filter: drop-shadow(0 0 2em #646cffaa);
-}
-.logo.solid:hover {
-	filter: drop-shadow(0 0 2em #61dafbaa);
+.app-header {
+	margin-bottom: 20px;
 }
 
-.card {
-	padding: 2em;
+.app-subtitle {
+	color: var(--text-muted);
+	margin: 6px 0 0;
+	font-size: 0.95rem;
 }
 
-.read-the-docs {
-	color: #888;
+/* Top-level controls bar: connection status + session identity.
+   Future scenario selector (#137) drops in here. */
+.dashboard {
+	display: flex;
+	flex-direction: column;
+	gap: var(--gap);
+}
+
+.top-controls {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--gap);
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: 12px;
+	padding: 12px 16px;
+}
+
+.user-control {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-left: auto;
+}
+
+.username {
+	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+	color: var(--text-muted);
+	font-size: 0.85rem;
+}
+
+/* --- Connection status indicator (#134) --- */
+
+.connection-status {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	font-size: 0.9rem;
+	min-width: 0;
+}
+
+.status-dot {
+	width: 10px;
+	height: 10px;
+	border-radius: 50%;
+	flex: none;
+	background: var(--text-muted);
+	box-shadow: 0 0 0 0 currentColor;
+}
+
+.connection-status[data-state="connecting"] .status-dot {
+	background: var(--warn);
+	animation: pulse 1.4s ease-in-out infinite;
+}
+.connection-status[data-state="connected"] .status-dot {
+	background: var(--ok);
+}
+.connection-status[data-state="failed"] .status-dot {
+	background: var(--err);
+}
+
+.status-label {
+	font-weight: 600;
+}
+
+.status-reason,
+.status-warn {
+	color: var(--text-muted);
+	font-size: 0.85rem;
+}
+
+.connection-status[data-state="failed"] .status-reason {
+	color: var(--err);
+}
+
+.status-warn {
+	color: var(--warn);
+}
+
+@keyframes pulse {
+	0%,
+	100% {
+		opacity: 1;
+	}
+	50% {
+		opacity: 0.4;
+	}
+}
+
+/* --- Board grid: side-by-side on wide, stacked on narrow --- */
+
+.boards {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: var(--gap);
+	align-items: start;
+}
+
+@media (max-width: 760px) {
+	.boards {
+		grid-template-columns: minmax(0, 1fr);
+	}
+}
+
+.publish-board,
+.subscribe-board {
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: 12px;
+	padding: 16px;
+	min-width: 0; /* let grid track shrink and the video scale with it */
+}
+
+.controls {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: flex-end;
+	gap: 12px;
+	margin-bottom: 12px;
+}
+
+.source-selector,
+.path-input {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.source-selector label,
+.path-input label {
+	font-size: 0.8rem;
+	color: var(--text-muted);
+}
+
+.path-input input {
+	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+	min-width: 14ch;
+}
+
+.stream-controls {
+	margin-left: auto;
+}
+
+.btn-start {
+	background: var(--ok);
+	border-color: transparent;
+	color: #062a14;
+	font-weight: 600;
+}
+.btn-start:hover:not(:disabled) {
+	filter: brightness(1.05);
+	border-color: transparent;
+}
+
+.btn-stop {
+	background: var(--err);
+	border-color: transparent;
+	color: #2a0606;
+	font-weight: 600;
+}
+.btn-stop:hover:not(:disabled) {
+	filter: brightness(1.05);
+	border-color: transparent;
+}
+
+/* --- Inline messages --- */
+
+.error-message {
+	background: color-mix(in srgb, var(--err) 14%, transparent);
+	border: 1px solid var(--err);
+	color: var(--err);
+	border-radius: 8px;
+	padding: 8px 12px;
+	margin-bottom: 12px;
+	font-size: 0.9rem;
+}
+
+.status-message {
+	background: var(--surface-2);
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	padding: 8px 12px;
+	margin-bottom: 12px;
+	font-size: 0.85rem;
+	color: var(--text-muted);
+}
+
+/* --- Video preview scales to its grid track --- */
+
+.video-preview {
+	width: 100%;
+}
+
+.video-preview canvas {
+	display: block;
+	width: 100% !important;
+	max-width: 100% !important;
+	height: auto !important;
+	aspect-ratio: 16 / 9;
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	background: #000;
 }

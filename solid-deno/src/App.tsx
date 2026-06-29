@@ -1,28 +1,15 @@
-// import { config } from './config.tsx'
 import "./App.css";
-import { Dashborad } from "./Dashborad.tsx";
+import { Dashboard } from "./Dashboard.tsx";
 
 function App() {
 	return (
 		<div class="app">
-			<header>
-				<h1>{import.meta.env.VITE_APP_NAME}</h1>
+			<header class="app-header">
+				<h1>{import.meta.env.VITE_APP_NAME ?? "qumo"}</h1>
+				<p class="app-subtitle">AV live streaming over MoQ / WebTransport</p>
 			</header>
 
-			<Dashborad />
-
-			<div class="card">
-				<h3>Configuration</h3>
-				<p>
-					Relay URL: <code>{import.meta.env.VITE_RELAY_URL}</code>
-				</p>
-				<p>
-					Mode: <code>{import.meta.env.DEV ? "Development" : "Production"}</code>
-				</p>
-				<div style={{ "margin-top": "16px" }}>
-					{/* <MoqPanel /> */}
-				</div>
-			</div>
+			<Dashboard />
 		</div>
 	);
 }
