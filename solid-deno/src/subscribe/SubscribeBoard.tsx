@@ -87,12 +87,8 @@ export function SubscribeBoard(props: { session: Promise<Session> }) {
 								// Decode Base64 initData → ArrayBuffer description (for avc1.* AVCC streams).
 								let description: ArrayBuffer | undefined;
 								if (videoTrack.initData) {
-									const binary = atob(videoTrack.initData);
-									const bytes = new Uint8Array(binary.length);
-									for (let i = 0; i < binary.length; i++) {
-										bytes[i] = binary.charCodeAt(i);
-									}
-									description = bytes.buffer;
+									description = Uint8Array.from(atob(videoTrack.initData), (c) =>
+										c.charCodeAt(0)).buffer;
 								}
 								const cfg: VideoDecoderConfig = {
 									codec: videoTrack.codec,
