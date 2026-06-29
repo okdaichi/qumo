@@ -165,9 +165,9 @@ func (s *RTMPServer) handleConn(ctx context.Context, conn *rtmp.Conn) {
 // publisher disconnects, or ctx is cancelled.
 //
 // FLV video/audio sequence headers are parsed to extract codec
-// configuration. Subsequent video NALUs are converted from AVCC to
-// Annex-B format and wrapped in MediaFrame envelopes. AAC raw frames
-// have the FLV header stripped.
+// configuration. Subsequent video NALUs are forwarded unchanged as AVCC
+// (length-prefixed) inside MediaFrame envelopes; SPS/PPS are carried in
+// the catalog initData. AAC raw frames have the FLV header stripped.
 func ingestRTMP(ctx context.Context, mr *rtmp.MessageReader, sess *Session) {
 	var (
 		avcCfg *AVCConfig
@@ -211,15 +211,18 @@ func ingestRTMP(ctx context.Context, mr *rtmp.MessageReader, sess *Session) {
 				continue
 			}
 
-			annexB, cts, err := AVCCToAnnexB(frame.Data, avcCfg)
-			if err != nil {
-				slog.Debug("failed to convert AVCC to Annex-B", "error", err)
+			if len(frame.Data) < 5 {
+				slog.Debug("video NALU tag too short")
 				continue
 			}
 
-			// Presentation timestamp: DTS (frame.Timestamp) + CTS, in microseconds.
+			// Forward AVCC NALUs unchanged (bytes 5+). The browser's
+			// VideoDecoder consumes AVCC directly; SPS/PPS are carried in the
+			// catalog initData (built from the sequence header). PTS = DTS +
+			// CTS preserves B-frame composition timing.
+			cts := parseFLVVideoCTS(frame.Data)
 			pts := (int64(frame.Timestamp) + int64(cts)) * 1000
-			sess.PushVideo(pts, annexB, isVideoKeyframe(frame.Data))
+			sess.PushVideo(pts, frame.Data[5:], isVideoKeyframe(frame.Data))
 
 		case rtmp.FrameTypeAudio:
 			if IsAudioSequenceHeader(frame.Data) {

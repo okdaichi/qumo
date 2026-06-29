@@ -3,6 +3,7 @@ package ingest
 import (
 	"context"
 	"encoding/base64"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"log/slog"
@@ -199,6 +200,7 @@ func (s *RTSPServer) handleConn(ctx context.Context, conn *rtsp.Conn) {
 								ProfileIDC:    sps[0][1],
 								ProfileCompat: sps[0][2],
 								LevelIDC:      sps[0][3],
+								NALULenSize:   4,
 								SPS:           sps,
 								PPS:           pps,
 								// Width/Height should be parsed from SPS, but using placeholder for now
@@ -356,12 +358,22 @@ func (t *rtspTrack) reassembleFU(payload []byte) []byte {
 	return nil
 }
 
+// wrapAVCC prefixes a NAL unit with a 4-byte big-endian length — the AVCC
+// sample-stream format that matches the avc1 codec string and the
+// AVCDecoderConfigurationRecord carried in the catalog initData.
+func wrapAVCC(nalu []byte) []byte {
+	data := make([]byte, 4+len(nalu))
+	binary.BigEndian.PutUint32(data, uint32(len(nalu)))
+	copy(data[4:], nalu)
+	return data
+}
+
 func (t *rtspTrack) pushNALU(timestamp uint32, nalu []byte) {
 	if t.session == nil {
 		return
 	}
-	// Convert to Annex-B (prefixed with start code)
-	data := append([]byte{0, 0, 0, 1}, nalu...)
+	// Emit AVCC (length-prefixed), matching the avc1 catalog codec string.
+	data := wrapAVCC(nalu)
 	pts := int64(timestamp) * 1000 / 90 // 90kHz clock to microseconds
 	isKey := (nalu[0] & 0x1F) == 5
 	t.session.PushVideo(pts, data, isKey)

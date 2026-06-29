@@ -2,7 +2,9 @@ package ingest
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -71,10 +73,23 @@ func (h *ingestHandler) registerVideo(cfg *AVCConfig) error {
 		Codec:     cfg.CodecString(),
 		Width:     new(int64(cfg.Width)),
 		Height:    new(int64(cfg.Height)),
+		InitData:  videoInitData(cfg),
 	}
 	return h.broadcast.RegisterTrack(track, moqt.TrackHandlerFunc(func(tw *moqt.TrackWriter) {
 		h.video.serve(tw)
 	}))
+}
+
+// videoInitData returns the Base64-encoded AVCDecoderConfigurationRecord for a
+// video catalog track — the codec init blob a browser WebCodecs VideoDecoder
+// consumes as its `description`. Empty (with a warning) if it cannot be built.
+func videoInitData(cfg *AVCConfig) string {
+	rec, err := BuildAVCDecoderConfigurationRecord(cfg)
+	if err != nil {
+		slog.Warn("failed to build AVCDecoderConfigurationRecord for initData", "error", err)
+		return ""
+	}
+	return base64.StdEncoding.EncodeToString(rec)
 }
 
 // registerAudio adds (or replaces) the audio track in the broadcast catalog
@@ -91,10 +106,23 @@ func (h *ingestHandler) registerAudio(cfg *AACConfig) error {
 		Codec:         cfg.CodecString(),
 		SampleRate:    new(int64(cfg.SampleRate)),
 		ChannelConfig: strconv.Itoa(cfg.ChannelConfig),
+		InitData:      audioInitData(cfg),
 	}
 	return h.broadcast.RegisterTrack(track, moqt.TrackHandlerFunc(func(tw *moqt.TrackWriter) {
 		h.audio.serve(tw)
 	}))
+}
+
+// audioInitData returns the Base64-encoded AudioSpecificConfig for an audio
+// catalog track — the codec init blob a browser WebCodecs AudioDecoder consumes
+// as its `description`. Empty (with a warning) if it cannot be built.
+func audioInitData(cfg *AACConfig) string {
+	asc, err := BuildAudioSpecificConfig(cfg)
+	if err != nil {
+		slog.Warn("failed to build AudioSpecificConfig for initData", "error", err)
+		return ""
+	}
+	return base64.StdEncoding.EncodeToString(asc)
 }
 
 // close signals all subscribers that the publisher has disconnected.
