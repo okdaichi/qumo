@@ -81,7 +81,11 @@ func (c *Collector) collectCatalog(ctx context.Context, sess *moqt.Session, obs 
 	}
 	defer tr.Close()
 
-	gr, err := tr.AcceptGroup(ctx)
+	// Bound the catalog wait: a publisher that never sends a sequence header
+	// (or a relay that does not serve subscribers) must not hang the collector.
+	cctx, cancel := context.WithTimeout(ctx, c.groupTimeout())
+	defer cancel()
+	gr, err := tr.AcceptGroup(cctx)
 	if err != nil {
 		return fmt.Errorf("read catalog group: %w", err)
 	}
