@@ -92,9 +92,8 @@ func (s *Session) RegisterAudio(cfg *AACConfig) error {
 //
 // timestampUS is the presentation timestamp in microseconds.
 func (s *Session) PushVideo(timestampUS int64, data []byte, isKeyframe bool) {
-	payload := buildMediaFrame(timestampUS, data)
-	f := moqt.NewFrame(len(payload))
-	_, _ = f.Write(payload)
+	f := moqt.NewFrame(mediaFrameSize(timestampUS, len(data)))
+	writeMediaFrame(f, timestampUS, data)
 	s.handler.video.push(f, isKeyframe)
 }
 
@@ -103,9 +102,8 @@ func (s *Session) PushVideo(timestampUS int64, data []byte, isKeyframe bool) {
 //
 // timestampUS is the presentation timestamp in microseconds.
 func (s *Session) PushAudio(timestampUS int64, data []byte) {
-	payload := buildMediaFrame(timestampUS, data)
-	f := moqt.NewFrame(len(payload))
-	_, _ = f.Write(payload)
+	f := moqt.NewFrame(mediaFrameSize(timestampUS, len(data)))
+	writeMediaFrame(f, timestampUS, data)
 	s.handler.audio.push(f)
 }
 

@@ -71,20 +71,19 @@ func BenchmarkBuildMediaFrame(b *testing.B) {
 	}
 }
 
-// BenchmarkIngestFrameConstruction measures the full per-frame allocation cost
-// of Session.PushVideo/PushAudio: the MediaFrame payload + a fresh *moqt.Frame
-// (struct + backing slice) into which the payload is copied. This is the
-// unpooled hot path — the relay fan-out path, by contrast, reuses frames via
-// relay.DefaultFramePool with refcount-based release.
+// BenchmarkIngestFrameConstruction measures the per-frame allocation cost of
+// Session.PushVideo/PushAudio: a pre-sized *moqt.Frame with the MediaFrame
+// envelope streamed directly into it (no intermediate payload slice). The
+// relay fan-out path, by contrast, reuses frames via relay.DefaultFramePool
+// with refcount-based release.
 func BenchmarkIngestFrameConstruction(b *testing.B) {
 	data := make([]byte, 1024)
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		payload := buildMediaFrame(1_000_000, data)
-		f := moqt.NewFrame(len(payload))
-		_, _ = f.Write(payload)
+		f := moqt.NewFrame(mediaFrameSize(1_000_000, len(data)))
+		writeMediaFrame(f, 1_000_000, data)
 		_ = f
 	}
 }
