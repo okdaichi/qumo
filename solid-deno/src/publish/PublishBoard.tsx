@@ -19,8 +19,14 @@ function encodeBase64(buf: ArrayBufferLike | ArrayBufferView): string {
 	const bytes = ArrayBuffer.isView(buf)
 		? new Uint8Array(buf.buffer as ArrayBuffer, buf.byteOffset, buf.byteLength)
 		: new Uint8Array(buf as ArrayBuffer);
+	const chunkSize = 8192;
 	let binary = "";
-	for (const b of bytes) binary += String.fromCharCode(b);
+	for (let i = 0; i < bytes.length; i += chunkSize) {
+		binary += String.fromCharCode.apply(
+			null,
+			bytes.subarray(i, i + chunkSize) as unknown as number[],
+		);
+	}
 	return btoa(binary);
 }
 
