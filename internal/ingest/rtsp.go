@@ -299,25 +299,39 @@ func (t *rtspTrack) handleVideoRTP(p *rtsp.RTPPacket) {
 		// Single NAL unit
 		t.pushNALU(p.Header.Timestamp, p.Payload)
 	case typ == 28:
-		// FU-A
-		if len(p.Payload) < 2 {
-			return
-		}
-		fuHeader := p.Payload[1]
-		start := (fuHeader >> 7) & 1
-		end := (fuHeader >> 6) & 1
-		nalType := fuHeader & 0x1F
-
-		if start == 1 {
-			t.fuBuffer = []byte{(p.Payload[0] & 0xE0) | nalType}
-		}
-		t.fuBuffer = append(t.fuBuffer, p.Payload[2:]...)
-
-		if end == 1 {
-			t.pushNALU(p.Header.Timestamp, t.fuBuffer)
-			t.fuBuffer = nil
+		// FU-A fragmentation: reassemble across packets, push on the final fragment.
+		if nalu := t.reassembleFU(p.Payload); nalu != nil {
+			t.pushNALU(p.Header.Timestamp, nalu)
 		}
 	}
+}
+
+// reassembleFU handles H.264 FU-A (RFC 6184 §5.8) fragmentation. Each
+// fragment's payload is appended to fuBuffer; the completed NAL unit is
+// returned when the final (end) fragment arrives, and nil while a NAL unit is
+// still in flight. The reconstructed first byte combines the FU indicator's
+// forbidden-zero-bit + NRI (top 3 bits, 0xE0) with the FU header's NAL type
+// (low 5 bits). Callers push the returned NAL unit via pushNALU.
+func (t *rtspTrack) reassembleFU(payload []byte) []byte {
+	if len(payload) < 2 {
+		return nil
+	}
+	fuHeader := payload[1]
+	start := (fuHeader >> 7) & 1
+	end := (fuHeader >> 6) & 1
+	nalType := fuHeader & 0x1F
+
+	if start == 1 {
+		t.fuBuffer = []byte{(payload[0] & 0xE0) | nalType}
+	}
+	t.fuBuffer = append(t.fuBuffer, payload[2:]...)
+
+	if end == 1 {
+		complete := t.fuBuffer
+		t.fuBuffer = nil
+		return complete
+	}
+	return nil
 }
 
 func (t *rtspTrack) pushNALU(timestamp uint32, nalu []byte) {
