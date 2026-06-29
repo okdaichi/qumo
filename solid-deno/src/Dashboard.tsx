@@ -7,6 +7,25 @@ import { createUsername } from "./user/user_name.ts";
 import { UserController, UserProvider } from "./user/UserProvider.tsx";
 import { type ConnectionState, ConnectionStatus, friendlyConnError } from "./ConnectionStatus.tsx";
 
+// Defensively clean a relay-provided close reason before display. SolidJS
+// escapes text interpolation (so there's no HTML-injection sink), but the relay
+// is an untrusted peer — strip control characters and clamp the length so it
+// can't flood the status bar. Falls back to `fallback` when nothing remains.
+function sanitizeReason(reason: string | undefined, fallback: string): string {
+	// Keep only printable chars (drop C0 controls 0x00-0x1f and DEL 0x7f);
+	// expressed via codepoints to avoid escape sequences in source.
+	const isPrintable = (ch: string) => {
+		const c = ch.codePointAt(0)!;
+		return c >= 0x20 && c !== 0x7f;
+	};
+	const cleaned = Array.from(reason ?? "")
+		.filter(isPrintable)
+		.join("")
+		.trim()
+		.slice(0, 200);
+	return cleaned || fallback;
+}
+
 // Parse the hex SHA-256 from VITE_CERT_HASH into the 32 bytes WebTransport pins.
 // Tolerates surrounding whitespace and an optional 0x prefix, and rejects
 // anything that isn't exactly 64 hex chars so a malformed value can't silently
@@ -66,10 +85,10 @@ export function Dashboard() {
 		(s) => {
 			setConnState("connected");
 			// Mid-session disconnect detection: closed resolves on graceful
-			// close (→ "closed"), rejects on a transport error (→ "failed").
+			// close (-> "closed"), rejects on a transport error (-> "failed").
 			s.closed.then(
 				(info) => {
-					setConnError(info.reason || "Connection closed by the relay.");
+					setConnError(sanitizeReason(info.reason, "Connection closed by the relay."));
 					setConnState("closed");
 				},
 				(e) => {
