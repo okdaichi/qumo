@@ -7,7 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **RTMP ingest codec init-data builders (`internal/ingest`):** `BuildAVCDecoderConfigurationRecord` and `BuildAudioSpecificConfig` serialize the parsed AVC/AAC configs into the codec initialization blobs a browser WebCodecs decoder expects as its `description` — the same shape the browser-publish path emits.
+
 ### Changed
+
+- **RTMP ingest forwards AVCC unchanged (`internal/ingest`):** Ingest no longer converts AVCC to Annex-B. Video frames are passed through as AVCC (length-prefixed NALUs) with the codec string switched from `avc3` to `avc1`, and the video/audio catalog tracks now carry Base64-encoded `initData` (built from the sequence header). This conforms RTMP ingest to the same MoQT wire format the browser-publish path emits, making RTMP-ingested streams browser-decodable. `AVCCToAnnexB` and its tests were removed; PTS = DTS + CTS preserves B-frame timing via `parseFLVVideoCTS`.
 
 - **Bumped gomoqt to v0.16.0 (`go.mod`):** Upgraded the MoQT library from v0.15.0. Notable upstream fixes carried in by this release include a critical OOM denial-of-service fix for unconstrained varint allocation, `Server.Close()` no longer hanging with active connections, and `OpenGroup`/`OpenGroupAt` backpressuring on the QUIC uni-stream limit instead of aborting. `OpenGroup`/`OpenGroupAt` now require a `context.Context`; call sites in `internal/ingest`, `internal/relay`, and `internal/smoketest` were updated accordingly.
 - **groupCache concurrency model — RCU / copy-on-write (`internal/relay`):** Replaced the slice + atomic-length lockless-read scheme (which carried a benign data race on the slice header, kept non-fatal only by the never-shrink invariant) with an `atomic.Pointer`-published immutable-snapshot design. `append` is now copy-on-write via a compare-and-swap loop (safe under concurrent writers); `next` loads an immutable snapshot — reads stay lock-free and zero-allocation (~0.29 ns/op, unchanged) and are now data-race-free under the Go memory model. Trade-off: appends become O(n) copy-on-write (higher write cost) in exchange for formal race-freedom and the ability to safely reset a live cache. Removed the now-unneeded `sync.RWMutex` and `frameLen` fields.
