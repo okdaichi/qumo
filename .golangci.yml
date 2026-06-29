@@ -29,6 +29,11 @@ linters:
       - linters: [gosec]
         path: "_test\\.go"
         text: "G204"
+      # False positive: ffpub intentionally launches ffmpeg with args built from
+      # a validated, internally-sourced Config to drive interop tests — not external input.
+      - linters: [gosec]
+        path: "internal/ffpub/"
+        text: "G204"
       # Log values are passed through sanitizeLog (strips CR/LF) before logging.
       # gosec taint analysis does not recognise custom sanitisers, so this is a false positive.
       - linters: [gosec]
