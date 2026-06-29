@@ -251,9 +251,11 @@ func (b *trackBuffer) openGroup() *sourceGroup {
 func (b *trackBuffer) notify() {
 	b.subMu.RLock()
 	for ch := range b.subscribers {
-		select {
-		case ch <- struct{}{}:
-		default:
+		if len(ch) == 0 {
+			select {
+			case ch <- struct{}{}:
+			default:
+			}
 		}
 	}
 	b.subMu.RUnlock()
