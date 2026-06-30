@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -54,6 +55,8 @@ func (c Config) validate() error {
 	switch {
 	case c.URL == "":
 		return errors.New("ffpub: empty URL")
+	case !strings.HasPrefix(c.URL, "rtmp:") && !strings.HasPrefix(c.URL, "rtsp:"):
+		return fmt.Errorf("ffpub: URL must be rtmp: or rtsp:, got %q", c.URL)
 	case c.GOP <= 0:
 		return fmt.Errorf("ffpub: GOP must be > 0, got %d", c.GOP)
 	case c.Width <= 0 || c.Height <= 0:
@@ -89,9 +92,23 @@ func (c Config) args() []string {
 		a = append(a, "-c:a", "aac", "-b:a", "128k")
 	}
 
-	// RTMP muxer.
-	a = append(a, "-f", "flv", c.URL)
+	// Output muxer + transport flags, selected by URL scheme. RTSP must use
+	// TCP interleaving — qumo's RTSP ingest only accepts the interleaved
+	// transport; ffmpeg defaults to UDP and would be rejected.
+	format, extra := outputMuxer(c.URL)
+	a = append(a, extra...)
+	a = append(a, "-f", format, c.URL)
 	return a
+}
+
+// outputMuxer returns the ffmpeg output muxer format and any required
+// pre-output flags for the publish URL scheme: "rtsp" (with -rtsp_transport
+// tcp) or "flv" for RTMP.
+func outputMuxer(url string) (format string, extra []string) {
+	if strings.HasPrefix(url, "rtsp:") {
+		return "rtsp", []string{"-rtsp_transport", "tcp"}
+	}
+	return "flv", nil
 }
 
 // Publisher drives an ffmpeg subprocess publishing synthetic media to an RTMP
