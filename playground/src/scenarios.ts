@@ -12,7 +12,7 @@ export interface Scenario {
 	/** WebTransport origin port for this scenario. */
 	port: number;
 	mode: ScenarioMode;
-	/** Default subscribe path (ingest scenarios). Echo's path is random per session. */
+	/** Explicit default path for this scenario (echo: /echo, ingest: /live/demo). */
 	defaultPath: string;
 	/** ffmpeg one-liner an external encoder can paste (ingest scenarios). */
 	pushCommand?: string;
@@ -36,7 +36,7 @@ export const SCENARIOS: Record<ScenarioId, Scenario> = {
 		label: "Echo",
 		port: 4433,
 		mode: "publish-subscribe",
-		defaultPath: "", // echo default is a random name, set at runtime
+		defaultPath: "/echo",
 	},
 	rtmp: {
 		id: "rtmp",

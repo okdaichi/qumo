@@ -52,7 +52,7 @@ opens the demo on the exact same stream.
 
 | Scenario | Origin | Path | What it exercises | Status |
 | -------- | ------ | ---- | ----------------- | ------ |
-| Echo | `https://localhost:4433` | `/<random>` (editable) | Publish → relay → subscribe (MoQ-MoQ) | Working |
+| Echo | `https://localhost:4433` | `/echo` (editable) | Publish → relay → subscribe (MoQ-MoQ) | Working |
 | RTMP ingest | `https://localhost:4443` | `/live/demo` | Subscribe to an RTMP-pushed stream | Working (#141) |
 | RTSP ingest | `https://localhost:4543` | `/live/demo` | Subscribe to an RTSP-pushed stream | Working (#141) |
 | HLS | — | — | Consume the relay's HLS egress | Blocked (#142) |
@@ -90,5 +90,4 @@ src/
   cert.ts              VITE_CERT_HASH parsing + transport options
   publish/             Publish board: capture → encode → MoQ
   subscribe/           Subscribe board: MoQ → decode → canvas
-  user/                Random-name helper (seeds the Echo default path)
 ```

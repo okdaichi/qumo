@@ -3,7 +3,6 @@ import { ScenarioPicker } from "./ScenarioPicker.tsx";
 import { PathControl } from "./PathControl.tsx";
 import { ScenarioView } from "./ScenarioView.tsx";
 import { isScenarioId, type ScenarioId, SCENARIOS } from "./scenarios.ts";
-import { generateUsername } from "./user/user_name.ts";
 
 // Read ?scenario= and ?path= from the URL (shareable deep links). Falls back to
 // "echo" for an unknown/missing scenario.
@@ -13,10 +12,9 @@ function readParams(): { scenario: ScenarioId; path: string | null } {
 	return { scenario: s && isScenarioId(s) ? s : "echo", path: params.get("path") };
 }
 
-// Echo gets a random unique path so two peers meet only when sharing the link;
-// ingest scenarios subscribe to the externally-pushed path.
+// Each scenario has an explicit default path (echo: /echo, ingest: /live/demo).
 function defaultPathFor(scenario: ScenarioId): string {
-	return scenario === "echo" ? `/${generateUsername()}` : SCENARIOS[scenario].defaultPath;
+	return SCENARIOS[scenario].defaultPath;
 }
 
 export function Dashboard() {
