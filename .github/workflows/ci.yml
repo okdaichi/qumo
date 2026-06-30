@@ -83,6 +83,12 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
+      # ffmpeg drives the RTMP interop test (internal/integration). The test
+      # skips cleanly when ffmpeg is absent, but installing it lets CI actually
+      # exercise the ffmpeg → relay → subscribe path on every PR.
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+
       # In-process integration tests (build tag `integration`) stand up real QUIC
       # relays, so they are kept out of the default unit run. No -race here: the
       # real-QUIC stack has not been validated under the race detector yet —
