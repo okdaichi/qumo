@@ -421,10 +421,22 @@ func parseInterleavedChannels(transport string) (rtp, rtcp uint8, ok bool) {
 	rest := transport[idx+len(token):]
 	var a, b int
 	if n, err := fmt.Sscanf(rest, "%d-%d", &a, &b); err == nil && n == 2 {
+		if !validChannel(a) || !validChannel(b) {
+			return 0, 0, false
+		}
 		return uint8(a), uint8(b), true
 	}
 	if n, err := fmt.Sscanf(rest, "%d", &a); err == nil && n == 1 {
+		if !validChannel(a) {
+			return 0, 0, false
+		}
 		return uint8(a), uint8(a), true
 	}
 	return 0, 0, false
+}
+
+// validChannel reports whether n fits in the 8-bit RTSP interleaved channel
+// space (0–255).
+func validChannel(n int) bool {
+	return n >= 0 && n <= 255
 }

@@ -200,6 +200,8 @@ func TestParseInterleavedChannels(t *testing.T) {
 		"single channel maps to both": {"RTP/AVP/TCP;interleaved=4", 4, 4, true},
 		"no interleaved token":        {"RTP/AVP;unicast;client_port=5000-5001", 0, 0, false},
 		"malformed value":             {"RTP/AVP/TCP;interleaved=foo", 0, 0, false},
+		"channel > 255 rejected":      {"RTP/AVP/TCP;interleaved=300-301", 0, 0, false},
+		"negative channel rejected":   {"RTP/AVP/TCP;interleaved=-1", 0, 0, false},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
