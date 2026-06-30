@@ -210,10 +210,8 @@ func (s *RTSPServer) handleConn(ctx context.Context, conn *rtsp.Conn) {
 								NALULenSize:   4,
 								SPS:           sps,
 								PPS:           pps,
-								// Width/Height should be parsed from SPS, but using placeholder for now
-								Width:  1920,
-								Height: 1080,
 							}
+							cfg.Width, cfg.Height = parseSPSDimensions(sps[0])
 							if err := sess.RegisterVideo(cfg); err != nil {
 								slog.Warn("failed to register video track", "error", err)
 							}

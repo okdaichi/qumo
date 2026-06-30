@@ -77,6 +77,28 @@ func TestParseAVCConfig(t *testing.T) {
 	assert.Equal(t, pps, cfg.PPS[0])
 }
 
+func TestParseSPSDimensions(t *testing.T) {
+	tests := map[string]struct {
+		sps              []byte
+		width, height    int
+	}{
+		// Real ffmpeg libx264 testsrc2 320x240, High profile.
+		"320x240 from ffmpeg": {
+			sps:    []byte{0x67, 0x64, 0x10, 0x0b, 0xac, 0xb8, 0x28, 0x3f, 0x60, 0x22, 0x00, 0x00, 0x03, 0x00, 0x02, 0x00, 0x00, 0x03, 0x00, 0x04, 0x08},
+			width:  320, height: 240,
+		},
+		"too short":    {sps: []byte{0x67}, width: 0, height: 0},
+		"empty":        {sps: nil, width: 0, height: 0},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			w, h := parseSPSDimensions(tt.sps)
+			assert.Equal(t, tt.width, w, "width")
+			assert.Equal(t, tt.height, h, "height")
+		})
+	}
+}
+
 func TestParseAVCConfig_Errors(t *testing.T) {
 	t.Run("too short", func(t *testing.T) {
 		_, err := ParseAVCConfig([]byte{0x17, 0x00})
