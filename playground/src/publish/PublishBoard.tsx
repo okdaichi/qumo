@@ -12,6 +12,7 @@ import {
 import { getMediaStream, type MediaSourceType } from "./media.ts";
 import { background, type CancelFunc, type Context, withCancel } from "@okdaichi/golikejs/context";
 import { MediaFrame } from "./media_frame.ts";
+import { friendlyMessage } from "../errors.ts";
 
 // Encode an ArrayBuffer or ArrayBufferView as a Base64 string.
 function encodeBase64(buf: ArrayBufferLike | ArrayBufferView): string {
@@ -107,8 +108,7 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 				frameRate: framerate(),
 			});
 		} catch (err) {
-			const errorMessage = err instanceof Error ? err.message : String(err);
-			setError(errorMessage);
+			setError(friendlyMessage(err));
 			console.error("Failed to start streaming:", err);
 			return;
 		}
@@ -148,14 +148,23 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 		// or compare — just apply the live values here at Start.
 		const br = bitrate();
 		const fps = framerate();
-		const config = await videoEncoderConfig({
-			width: actualWidth,
-			height: actualHeight,
-			bitrate: br,
-			frameRate: fps,
-			tryHardware: true,
-		});
-		videoEncodeNode.configure(config);
+		let config: Awaited<ReturnType<typeof videoEncoderConfig>>;
+		try {
+			config = await videoEncoderConfig({
+				width: actualWidth,
+				height: actualHeight,
+				bitrate: br,
+				frameRate: fps,
+				tryHardware: true,
+			});
+			videoEncodeNode.configure(config);
+		} catch (err) {
+			// Codec/encoder unsupported — release the camera we just acquired.
+			stream.getTracks().forEach((t) => t.stop());
+			setError(friendlyMessage(err));
+			console.error("Failed to configure video encoder:", err);
+			return;
+		}
 		// Size the preview canvas to the actual stream dimensions.
 		setCanvasWidth(actualWidth);
 		setCanvasHeight(actualHeight);
@@ -385,9 +394,7 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 			</div>
 
 			<Show when={error()}>
-				<div class="error-message">
-					Error: {error()}
-				</div>
+				<div class="error-message">{error()}</div>
 			</Show>
 
 			<Show when={isStreaming()}>
