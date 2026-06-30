@@ -169,18 +169,21 @@ func (s *RTSPServer) handleConn(ctx context.Context, conn *rtsp.Conn) {
 				resp.StatusCode = rtsp.StatusUnsupportedTransport
 				break
 			}
-			// Parse interleaved channels.
-			var rtpChan, rtcpChan uint8
-			if _, err := fmt.Sscanf(transport, "RTP/AVP/TCP;interleaved=%d-%d", &rtpChan, &rtcpChan); err != nil {
+			// Parse interleaved channels. ffmpeg sends parameters in varying
+			// order, e.g. "RTP/AVP/TCP;unicast;interleaved=0-1" — so locate
+			// the interleaved= token rather than matching the whole header.
+			rtpChan, _, ok := parseInterleavedChannels(transport)
+			if !ok {
 				resp.StatusCode = rtsp.StatusBadRequest
 				break
 			}
 
-			// Find corresponding media in SDP
+			// Find corresponding media in SDP. An empty Control would match every
+			// SETUP URL (strings.Contains("","")), so skip it.
 			var media *rtsp.SDPMedia
 			for i := range sdp.Medias {
 				m := &sdp.Medias[i]
-				if strings.Contains(req.URL.String(), m.Control) || m.Control == "*" {
+				if m.Control != "" && (strings.Contains(req.URL.String(), m.Control) || m.Control == "*") {
 					media = m
 					break
 				}
@@ -190,7 +193,11 @@ func (s *RTSPServer) handleConn(ctx context.Context, conn *rtsp.Conn) {
 				session: sess,
 			}
 			if media != nil {
-				if media.Type == "video" && strings.Contains(media.RtpMap, "H264") {
+				// Codec detection is case-insensitive: ffmpeg emits
+				// "MPEG4-GENERIC/..." (uppercase) for AAC, while the SDP rtpmap
+				// encoding-name is case-insensitive per RFC 3555.
+				rtpMap := strings.ToLower(media.RtpMap)
+				if media.Type == "video" && strings.Contains(rtpMap, "h264") {
 					track.kind = trackKindVideo
 					// Extract SPS/PPS
 					if fmtp := media.Fmtp; fmtp != "" {
@@ -213,7 +220,7 @@ func (s *RTSPServer) handleConn(ctx context.Context, conn *rtsp.Conn) {
 							track.avcCfg = cfg
 						}
 					}
-				} else if media.Type == "audio" && strings.Contains(media.RtpMap, "mpeg4-generic") {
+				} else if media.Type == "audio" && strings.Contains(rtpMap, "mpeg4-generic") {
 					track.kind = trackKindAudio
 					cfg := parseAACConfigFromFmtp(media.Fmtp)
 					track.aacDepack = newAACDepacketizer(media.Fmtp, cfg.SampleRate)
@@ -398,4 +405,26 @@ func extractParameterSets(fmtp string) (sps, pps [][]byte) {
 		}
 	}
 	return sps, pps
+}
+
+// parseInterleavedChannels extracts the RTP/RTCP interleaved channel pair from
+// an RTSP Transport header. RTSP clients (e.g. ffmpeg) send transport
+// parameters in varying order — "RTP/AVP/TCP;unicast;interleaved=0-1" — so the
+// interleaved= token is located rather than matching the whole header. A single
+// channel form "interleaved=N" maps both RTP and RTCP to N.
+func parseInterleavedChannels(transport string) (rtp, rtcp uint8, ok bool) {
+	const token = "interleaved="
+	idx := strings.Index(transport, token)
+	if idx < 0 {
+		return 0, 0, false
+	}
+	rest := transport[idx+len(token):]
+	var a, b int
+	if n, err := fmt.Sscanf(rest, "%d-%d", &a, &b); err == nil && n == 2 {
+		return uint8(a), uint8(b), true
+	}
+	if n, err := fmt.Sscanf(rest, "%d", &a); err == nil && n == 1 {
+		return uint8(a), uint8(a), true
+	}
+	return 0, 0, false
 }

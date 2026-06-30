@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **RTMP ingest codec init-data builders (`internal/ingest`):** `BuildAVCDecoderConfigurationRecord` and `BuildAudioSpecificConfig` serialize the parsed AVC/AAC configs into the codec initialization blobs a browser WebCodecs decoder expects as its `description` — the same shape the browser-publish path emits.
+- **ffmpeg publisher driver supports RTSP (`internal/ffpub`):** `ffpub` now publishes to `rtsp://` URLs (forced TCP interleaving) as well as `rtmp://`, driving the RTSP interop test and any future RTSP push scenarios.
+
+### Fixed
+
+- **RTSP ingest now works with ffmpeg (`internal/ingest`):** Two protocol bugs surfaced by the RTSP interop test, either of which aborted every ffmpeg RTSP publish: (1) the SETUP handler parsed the Transport header with a strict `Sscanf("RTP/AVP/TCP;interleaved=%d-%d")` that rejected ffmpeg's actual `RTP/AVP/TCP;unicast;interleaved=0-1` (extra `;unicast;`) with 400 Bad Request — now parsed robustly via `parseInterleavedChannels`; (2) AAC track detection was case-sensitive (`mpeg4-generic`) while ffmpeg emits `MPEG4-GENERIC` — codec detection is now case-insensitive, and an empty SDP `a=control` no longer matches every SETUP.
 
 ### Changed
 

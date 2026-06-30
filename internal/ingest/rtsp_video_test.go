@@ -184,3 +184,32 @@ func TestWrapAVCC(t *testing.T) {
 	assert.Equal(t, nalu, got[4:])
 }
 
+// TestParseInterleavedChannels verifies the RTSP SETUP Transport-header
+// parser. ffmpeg sends parameters in varying order (e.g.
+// "RTP/AVP/TCP;unicast;interleaved=0-1"); the old strict Sscanf rejected it
+// with 400 Bad Request, aborting every ffmpeg RTSP publish.
+func TestParseInterleavedChannels(t *testing.T) {
+	tests := map[string]struct {
+		transport string
+		rtp, rtcp uint8
+		ok        bool
+	}{
+		"ffmpeg TCP interleaved pair": {"RTP/AVP/TCP;unicast;interleaved=0-1", 0, 1, true},
+		"with mode=RECORD":            {"RTP/AVP/TCP;unicast;mode=RECORD;interleaved=5-6", 5, 6, true},
+		"simple pair":                 {"RTP/AVP/TCP;interleaved=2-3", 2, 3, true},
+		"single channel maps to both": {"RTP/AVP/TCP;interleaved=4", 4, 4, true},
+		"no interleaved token":        {"RTP/AVP;unicast;client_port=5000-5001", 0, 0, false},
+		"malformed value":             {"RTP/AVP/TCP;interleaved=foo", 0, 0, false},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			rtp, rtcp, ok := parseInterleavedChannels(tt.transport)
+			assert.Equal(t, tt.ok, ok)
+			if tt.ok {
+				assert.Equal(t, tt.rtp, rtp)
+				assert.Equal(t, tt.rtcp, rtcp)
+			}
+		})
+	}
+}
+

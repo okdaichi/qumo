@@ -82,11 +82,24 @@ func TestPublisher_Args(t *testing.T) {
 		require.GreaterOrEqual(t, i, 0)
 		assert.Equal(t, "2.5", args[i+1])
 	})
+
+	t.Run("rtsp URL uses rtsp muxer + tcp transport", func(t *testing.T) {
+		cfg := baseCfg("rtsp://x:8554/y")
+		args, err := New(cfg).Args()
+		require.NoError(t, err)
+		// RTSP must force TCP: qumo's RTSP ingest only accepts interleaved TCP.
+		i := indexOf(args, "-rtsp_transport")
+		require.GreaterOrEqual(t, i, 0)
+		assert.Equal(t, "tcp", args[i+1])
+		assert.True(t, containsAll(args, "-f", "rtsp", "rtsp://x:8554/y"))
+		assert.NotContains(t, strings.Join(args, "\x00"), "-flv")
+	})
 }
 
 func TestPublisher_Args_Validation(t *testing.T) {
 	tests := map[string]Config{
 		"empty URL":      {GOP: 30, Width: 320, Height: 240, Framerate: 30},
+		"invalid scheme": {URL: "udp://x/y", GOP: 30, Width: 320, Height: 240, Framerate: 30},
 		"zero GOP":       {URL: "rtmp://x/y", Width: 320, Height: 240, Framerate: 30},
 		"zero width":     {URL: "rtmp://x/y", GOP: 30, Height: 240, Framerate: 30},
 		"zero framerate": {URL: "rtmp://x/y", GOP: 30, Width: 320, Height: 240},
