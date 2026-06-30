@@ -1,14 +1,11 @@
 import { Show } from "solid-js";
+import type { CertHashProblem } from "./cert.ts";
 
 // WebTransport session lifecycle as surfaced to the user (issue #134).
 // "connecting" until the connect() promise settles; "connected" on success;
 // "closed" when the relay ends the session gracefully mid-stream; "failed"
 // with a concise reason on a handshake rejection or transport error.
 export type ConnectionState = "connecting" | "connected" | "closed" | "failed";
-
-// Why the cert hash can't pin the relay cert: not configured, or present but
-// not a valid 64-char hex SHA-256.
-export type CertHashProblem = "missing" | "malformed";
 
 const LABELS: Record<ConnectionState, string> = {
 	connecting: "Connecting to relay…",
@@ -61,4 +58,21 @@ export function friendlyConnError(
 	if (certHashProblem) return null;
 	const raw = err instanceof Error ? err.message : String(err);
 	return `Could not connect to the relay: ${raw}`;
+}
+
+// Defensively clean a relay-provided close reason before display. SolidJS
+// escapes text interpolation (so there's no HTML-injection sink), but the relay
+// is an untrusted peer — strip control characters and clamp the length so it
+// can't flood the status bar. Falls back to `fallback` when nothing remains.
+export function sanitizeReason(reason: string | undefined, fallback: string): string {
+	const isPrintable = (ch: string) => {
+		const c = ch.codePointAt(0)!;
+		return c >= 0x20 && c !== 0x7f;
+	};
+	const cleaned = Array.from(reason ?? "")
+		.filter(isPrintable)
+		.join("")
+		.trim()
+		.slice(0, 200);
+	return cleaned || fallback;
 }

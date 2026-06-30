@@ -109,7 +109,7 @@ func Help() error {
 	fmt.Println()
 	fmt.Println("  🎬 Demo (local scenarios):")
 	fmt.Println("    mage demo:up      - relay + rtmp + rtsp origins (generates cert if missing)")
-	fmt.Println("    mage demo:push    - opt-in ffmpeg test-pattern pushers (RTMP/RTSP → /live/demo)")
+	fmt.Println("    mage demo:push    - opt-in ffmpeg test-pattern pushers (RTMP → /rtmp/demo, RTSP → /rtsp/demo)")
 	fmt.Println("    mage demo:down    - stop the demo environment")
 	fmt.Println("    mage demo:logs    - tail demo logs")
 	fmt.Println("    mage demo:ps      - list demo containers")
@@ -1107,13 +1107,12 @@ func (Demo) Up() error {
 	fmt.Println("✅ Demo environment started!")
 	fmt.Println("   WebTransport origins:")
 	fmt.Println("     echo (relay): https://localhost:4433")
-	fmt.Println("     rtmp:         https://localhost:4443   (push RTMP → localhost:1935/live/demo)")
-	fmt.Println("     rtsp:         https://localhost:4543   (announce RTSP → localhost:8554/live/demo)")
+	fmt.Println("     rtmp:         https://localhost:4443   (push RTMP → localhost:1935/rtmp/demo)")
+	fmt.Println("     rtsp:         https://localhost:4543   (announce RTSP → localhost:8554/rtsp/demo)")
 	fmt.Println()
-	fmt.Println("   RTMP/RTSP subscribe path: /live/demo")
+	fmt.Println("   RTMP subscribe: /rtmp/demo   |   RTSP subscribe: /rtsp/demo")
 	fmt.Println()
-	fmt.Println("💡 Browser: set VITE_RELAY_URL in playground/.env to the origin you want,")
-	fmt.Println("            then run `mage web`. (Scenario selector lands in #137.)")
+	fmt.Println("💡 Browser: run `mage web` and pick a scenario tab (Echo / RTMP / RTSP).")
 	fmt.Println("💡 Push test streams: mage demo:push")
 	fmt.Println("📋 Logs:             mage demo:logs")
 	return nil
@@ -1122,14 +1121,14 @@ func (Demo) Up() error {
 // Push starts the opt-in ffmpeg test-pattern pushers for the RTMP/RTSP scenarios
 // (compose profile: push). Requires the ingest origins to be up (Demo.Up).
 func (Demo) Push() error {
-	fmt.Println("🎬 Starting test-pattern pushers (RTMP + RTSP → /live/demo)...")
+	fmt.Println("🎬 Starting test-pattern pushers (RTMP → /rtmp/demo, RTSP → /rtsp/demo)...")
 	cmd := exec.Command("docker", "compose", "-f", demoComposeFile, "--profile", "push", "up", "-d", "rtmp-push", "rtsp-push")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		return err
 	}
-	fmt.Println("✅ Pushers started. Subscribe at /live/demo on the rtmp/rtsp origins.")
+	fmt.Println("✅ Pushers started. Subscribe at /rtmp/demo (rtmp) or /rtsp/demo (rtsp).")
 	return nil
 }
 

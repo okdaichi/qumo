@@ -48,7 +48,7 @@ to the matching origin directly (they do not dial the relay).
 # 1. Bring up relay + rtmp + rtsp (generates the cert if missing)
 mage demo:up
 
-# 2. Opt-in: push ffmpeg test patterns to the RTMP/RTSP origins (→ /live/demo)
+# 2. Opt-in: push ffmpeg test patterns to the RTMP/RTSP origins (→ /rtmp/demo, /rtsp/demo)
 mage demo:push
 
 # 3. Web demo: point it at the scenario's origin and run it
@@ -64,8 +64,8 @@ Scenarios and their WebTransport origins (browser `VITE_RELAY_URL`):
 | Scenario | Origin | Subscribe path | External push |
 |---|---|---|---|
 | Echo (MoQ-MoQ) | `https://localhost:4433` | publisher's path | n/a (publish from the demo) |
-| RTMP ingest | `https://localhost:4443` | `/live/demo` | RTMP → `localhost:1935/live/demo` |
-| RTSP ingest | `https://localhost:4543` | `/live/demo` | RTSP → `localhost:8554/live/demo` |
+| RTMP ingest | `https://localhost:4443` | `/rtmp/demo` | RTMP → `localhost:1935/rtmp/demo` |
+| RTSP ingest | `https://localhost:4543` | `/rtsp/demo` | RTSP → `localhost:8554/rtsp/demo` |
 
 Until the in-demo scenario selector (#137) lands, switch origin by setting
 `VITE_RELAY_URL` in `playground/.env` and reloading the Vite dev server.

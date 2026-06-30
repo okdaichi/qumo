@@ -71,7 +71,7 @@ go build -ldflags "-s -w \
 
 ### 🎮 Demo (local scenarios)
 - `mage demo:up` - Start relay (echo) + RTMP + RTSP origins (generates cert if missing) — `docker/docker-compose.demo.yml`
-- `mage demo:push` - Start opt-in ffmpeg test-pattern pushers (RTMP/RTSP → `/live/demo`)
+- `mage demo:push` - Start opt-in ffmpeg test-pattern pushers (RTMP → `/rtmp/demo`, RTSP → `/rtsp/demo`)
 - `mage demo:down` - Stop the demo environment (pushers included)
 - `mage demo:logs` - Tail demo logs
 - `mage demo:ps` - List demo containers
