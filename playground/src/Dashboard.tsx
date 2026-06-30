@@ -3,6 +3,7 @@ import { ScenarioPicker } from "./ScenarioPicker.tsx";
 import { PathControl } from "./PathControl.tsx";
 import { ScenarioView } from "./ScenarioView.tsx";
 import { isScenarioId, type ScenarioId, SCENARIOS } from "./scenarios.ts";
+import { generateUsername } from "./user/user_name.ts";
 
 // Read ?scenario= and ?path= from the URL (shareable deep links). Falls back to
 // "echo" for an unknown/missing scenario.
@@ -12,9 +13,10 @@ function readParams(): { scenario: ScenarioId; path: string | null } {
 	return { scenario: s && isScenarioId(s) ? s : "echo", path: params.get("path") };
 }
 
-// Each scenario has an explicit default path (echo: /echo, ingest: /live/demo).
+// Echo gets a random unique path so two peers meet only when sharing the link;
+// each ingest scenario has a distinctive default tied to its pipeline.
 function defaultPathFor(scenario: ScenarioId): string {
-	return SCENARIOS[scenario].defaultPath;
+	return scenario === "echo" ? `/${generateUsername()}` : SCENARIOS[scenario].defaultPath;
 }
 
 export function Dashboard() {
@@ -29,7 +31,7 @@ export function Dashboard() {
 	});
 
 	// Switching scenario resets the path to that scenario's default — paths are
-	// scenario-specific (echo = random name, ingest = /live/demo). User edits
+	// scenario-specific (echo = random name, rtmp = /rtmp/demo, rtsp = /rtsp/demo). User edits
 	// within a scenario are preserved until they switch.
 	const selectScenario = (id: ScenarioId) => {
 		if (id === scenario()) return;

@@ -21,8 +21,8 @@
 #   mage demo:push               # opt-in: ffmpeg test-pattern pushers (profile: push)
 #   mage demo:down
 #
-# Test pushers push to /live/demo (RTMP app/streamkey, RTSP URL path) — the
-# demo's default subscribe path.
+# Test pushers push to /rtmp/demo and /rtsp/demo (RTMP app/streamkey, RTSP URL
+# path) — matching the demo's default subscribe path per scenario.
 
 x-qumo-base: &qumo-base
   build:
@@ -133,7 +133,7 @@ services:
       - "2"
       - "-f"
       - "flv"
-      - "rtmp://rtmp:1935/live/demo"
+      - "rtmp://rtmp:1935/rtmp/demo"
     networks:
       - qumo-net
 
@@ -176,7 +176,7 @@ services:
       - "rtsp"
       - "-rtsp_transport"
       - "tcp"
-      - "rtsp://rtsp:8554/live/demo"
+      - "rtsp://rtsp:8554/rtsp/demo"
     networks:
       - qumo-net
 

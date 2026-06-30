@@ -52,16 +52,16 @@ opens the demo on the exact same stream.
 
 | Scenario | Origin | Path | What it exercises | Status |
 | -------- | ------ | ---- | ----------------- | ------ |
-| Echo | `https://localhost:4433` | `/echo` (editable) | Publish → relay → subscribe (MoQ-MoQ) | Working |
-| RTMP ingest | `https://localhost:4443` | `/live/demo` | Subscribe to an RTMP-pushed stream | Working (#141) |
-| RTSP ingest | `https://localhost:4543` | `/live/demo` | Subscribe to an RTSP-pushed stream | Working (#141) |
+| Echo | `https://localhost:4433` | `/<random>` (editable) | Publish → relay → subscribe (MoQ-MoQ) | Working |
+| RTMP ingest | `https://localhost:4443` | `/rtmp/demo` | Subscribe to an RTMP-pushed stream | Working (#141) |
+| RTSP ingest | `https://localhost:4543` | `/rtsp/demo` | Subscribe to an RTSP-pushed stream | Working (#141) |
 | HLS | — | — | Consume the relay's HLS egress | Blocked (#142) |
 
 For the ingest scenarios, start the demo origins and push a test stream:
 
 ```bash
 mage demo:up      # relay + rtmp + rtsp origins (generates cert if missing)
-mage demo:push    # opt-in ffmpeg test-pattern pushers → /live/demo
+mage demo:push    # opt-in ffmpeg test-pattern pushers → /rtmp/demo, /rtsp/demo
 ```
 
 The RTMP/RTSP tabs also show a copy-pasteable ffmpeg push command. All origins
@@ -90,4 +90,5 @@ src/
   cert.ts              VITE_CERT_HASH parsing + transport options
   publish/             Publish board: capture → encode → MoQ
   subscribe/           Subscribe board: MoQ → decode → canvas
+  user/                Random-name helper (seeds the Echo default path)
 ```

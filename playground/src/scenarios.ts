@@ -12,7 +12,7 @@ export interface Scenario {
 	/** WebTransport origin port for this scenario. */
 	port: number;
 	mode: ScenarioMode;
-	/** Explicit default path for this scenario (echo: /echo, ingest: /live/demo). */
+	/** Default path for this scenario (echo's is a random name, set at runtime). */
 	defaultPath: string;
 	/** ffmpeg one-liner an external encoder can paste (ingest scenarios). */
 	pushCommand?: string;
@@ -23,12 +23,12 @@ export interface Scenario {
 const RTMP_PUSH =
 	"ffmpeg -re -f lavfi -i testsrc2=size=1280x720:rate=30 -f lavfi -i sine=frequency=440:sample_rate=48000 " +
 	"-c:v libx264 -preset veryfast -tune zerolatency -profile:v baseline -g 60 " +
-	"-c:a aac -ar 48000 -ac 2 -f flv rtmp://localhost:1935/live/demo";
+	"-c:a aac -ar 48000 -ac 2 -f flv rtmp://localhost:1935/rtmp/demo";
 
 const RTSP_PUSH =
 	"ffmpeg -re -f lavfi -i testsrc2=size=1280x720:rate=30 -f lavfi -i sine=frequency=440:sample_rate=48000 " +
 	"-c:v libx264 -preset veryfast -tune zerolatency -profile:v baseline -g 60 " +
-	"-c:a aac -ar 48000 -ac 2 -f rtsp -rtsp_transport tcp rtsp://localhost:8554/live/demo";
+	"-c:a aac -ar 48000 -ac 2 -f rtsp -rtsp_transport tcp rtsp://localhost:8554/rtsp/demo";
 
 export const SCENARIOS: Record<ScenarioId, Scenario> = {
 	echo: {
@@ -36,25 +36,25 @@ export const SCENARIOS: Record<ScenarioId, Scenario> = {
 		label: "Echo",
 		port: 4433,
 		mode: "publish-subscribe",
-		defaultPath: "/echo",
+		defaultPath: "", // echo default is a random name, set at runtime
 	},
 	rtmp: {
 		id: "rtmp",
 		label: "RTMP ingest",
 		port: 4443,
 		mode: "subscribe",
-		defaultPath: "/live/demo",
+		defaultPath: "/rtmp/demo",
 		pushCommand: RTMP_PUSH,
-		pushTarget: "rtmp://localhost:1935/live/demo",
+		pushTarget: "rtmp://localhost:1935/rtmp/demo",
 	},
 	rtsp: {
 		id: "rtsp",
 		label: "RTSP ingest",
 		port: 4543,
 		mode: "subscribe",
-		defaultPath: "/live/demo",
+		defaultPath: "/rtsp/demo",
 		pushCommand: RTSP_PUSH,
-		pushTarget: "rtsp://localhost:8554/live/demo",
+		pushTarget: "rtsp://localhost:8554/rtsp/demo",
 	},
 };
 

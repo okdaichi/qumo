@@ -35,7 +35,7 @@ export function PathControl(props: {
 				class="path-input-field"
 				value={props.path()}
 				onInput={(e) => props.setPath(e.currentTarget.value)}
-				placeholder="/live/demo"
+				placeholder="/rtmp/demo"
 				spellcheck={false}
 			/>
 			<button type="button" class="copy-btn" onClick={copyPath} title="Copy path">
