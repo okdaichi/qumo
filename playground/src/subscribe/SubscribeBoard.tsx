@@ -1,4 +1,4 @@
-import { type Accessor, createSignal, onCleanup, onMount, Show } from "solid-js";
+import { type Accessor, createEffect, createSignal, onCleanup, onMount, Show } from "solid-js";
 import { AudioDecodeNode, VideoContext, VideoDecodeNode } from "@okdaichi/av-nodes";
 import { type Session, SubscribeErrorCode } from "@qumo/moq";
 import { parseCatalog } from "@qumo/moq/msf";
@@ -11,13 +11,56 @@ export function SubscribeBoard(props: { session: Promise<Session>; path: Accesso
 	const [error, setError] = createSignal<string | null>(null);
 	const [canvasWidth, setCanvasWidth] = createSignal(1280);
 	const [canvasHeight, setCanvasHeight] = createSignal(720);
+	// Viewer controls (#136): pure client-side, no timeline (MoQ is live-only).
+	const [volume, setVolume] = createSignal(1);
+	const [muted, setMuted] = createSignal(false);
+	const [isFullscreen, setIsFullscreen] = createSignal(false);
 
 	let canvasEle: HTMLCanvasElement | undefined;
+	let previewEle: HTMLDivElement | undefined;
 	let videoContext: VideoContext | undefined;
 	let videoDecodeNode: VideoDecodeNode | undefined;
 	let audioContext: AudioContext | undefined;
 	let audioDecodeNode: AudioDecodeNode | undefined;
 	let currentCancel: (() => void) | null = null;
+
+	// AudioDecodeNode extends GainNode, so volume is just its gain value. Runs
+	// entirely client-side — no effect on the live MoQ stream. The effective
+	// level is 0 when muted, otherwise the chosen volume.
+	const gainValue: Accessor<number> = () => (muted() ? 0 : volume());
+
+	createEffect(() => {
+		// Read gainValue() FIRST so the effect subscribes to muted/volume even
+		// when audioDecodeNode isn't set yet on the first run — otherwise the
+		// early return would track nothing and the effect would never re-run,
+		// leaving mute/volume non-functional.
+		const g = gainValue();
+		const node = audioDecodeNode;
+		if (node) node.gain.value = g;
+	});
+
+	// Unmuting when volume has been dragged to 0 would otherwise leave the
+	// player silent with the unmuted icon — restore a default level.
+	const toggleMute = () => {
+		if (muted()) {
+			setMuted(false);
+			if (volume() <= 0) setVolume(1);
+		} else {
+			setMuted(true);
+		}
+	};
+
+	const toggleFullscreen = () => {
+		const el = previewEle;
+		if (!el) return;
+		if (document.fullscreenElement === el) {
+			void document.exitFullscreen();
+		} else {
+			void el.requestFullscreen?.();
+		}
+	};
+
+	const onFullscreenChange = () => setIsFullscreen(document.fullscreenElement === previewEle);
 
 	onMount(() => {
 		if (canvasEle) {
@@ -29,10 +72,14 @@ export function SubscribeBoard(props: { session: Promise<Session>; path: Accesso
 			audioContext = new AudioContext();
 			audioDecodeNode = new AudioDecodeNode(audioContext);
 			audioDecodeNode.connect(audioContext.destination);
+			// Apply the initial level (the gain effect below only fires on changes).
+			audioDecodeNode.gain.value = gainValue();
 		}
+		document.addEventListener("fullscreenchange", onFullscreenChange);
 	});
 
 	onCleanup(() => {
+		document.removeEventListener("fullscreenchange", onFullscreenChange);
 		stopSubscribing();
 	});
 
@@ -317,7 +364,7 @@ export function SubscribeBoard(props: { session: Promise<Session>; path: Accesso
 				</div>
 			</Show>
 
-			<div class="video-preview">
+			<div class="video-preview" ref={previewEle}>
 				<canvas
 					ref={canvasEle}
 					width={canvasWidth()}
@@ -332,6 +379,40 @@ export function SubscribeBoard(props: { session: Promise<Session>; path: Accesso
 						background: "#000",
 					}}
 				/>
+			</div>
+
+			<div class="viewer-controls">
+				<button
+					type="button"
+					class="copy-btn"
+					onClick={toggleMute}
+					aria-pressed={muted()}
+					title={muted() ? "Unmute" : "Mute"}
+				>
+					{muted() ? "🔇" : "🔊"}
+				</button>
+				<input
+					type="range"
+					class="volume-slider"
+					min={0}
+					max={1}
+					step={0.01}
+					value={gainValue()}
+					onInput={(e) => {
+						const v = Number(e.currentTarget.value);
+						setVolume(v);
+						setMuted(v === 0);
+					}}
+					aria-label="Volume"
+				/>
+				<button
+					type="button"
+					class="copy-btn"
+					onClick={toggleFullscreen}
+					title={isFullscreen() ? "Exit fullscreen" : "Fullscreen"}
+				>
+					{isFullscreen() ? "⤢" : "⛶"}
+				</button>
 			</div>
 		</div>
 	);

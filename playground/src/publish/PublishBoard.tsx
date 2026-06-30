@@ -1,4 +1,4 @@
-import { type Accessor, createEffect, createSignal, onMount, Show } from "solid-js";
+import { type Accessor, createSignal, onMount, Show } from "solid-js";
 import { type BroadcastPath, type GroupWriter, TrackMux } from "@qumo/moq";
 import { Broadcast, type Track } from "@qumo/moq/msf";
 import {
@@ -25,6 +25,19 @@ function encodeBase64(buf: ArrayBufferLike | ArrayBufferView): string {
 
 const GOP_DURATION = 1000; // 1 second
 
+// Encode-quality presets (#135). Resolution maps to getUserMedia `ideal`
+// constraints (the camera picks the nearest mode); the encoder then encodes at
+// the actual captured dimensions. Bitrate/framerate go straight to the encoder.
+const RESOLUTIONS: Record<string, { width: number; height: number }> = {
+	"480p": { width: 854, height: 480 },
+	"720p": { width: 1280, height: 720 },
+	"1080p": { width: 1920, height: 1080 },
+};
+const FRAMERATES = [24, 30, 60] as const;
+const BITRATE_MIN = 500_000;
+const BITRATE_MAX = 6_000_000;
+const BITRATE_STEP = 100_000;
+
 export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 	const mux = props.mux;
 
@@ -33,8 +46,10 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 	const [error, setError] = createSignal<string | null>(null);
 	const [canvasWidth, setCanvasWidth] = createSignal(1280);
 	const [canvasHeight, setCanvasHeight] = createSignal(720);
-	// Resolved asynchronously by the first effect below; read synchronously by the second effect and startStreaming.
-	const [encoderConfig, setEncoderConfig] = createSignal<VideoEncoderConfig | undefined>();
+	// Encode-quality controls (applied at Start; stop+restart to change mid-session).
+	const [resolution, setResolution] = createSignal<keyof typeof RESOLUTIONS>("720p");
+	const [framerate, setFramerate] = createSignal<(typeof FRAMERATES)[number]>(30);
+	const [bitrate, setBitrate] = createSignal(2_500_000);
 
 	let canvasEle: HTMLCanvasElement | undefined;
 	let lastKeyframeTime = 0;
@@ -43,13 +58,8 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 	let videoEncodeNode: VideoEncodeNode | undefined;
 	let audioContext: AudioContext | undefined;
 	let audioEncodeNode: AudioEncodeNode | undefined;
-	// Active Broadcast instance — set when streaming starts; cleared on stop.
-	let broadcastRef: Broadcast | undefined;
 	// Audio track catalog entry — set in startStreaming if audio is available.
 	let audioTrackDef: Track | undefined;
-	// Guards Effects 1 and 2 from firing while streaming is active.
-	// Using a plain ref (not signal) so that toggling it never itself triggers effects.
-	let streamingActive = false;
 
 	onMount(() => {
 		if (canvasEle) {
@@ -74,43 +84,6 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 		}
 	});
 
-	// Effect 1: pre-compute encoder config from canvas dimensions.
-	// Skipped while streaming — startStreaming owns the encoder config at that point.
-	createEffect(() => {
-		const width = canvasWidth();
-		const height = canvasHeight();
-		if (streamingActive || !videoEncodeNode || width <= 0 || height <= 0) return;
-		void videoEncoderConfig({
-			width,
-			height,
-			bitrate: 2_500_000,
-			frameRate: 30,
-			tryHardware: true,
-		})
-			.then(setEncoderConfig);
-	});
-
-	// Effect 2: applies the resolved config to the encoder (pre-stream only).
-	// Skipped while streaming — the encoder is already correctly configured by startStreaming.
-	createEffect(() => {
-		const config = encoderConfig();
-		if (streamingActive || !config || !videoEncodeNode) return;
-		videoEncodeNode.configure(config);
-		if (broadcastRef) {
-			const updatedTrack: Track = {
-				name: "video",
-				role: "video",
-				packaging: "loc",
-				isLive: true,
-				codec: config.codec,
-				width: config.width,
-				height: config.height,
-			};
-			const tracks: Track[] = audioTrackDef ? [updatedTrack, audioTrackDef] : [updatedTrack];
-			broadcastRef.setCatalog({ version: 1, tracks }).catch(console.error);
-		}
-	});
-
 	let publishCtx: Context;
 	let cancelPublish: CancelFunc;
 
@@ -123,10 +96,16 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 		}
 
 		// Acquire media first — we need the actual track dimensions before configuring the encoder.
+		// Apply the chosen resolution/framerate as getUserMedia ideal constraints.
+		const target = RESOLUTIONS[resolution()];
 		let stream: MediaStream;
 		try {
 			setError(null);
-			stream = await getMediaStream(sourceType());
+			stream = await getMediaStream(sourceType(), {
+				width: target.width,
+				height: target.height,
+				frameRate: framerate(),
+			});
 		} catch (err) {
 			const errorMessage = err instanceof Error ? err.message : String(err);
 			setError(errorMessage);
@@ -163,25 +142,21 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 			actualHeight = s?.height ?? canvasHeight();
 		}
 
-		// Lock effects out before touching any signals — prevents Effect 1/2 from
-		// re-firing and calling videoEncodeNode.configure() a second time.
-		streamingActive = true;
-
-		// Use pre-computed config if dimensions match; otherwise recompute at actual size.
-		let config = encoderConfig();
-		if (!config || config.width !== actualWidth || config.height !== actualHeight) {
-			config = await videoEncoderConfig({
-				width: actualWidth,
-				height: actualHeight,
-				bitrate: 2_500_000,
-				frameRate: 30,
-				tryHardware: true,
-			});
-			videoEncodeNode.configure(config);
-		}
-		// Update canvas display signals — Effects 1/2 are guarded so these won't
-		// trigger encoder reconfiguration.
-		setEncoderConfig(config);
+		// Always (re)compute the encoder config at the actual captured dimensions
+		// with the current quality picks. videoEncoderConfig returns
+		// WebCodecs-normalized values (bitrate scaled per codec), so don't cache
+		// or compare — just apply the live values here at Start.
+		const br = bitrate();
+		const fps = framerate();
+		const config = await videoEncoderConfig({
+			width: actualWidth,
+			height: actualHeight,
+			bitrate: br,
+			frameRate: fps,
+			tryHardware: true,
+		});
+		videoEncodeNode.configure(config);
+		// Size the preview canvas to the actual stream dimensions.
 		setCanvasWidth(actualWidth);
 		setCanvasHeight(actualHeight);
 
@@ -223,7 +198,6 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 			? [initialTrack, audioTrackDef]
 			: [initialTrack];
 		const broadcast = new Broadcast({ version: 1, tracks: initialTracks });
-		broadcastRef = broadcast;
 
 		// Register video track handler — runs the encoder loop when subscribed.
 		await broadcast.registerTrack(initialTrack, {
@@ -323,9 +297,7 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 	};
 
 	const stopStreaming = () => {
-		streamingActive = false;
 		cancelPublish();
-		broadcastRef = undefined;
 		audioTrackDef = undefined;
 		audioContext?.suspend().catch(() => {});
 		if (sourceNode) {
@@ -352,6 +324,48 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 						<option value="camera">Camera</option>
 						<option value="screen">Screen Share</option>
 					</select>
+				</div>
+
+				<div class="encoder-controls">
+					<label>
+						Quality
+						<select
+							value={resolution()}
+							onChange={(e) =>
+								setResolution(e.currentTarget.value as keyof typeof RESOLUTIONS)}
+							disabled={isStreaming()}
+						>
+							{Object.entries(RESOLUTIONS).map(([id]) => (
+								<option value={id}>{id}</option>
+							))}
+						</select>
+					</label>
+					<label>
+						FPS
+						<select
+							value={framerate()}
+							onChange={(e) =>
+								setFramerate(
+									Number(e.currentTarget.value) as (typeof FRAMERATES)[number],
+								)}
+							disabled={isStreaming()}
+						>
+							{FRAMERATES.map((fps) => <option value={fps}>{fps}</option>)}
+						</select>
+					</label>
+					<label class="bitrate-control">
+						Bitrate
+						<input
+							type="range"
+							min={BITRATE_MIN}
+							max={BITRATE_MAX}
+							step={BITRATE_STEP}
+							value={bitrate()}
+							onInput={(e) => setBitrate(Number(e.currentTarget.value))}
+							disabled={isStreaming()}
+						/>
+						<span class="bitrate-value">{(bitrate() / 1_000_000).toFixed(1)} Mbps</span>
+					</label>
 				</div>
 
 				<div class="stream-controls">
