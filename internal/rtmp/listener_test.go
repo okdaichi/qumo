@@ -148,3 +148,60 @@ func TestListen_Error(t *testing.T) {
 		t.Fatal("expected error listening on invalid address")
 	}
 }
+
+// TestListener_Accept_StalledHandshakeDoesNotBlock verifies the handshake
+// read deadline: a client that connects and then never sends handshake bytes
+// cannot hold Accept forever. After the stalled handshake times out, Accept
+// loops back and serves a subsequent, well-behaved client.
+func TestListener_Accept_StalledHandshakeDoesNotBlock(t *testing.T) {
+	// Shorten the handshake timeout so the test does not wait 10s.
+	old := handshakeTimeout
+	handshakeTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { handshakeTimeout = old })
+
+	l, err := Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen failed: %v", err)
+	}
+	defer l.Close()
+
+	connCh := make(chan *Conn, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		c, aerr := l.Accept()
+		if aerr != nil {
+			errCh <- aerr
+			return
+		}
+		connCh <- c
+	}()
+
+	// A stalling client: connects but never sends handshake bytes.
+	stalled, err := net.Dial("tcp", l.Addr().String())
+	if err != nil {
+		t.Fatalf("dial stalled client failed: %v", err)
+	}
+	defer stalled.Close()
+
+	// Wait for the stalled handshake to time out and be skipped.
+	time.Sleep(handshakeTimeout + 250*time.Millisecond)
+
+	// A real client now completes the handshake; Accept must return it,
+	// proving the stalled client did not permanently block the listener.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	real, err := Dial(ctx, l.Addr().String())
+	if err != nil {
+		t.Fatalf("Dial real client failed: %v", err)
+	}
+	defer real.Close()
+
+	select {
+	case c := <-connCh:
+		_ = c.Close()
+	case err := <-errCh:
+		t.Fatalf("Accept returned error after stalled handshake: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("Accept never recovered: stalled handshake blocked the listener")
+	}
+}
