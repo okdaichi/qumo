@@ -1,6 +1,16 @@
 package rtmp
 
-import "net"
+import (
+	"log/slog"
+	"net"
+	"time"
+)
+
+// handshakeTimeout bounds how long the server waits for a client to complete
+// the RTMP handshake. Without it, a client that connects and then stalls
+// (sends nothing) blocks Accept indefinitely, preventing every other RTMP
+// connection from being accepted. A var so tests can shorten it.
+var handshakeTimeout = 10 * time.Second
 
 // Listen creates a new [Listener] that accepts RTMP connections on the given
 // network address. The network parameter is typically "tcp".
@@ -37,17 +47,28 @@ type Listener struct {
 // loops back to the underlying listener rather than returning the error. This
 // keeps one bad client from tearing down the listener — server accept loops
 // treat any Accept error as fatal.
+//
+// The handshake is run under a read deadline so a client that connects and
+// then stalls cannot hold Accept (and block every other connection). The
+// deadline is cleared once the handshake completes, so subsequent streaming
+// reads are not bounded.
 func (l *Listener) Accept() (*Conn, error) {
 	for {
 		transport, err := l.rawConnListener.Accept()
 		if err != nil {
 			return nil, err
 		}
+		_ = transport.SetReadDeadline(time.Now().Add(handshakeTimeout))
 		conn, err := ServerConn(transport)
 		if err != nil {
+			// Debug, not Warn: a stray probe/scan failing the handshake is
+			// routine; a sudden surge is what an operator would investigate.
+			slog.Debug("rtmp: handshake failed, closing connection",
+				"remote", transport.RemoteAddr(), "error", err)
 			_ = transport.Close()
 			continue
 		}
+		_ = transport.SetReadDeadline(time.Time{})
 		return conn, nil
 	}
 }
