@@ -50,11 +50,16 @@ WebTransport origin, so switching tabs reconnects. The path field is shared,
 editable, and shareable — **Copy link** produces a `?scenario=&path=` URL that
 opens the demo on the exact same stream.
 
-| Scenario | Origin | Path | What it exercises | Status |
-| -------- | ------ | ---- | ----------------- | ------ |
-| Echo | `https://localhost:4433` | `/<random>` (editable) | Publish → relay → subscribe (MoQ-MoQ) | Working |
-| RTMP ingest | `https://localhost:4443` | `/rtmp/demo` | Subscribe to an RTMP-pushed stream | Working (#141) |
-| RTSP ingest | `https://localhost:4543` | `/rtsp/demo` | Subscribe to an RTSP-pushed stream | Working (#141) |
+Every default path embeds a per-session unique token (`/<name>-<id>` for echo,
+`/<scheme>/<id>` for ingest) so that on a **shared public relay** no two users
+collide on the same broadcast. The RTMP/RTSP tabs show a push command whose
+target embeds that same unique path.
+
+| Scenario | Origin | Default path | What it exercises | Status |
+| -------- | ------ | ------------ | ----------------- | ------ |
+| Echo | `https://localhost:4433` | `/<name>-<id>` (editable) | Publish → relay → subscribe (MoQ-MoQ) | Working |
+| RTMP ingest | `https://localhost:4443` | `/rtmp/<id>` | Subscribe to an RTMP-pushed stream | Working (#141) |
+| RTSP ingest | `https://localhost:4543` | `/rtsp/<id>` | Subscribe to an RTSP-pushed stream | Working (#141) |
 | HLS | — | — | Consume the relay's HLS egress | Blocked (#142) |
 
 For the ingest scenarios, start the demo origins and push a test stream:

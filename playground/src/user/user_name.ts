@@ -46,3 +46,11 @@ export function createUsername() {
 		regenerate,
 	};
 }
+
+// Short high-entropy token so each session's broadcast path is unique on a
+// shared public relay, avoiding collisions between users. Uses the first two
+// groups of a UUID v4 (48 random bits) — collision-negligible for a playground.
+export function generateBroadcastId(): string {
+	const groups = crypto.randomUUID().split("-");
+	return groups[0] + groups[1];
+}

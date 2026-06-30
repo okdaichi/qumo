@@ -1,34 +1,37 @@
-import { createSignal, Show } from "solid-js";
-import { type ScenarioId, SCENARIOS } from "./scenarios.ts";
+import { type Accessor, createSignal, Show } from "solid-js";
+import { pushCommandFor, pushTargetFor, type ScenarioId } from "./scenarios.ts";
 
-// Copy-pasteable ffmpeg push command for ingest scenarios (RTMP/RTSP), so a
-// user knows exactly how to feed the stream they're about to subscribe to.
-export function PushInstructions(props: { scenario: ScenarioId }) {
-	const scenario = SCENARIOS[props.scenario];
-	const cmd = scenario.pushCommand;
+// Copy-pasteable ffmpeg push command for ingest scenarios (RTMP/RTSP). The
+// target URL embeds the current broadcast path — which is unique per session —
+// so the external push and the subscriber always agree on the stream.
+export function PushInstructions(props: { scenario: ScenarioId; path: Accessor<string> }) {
 	const [copied, setCopied] = createSignal(false);
 
+	const target = () => pushTargetFor(props.scenario, props.path());
+	const cmd = () => pushCommandFor(props.scenario, props.path());
+
 	const copy = () => {
-		if (!cmd) return;
-		navigator.clipboard?.writeText(cmd).then(() => {
+		const c = cmd();
+		if (!c) return;
+		navigator.clipboard?.writeText(c).then(() => {
 			setCopied(true);
 			setTimeout(() => setCopied(false), 1200);
 		}).catch(() => {});
 	};
 
 	return (
-		<Show when={cmd && scenario.pushTarget}>
+		<Show when={target()}>
 			<div class="push-instructions">
 				<div class="push-instructions-head">
 					<span>
-						Push a stream to <code>{scenario.pushTarget}</code>, then start subscribing:
+						Push a stream to <code>{target()}</code>, then start subscribing:
 					</span>
 					<button type="button" class="copy-btn" onClick={copy}>
 						{copied() ? "Copied" : "Copy"}
 					</button>
 				</div>
 				<pre>
-					<code>{cmd}</code>
+					<code>{cmd()}</code>
 				</pre>
 			</div>
 		</Show>

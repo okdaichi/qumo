@@ -74,7 +74,7 @@ export function ScenarioView(props: {
 				certHashProblem={certHashProblem}
 			/>
 
-			{ingest && <PushInstructions scenario={props.scenario} />}
+			{ingest && <PushInstructions scenario={props.scenario} path={props.path} />}
 
 			<div class={ingest ? "boards single" : "boards"}>
 				{!ingest && <PublishBoard mux={mux} path={props.path} />}

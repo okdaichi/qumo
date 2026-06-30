@@ -2,8 +2,8 @@ import { createEffect, createSignal, Show } from "solid-js";
 import { ScenarioPicker } from "./ScenarioPicker.tsx";
 import { PathControl } from "./PathControl.tsx";
 import { ScenarioView } from "./ScenarioView.tsx";
-import { isScenarioId, type ScenarioId, SCENARIOS } from "./scenarios.ts";
-import { generateUsername } from "./user/user_name.ts";
+import { isScenarioId, type ScenarioId } from "./scenarios.ts";
+import { generateBroadcastId, generateUsername } from "./user/user_name.ts";
 
 // Read ?scenario= and ?path= from the URL (shareable deep links). Falls back to
 // "echo" for an unknown/missing scenario.
@@ -13,10 +13,25 @@ function readParams(): { scenario: ScenarioId; path: string | null } {
 	return { scenario: s && isScenarioId(s) ? s : "echo", path: params.get("path") };
 }
 
-// Echo gets a random unique path so two peers meet only when sharing the link;
-// each ingest scenario has a distinctive default tied to its pipeline.
+// Per-session unique token + friendly name. Generated once so a user keeps the
+// same identity across scenario switches, and every default path embeds the
+// token — on a shared public relay this prevents two users from colliding on
+// the same broadcast path.
+const broadcastId = generateBroadcastId();
+const friendlyName = generateUsername();
+
+// Each scenario's default path embeds the session's broadcast id so it is
+// unique: echo is "/<name>-<id>", ingest is "/<scheme>/<id>". The user can still
+// edit/share the path (Copy link), and a deep-linked ?path= overrides this.
 function defaultPathFor(scenario: ScenarioId): string {
-	return scenario === "echo" ? `/${generateUsername()}` : SCENARIOS[scenario].defaultPath;
+	switch (scenario) {
+		case "echo":
+			return `/${friendlyName}-${broadcastId}`;
+		case "rtmp":
+			return `/rtmp/${broadcastId}`;
+		case "rtsp":
+			return `/rtsp/${broadcastId}`;
+	}
 }
 
 export function Dashboard() {
@@ -30,9 +45,9 @@ export function Dashboard() {
 		window.history.replaceState(null, "", `?${params.toString()}`);
 	});
 
-	// Switching scenario resets the path to that scenario's default — paths are
-	// scenario-specific (echo = random name, rtmp = /rtmp/demo, rtsp = /rtsp/demo). User edits
-	// within a scenario are preserved until they switch.
+	// Switching scenario resets the path to that scenario's default (each
+	// embeds the per-session broadcast id). User edits within a scenario are
+	// preserved until they switch.
 	const selectScenario = (id: ScenarioId) => {
 		if (id === scenario()) return;
 		setScenario(id);
