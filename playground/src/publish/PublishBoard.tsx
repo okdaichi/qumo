@@ -1,4 +1,4 @@
-import { type Accessor, createEffect, createSignal, onMount, Show } from "solid-js";
+import { type Accessor, createEffect, createSignal, onMount, Show, untrack } from "solid-js";
 import { type BroadcastPath, type GroupWriter, TrackMux } from "@qumo/moq";
 import { Broadcast, type Track } from "@qumo/moq/msf";
 import {
@@ -28,10 +28,10 @@ const GOP_DURATION = 1000; // 1 second
 // Encode-quality presets (#135). Resolution maps to getUserMedia `ideal`
 // constraints (the camera picks the nearest mode); the encoder then encodes at
 // the actual captured dimensions. Bitrate/framerate go straight to the encoder.
-const RESOLUTIONS: Record<string, { width: number; height: number; label: string }> = {
-	"480p": { width: 854, height: 480, label: "480p" },
-	"720p": { width: 1280, height: 720, label: "720p" },
-	"1080p": { width: 1920, height: 1080, label: "1080p" },
+const RESOLUTIONS: Record<string, { width: number; height: number }> = {
+	"480p": { width: 854, height: 480 },
+	"720p": { width: 1280, height: 720 },
+	"1080p": { width: 1920, height: 1080 },
 };
 const FRAMERATES = [24, 30, 60] as const;
 const BITRATE_MIN = 500_000;
@@ -91,14 +91,16 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 		}
 	});
 
-	// Effect 1: pre-compute encoder config from canvas dimensions + quality controls.
-	// Skipped while streaming — startStreaming owns the encoder config at that point.
+	// Effect 1: pre-compute encoder config from canvas dimensions. Reads
+	// bitrate/framerate untracked so dragging those sliders pre-stream doesn't
+	// refire this (expensive, async) effect ~once per step — the live values are
+	// applied in startStreaming. Skipped while streaming.
 	createEffect(() => {
 		const width = canvasWidth();
 		const height = canvasHeight();
-		const br = bitrate();
-		const fps = framerate();
 		if (streamingActive || !videoEncodeNode || width <= 0 || height <= 0) return;
+		const br = untrack(bitrate);
+		const fps = untrack(framerate);
 		void videoEncoderConfig({
 			width,
 			height,
@@ -393,8 +395,8 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 								setResolution(e.currentTarget.value as keyof typeof RESOLUTIONS)}
 							disabled={isStreaming()}
 						>
-							{Object.entries(RESOLUTIONS).map(([id, r]) => (
-								<option value={id}>{r.label}</option>
+							{Object.entries(RESOLUTIONS).map(([id]) => (
+								<option value={id}>{id}</option>
 							))}
 						</select>
 					</label>

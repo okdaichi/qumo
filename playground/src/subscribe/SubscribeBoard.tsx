@@ -25,17 +25,31 @@ export function SubscribeBoard(props: { session: Promise<Session>; path: Accesso
 	let currentCancel: (() => void) | null = null;
 
 	// AudioDecodeNode extends GainNode, so volume is just its gain value. Runs
-	// entirely client-side — no effect on the live MoQ stream.
+	// entirely client-side — no effect on the live MoQ stream. The effective
+	// level is 0 when muted, otherwise the chosen volume.
+	const gainValue: Accessor<number> = () => (muted() ? 0 : volume());
+
 	createEffect(() => {
 		const node = audioDecodeNode;
 		if (!node) return;
-		node.gain.value = muted() ? 0 : volume();
+		node.gain.value = gainValue();
 	});
+
+	// Unmuting when volume has been dragged to 0 would otherwise leave the
+	// player silent with the unmuted icon — restore a default level.
+	const toggleMute = () => {
+		if (muted()) {
+			setMuted(false);
+			if (volume() <= 0) setVolume(1);
+		} else {
+			setMuted(true);
+		}
+	};
 
 	const toggleFullscreen = () => {
 		const el = previewEle;
 		if (!el) return;
-		if (document.fullscreenElement) {
+		if (document.fullscreenElement === el) {
 			void document.exitFullscreen();
 		} else {
 			void el.requestFullscreen?.();
@@ -54,6 +68,8 @@ export function SubscribeBoard(props: { session: Promise<Session>; path: Accesso
 			audioContext = new AudioContext();
 			audioDecodeNode = new AudioDecodeNode(audioContext);
 			audioDecodeNode.connect(audioContext.destination);
+			// Apply the initial level (the gain effect below only fires on changes).
+			audioDecodeNode.gain.value = gainValue();
 		}
 		document.addEventListener("fullscreenchange", onFullscreenChange);
 	});
@@ -365,7 +381,7 @@ export function SubscribeBoard(props: { session: Promise<Session>; path: Accesso
 				<button
 					type="button"
 					class="copy-btn"
-					onClick={() => setMuted((m) => !m)}
+					onClick={toggleMute}
 					aria-pressed={muted()}
 					title={muted() ? "Unmute" : "Mute"}
 				>
@@ -377,7 +393,7 @@ export function SubscribeBoard(props: { session: Promise<Session>; path: Accesso
 					min={0}
 					max={1}
 					step={0.01}
-					value={muted() ? 0 : volume()}
+					value={gainValue()}
 					onInput={(e) => {
 						const v = Number(e.currentTarget.value);
 						setVolume(v);
