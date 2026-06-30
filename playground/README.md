@@ -77,8 +77,8 @@ share one `mage cert` certificate, so a single `VITE_CERT_HASH` validates them.
 - **Publish (Echo):** resolution (480p/720p/1080p), framerate (24/30/60), and
   bitrate (0.5–6 Mbps) picks. These shape the camera capture and the encoder;
   stop and restart to apply a change mid-session.
-- **Subscribe:** mute, volume, and fullscreen. These are live player chrome only
-  — MoQ is live, so there is no pause/seek/scrub.
+- **Subscribe:** mute, volume, and fullscreen. These are viewer controls only —
+  MoQ is live, so there is no pause/seek/scrub.
 
 ## Develop
 

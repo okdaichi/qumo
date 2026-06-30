@@ -269,7 +269,7 @@
 	margin-left: auto;
 }
 
-/* --- Encode-quality controls (#135) + live playback chrome (#136) --- */
+/* --- Encode-quality controls (#135) + viewer controls (#136) --- */
 
 .encoder-controls {
 	display: flex;
@@ -301,14 +301,14 @@ input[type="range"] {
 	width: 12ch;
 }
 
-.playback-controls {
+.viewer-controls {
 	display: flex;
 	align-items: center;
 	gap: 8px;
 	margin-top: 12px;
 }
 
-.playback-controls .copy-btn {
+.viewer-controls .copy-btn {
 	font-size: 1rem;
 	line-height: 1;
 	padding: 0.35em 0.6em;

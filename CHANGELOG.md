@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Demo encode-quality + live playback controls (`playground`):** The publish board now exposes resolution (480p/720p/1080p), framerate (24/30/60), and bitrate (0.5–6 Mbps) picks that drive the camera capture and the encoder — stop and restart to apply a change (#135). The subscribe board gained mute, volume, and fullscreen controls (#136). Volume/mute use `AudioDecodeNode.gain` (it extends `GainNode`) and fullscreen uses the Fullscreen API on the video container; both are client-side only — MoQ is live, so there is deliberately no pause/seek/scrub.
+- **Demo encode-quality + viewer controls (`playground`):** The publish board now exposes resolution (480p/720p/1080p), framerate (24/30/60), and bitrate (0.5–6 Mbps) picks that drive the camera capture and the encoder — stop and restart to apply a change (#135). The subscribe board gained mute, volume, and fullscreen viewer controls (#136) — pure client-side (WebAudio gain + Fullscreen API), no transport. Volume/mute use `AudioDecodeNode.gain` (it extends `GainNode`) and fullscreen uses the Fullscreen API on the video container; MoQ is live, so there is deliberately no pause/seek/scrub.
 - **RTMP ingest codec init-data builders (`internal/ingest`):** `BuildAVCDecoderConfigurationRecord` and `BuildAudioSpecificConfig` serialize the parsed AVC/AAC configs into the codec initialization blobs a browser WebCodecs decoder expects as its `description` — the same shape the browser-publish path emits.
 
 ### Changed

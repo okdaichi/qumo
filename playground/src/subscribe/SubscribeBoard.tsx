@@ -11,7 +11,7 @@ export function SubscribeBoard(props: { session: Promise<Session>; path: Accesso
 	const [error, setError] = createSignal<string | null>(null);
 	const [canvasWidth, setCanvasWidth] = createSignal(1280);
 	const [canvasHeight, setCanvasHeight] = createSignal(720);
-	// Live player chrome (#136): pure client-side, no timeline (MoQ is live-only).
+	// Viewer controls (#136): pure client-side, no timeline (MoQ is live-only).
 	const [volume, setVolume] = createSignal(1);
 	const [muted, setMuted] = createSignal(false);
 	const [isFullscreen, setIsFullscreen] = createSignal(false);
@@ -377,7 +377,7 @@ export function SubscribeBoard(props: { session: Promise<Session>; path: Accesso
 				/>
 			</div>
 
-			<div class="playback-controls">
+			<div class="viewer-controls">
 				<button
 					type="button"
 					class="copy-btn"
