@@ -269,6 +269,77 @@
 	margin-left: auto;
 }
 
+/* --- Encode-quality controls (#135) + live playback chrome (#136) --- */
+
+.encoder-controls {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: flex-end;
+	gap: 12px;
+}
+
+.encoder-controls label {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	font-size: 0.8rem;
+	color: var(--text-muted);
+}
+
+.bitrate-control {
+	min-width: 16ch;
+}
+
+.bitrate-value {
+	font-size: 0.75rem;
+	color: var(--text-muted);
+	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+input[type="range"] {
+	accent-color: var(--accent);
+	width: 12ch;
+}
+
+.playback-controls {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-top: 12px;
+}
+
+.playback-controls .copy-btn {
+	font-size: 1rem;
+	line-height: 1;
+	padding: 0.35em 0.6em;
+}
+
+.volume-slider {
+	flex: 1;
+	max-width: 160px;
+	width: auto;
+}
+
+/* Fullscreen: fill the screen with the video, no letterbox distortion. */
+.video-preview:fullscreen {
+	width: 100vw;
+	height: 100vh;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: #000;
+	border-radius: 0;
+}
+
+.video-preview:fullscreen canvas {
+	width: auto !important;
+	max-width: 100% !important;
+	height: 100% !important;
+	aspect-ratio: unset !important;
+	border: none;
+	border-radius: 0;
+}
+
 .btn-start {
 	background: var(--ok);
 	border-color: transparent;

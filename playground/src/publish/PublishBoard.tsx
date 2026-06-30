@@ -25,6 +25,19 @@ function encodeBase64(buf: ArrayBufferLike | ArrayBufferView): string {
 
 const GOP_DURATION = 1000; // 1 second
 
+// Encode-quality presets (#135). Resolution maps to getUserMedia `ideal`
+// constraints (the camera picks the nearest mode); the encoder then encodes at
+// the actual captured dimensions. Bitrate/framerate go straight to the encoder.
+const RESOLUTIONS: Record<string, { width: number; height: number; label: string }> = {
+	"480p": { width: 854, height: 480, label: "480p" },
+	"720p": { width: 1280, height: 720, label: "720p" },
+	"1080p": { width: 1920, height: 1080, label: "1080p" },
+};
+const FRAMERATES = [24, 30, 60] as const;
+const BITRATE_MIN = 500_000;
+const BITRATE_MAX = 6_000_000;
+const BITRATE_STEP = 100_000;
+
 export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 	const mux = props.mux;
 
@@ -33,6 +46,10 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 	const [error, setError] = createSignal<string | null>(null);
 	const [canvasWidth, setCanvasWidth] = createSignal(1280);
 	const [canvasHeight, setCanvasHeight] = createSignal(720);
+	// Encode-quality controls (applied at Start; stop+restart to change mid-session).
+	const [resolution, setResolution] = createSignal<keyof typeof RESOLUTIONS>("720p");
+	const [framerate, setFramerate] = createSignal<(typeof FRAMERATES)[number]>(30);
+	const [bitrate, setBitrate] = createSignal(2_500_000);
 	// Resolved asynchronously by the first effect below; read synchronously by the second effect and startStreaming.
 	const [encoderConfig, setEncoderConfig] = createSignal<VideoEncoderConfig | undefined>();
 
@@ -74,17 +91,19 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 		}
 	});
 
-	// Effect 1: pre-compute encoder config from canvas dimensions.
+	// Effect 1: pre-compute encoder config from canvas dimensions + quality controls.
 	// Skipped while streaming — startStreaming owns the encoder config at that point.
 	createEffect(() => {
 		const width = canvasWidth();
 		const height = canvasHeight();
+		const br = bitrate();
+		const fps = framerate();
 		if (streamingActive || !videoEncodeNode || width <= 0 || height <= 0) return;
 		void videoEncoderConfig({
 			width,
 			height,
-			bitrate: 2_500_000,
-			frameRate: 30,
+			bitrate: br,
+			frameRate: fps,
 			tryHardware: true,
 		})
 			.then(setEncoderConfig);
@@ -123,10 +142,16 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 		}
 
 		// Acquire media first — we need the actual track dimensions before configuring the encoder.
+		// Apply the chosen resolution/framerate as getUserMedia ideal constraints.
+		const target = RESOLUTIONS[resolution()];
 		let stream: MediaStream;
 		try {
 			setError(null);
-			stream = await getMediaStream(sourceType());
+			stream = await getMediaStream(sourceType(), {
+				width: target.width,
+				height: target.height,
+				frameRate: framerate(),
+			});
 		} catch (err) {
 			const errorMessage = err instanceof Error ? err.message : String(err);
 			setError(errorMessage);
@@ -168,13 +193,18 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 		streamingActive = true;
 
 		// Use pre-computed config if dimensions match; otherwise recompute at actual size.
+		const br = bitrate();
+		const fps = framerate();
 		let config = encoderConfig();
-		if (!config || config.width !== actualWidth || config.height !== actualHeight) {
+		if (
+			!config || config.width !== actualWidth || config.height !== actualHeight ||
+			config.bitrate !== br || config.framerate !== fps
+		) {
 			config = await videoEncoderConfig({
 				width: actualWidth,
 				height: actualHeight,
-				bitrate: 2_500_000,
-				frameRate: 30,
+				bitrate: br,
+				frameRate: fps,
 				tryHardware: true,
 			});
 			videoEncodeNode.configure(config);
@@ -352,6 +382,48 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 						<option value="camera">Camera</option>
 						<option value="screen">Screen Share</option>
 					</select>
+				</div>
+
+				<div class="encoder-controls">
+					<label>
+						Quality
+						<select
+							value={resolution()}
+							onChange={(e) =>
+								setResolution(e.currentTarget.value as keyof typeof RESOLUTIONS)}
+							disabled={isStreaming()}
+						>
+							{Object.entries(RESOLUTIONS).map(([id, r]) => (
+								<option value={id}>{r.label}</option>
+							))}
+						</select>
+					</label>
+					<label>
+						FPS
+						<select
+							value={framerate()}
+							onChange={(e) =>
+								setFramerate(
+									Number(e.currentTarget.value) as (typeof FRAMERATES)[number],
+								)}
+							disabled={isStreaming()}
+						>
+							{FRAMERATES.map((fps) => <option value={fps}>{fps}</option>)}
+						</select>
+					</label>
+					<label class="bitrate-control">
+						Bitrate
+						<input
+							type="range"
+							min={BITRATE_MIN}
+							max={BITRATE_MAX}
+							step={BITRATE_STEP}
+							value={bitrate()}
+							onInput={(e) => setBitrate(Number(e.currentTarget.value))}
+							disabled={isStreaming()}
+						/>
+						<span class="bitrate-value">{(bitrate() / 1_000_000).toFixed(1)} Mbps</span>
+					</label>
 				</div>
 
 				<div class="stream-controls">

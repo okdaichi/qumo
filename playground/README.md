@@ -72,6 +72,14 @@ mage demo:push    # opt-in ffmpeg test-pattern pushers → /rtmp/demo, /rtsp/dem
 The RTMP/RTSP tabs also show a copy-pasteable ffmpeg push command. All origins
 share one `mage cert` certificate, so a single `VITE_CERT_HASH` validates them.
 
+## Controls
+
+- **Publish (Echo):** resolution (480p/720p/1080p), framerate (24/30/60), and
+  bitrate (0.5–6 Mbps) picks. These shape the camera capture and the encoder;
+  stop and restart to apply a change mid-session.
+- **Subscribe:** mute, volume, and fullscreen. These are live player chrome only
+  — MoQ is live, so there is no pause/seek/scrub.
+
 ## Develop
 
 ```bash
