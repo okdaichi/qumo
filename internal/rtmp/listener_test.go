@@ -117,14 +117,27 @@ func TestServerConn_HandshakeError(t *testing.T) {
 	conn.Write([]byte("not an rtmp handshake"))
 	conn.Close()
 
-	// Wait for server to accept and fail
+	// A failed handshake must NOT tear down the listener: Accept loops past it
+	// and stays blocked, so a bad client (probe, port scan, half-open conn)
+	// can't kill ingest. Give the server time to process the bad handshake —
+	// the local TCP close → EOF is handled in well under this window.
+	time.Sleep(200 * time.Millisecond)
 	select {
 	case err := <-errCh:
-		if err == nil {
-			t.Fatal("expected error from Accept due to failed handshake")
-		}
+		t.Fatalf("Accept returned for a failed handshake, killing the listener: %v", err)
+	default:
+		// Good: the listener is still alive and accepting.
+	}
+
+	// Closing the listener is the only legitimate way Accept should return.
+	if err := l.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+	select {
+	case <-errCh:
+		// Accept returned on close — expected.
 	case <-time.After(2 * time.Second):
-		t.Fatal("timeout waiting for Accept to return error")
+		t.Fatal("timeout waiting for Accept to return after Close")
 	}
 }
 

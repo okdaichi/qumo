@@ -31,19 +31,25 @@ type Listener struct {
 // Accept waits for and returns the next RTMP connection. The returned [*Conn]
 // has already completed the server-side handshake and is ready for
 // [Conn.AcceptStream].
+//
+// A connection that fails the handshake (a health probe, a port scan, a
+// half-open or otherwise-misbehaving client) is closed and skipped: Accept
+// loops back to the underlying listener rather than returning the error. This
+// keeps one bad client from tearing down the listener — server accept loops
+// treat any Accept error as fatal.
 func (l *Listener) Accept() (*Conn, error) {
-	transport, err := l.rawConnListener.Accept()
-	if err != nil {
-		return nil, err
+	for {
+		transport, err := l.rawConnListener.Accept()
+		if err != nil {
+			return nil, err
+		}
+		conn, err := ServerConn(transport)
+		if err != nil {
+			_ = transport.Close()
+			continue
+		}
+		return conn, nil
 	}
-
-	conn, err := ServerConn(transport)
-	if err != nil {
-		_ = transport.Close()
-		return nil, err
-	}
-
-	return conn, nil
 }
 
 // Close stops the listener. Any blocked [Listener.Accept] calls will return

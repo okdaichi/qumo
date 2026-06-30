@@ -138,7 +138,30 @@ func setupRTMPPipeline(t *testing.T, mux *moqt.TrackMux) (rtmpAddr, serveURL str
 	rtmpAddr = rtmpLn.Addr().String()
 	require.NoError(t, rtmpLn.Close())
 	rtmpSrv := ingest.NewRTMPServer(ingest.RTMPConfig{Addr: rtmpAddr, TrackMux: mux})
-	go func() { _ = rtmpSrv.ListenAndServe(ctx) }()
+	rtmpErr := make(chan error, 1)
+	go func() { rtmpErr <- rtmpSrv.ListenAndServe(ctx) }()
+
+	// Gate ffmpeg on RTMP readiness. ffmpeg has no -reconnect, so connecting
+	// before the listener is bound fails fast and publishes nothing; and a
+	// bind failure (e.g. a TOCTOU port grab between the probe close and
+	// rtmp.Listen) would otherwise surface only as an opaque collect timeout.
+	// Dial the TCP port, and if the server exited before accepting, fail with
+	// the cause rather than retrying to the timeout.
+	require.Eventually(t, func() bool {
+		c, derr := net.DialTimeout("tcp", rtmpAddr, 200*time.Millisecond)
+		if derr == nil {
+			_ = c.Close()
+			return true
+		}
+		select {
+		case err := <-rtmpErr:
+			if err != nil {
+				t.Fatalf("RTMP ingest failed to start: %v", err)
+			}
+		default:
+		}
+		return false
+	}, 5*time.Second, 50*time.Millisecond, "RTMP ingest never became reachable")
 
 	// MoQT subscriber endpoint over WebTransport (HTTP/3), serving subscribers
 	// from the shared TrackMux. Mirrors ingest.RunRTMP exactly.
