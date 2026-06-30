@@ -317,7 +317,6 @@ input[type="range"] {
 .volume-slider {
 	flex: 1;
 	max-width: 160px;
-	width: 12ch; /* matches the global input[type="range"]; flex-basis:0% from flex:1 wins anyway */
 }
 
 /* Fullscreen: fill the screen with the video, no letterbox distortion. */

@@ -30,9 +30,13 @@ export function SubscribeBoard(props: { session: Promise<Session>; path: Accesso
 	const gainValue: Accessor<number> = () => (muted() ? 0 : volume());
 
 	createEffect(() => {
+		// Read gainValue() FIRST so the effect subscribes to muted/volume even
+		// when audioDecodeNode isn't set yet on the first run — otherwise the
+		// early return would track nothing and the effect would never re-run,
+		// leaving mute/volume non-functional.
+		const g = gainValue();
 		const node = audioDecodeNode;
-		if (!node) return;
-		node.gain.value = gainValue();
+		if (node) node.gain.value = g;
 	});
 
 	// Unmuting when volume has been dragged to 0 would otherwise leave the

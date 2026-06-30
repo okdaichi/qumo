@@ -194,23 +194,22 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 		// re-firing and calling videoEncodeNode.configure() a second time.
 		streamingActive = true;
 
-		// Use pre-computed config if dimensions match; otherwise recompute at actual size.
+		// Always (re)compute the encoder config at the actual captured dimensions
+		// with the current quality picks. Comparing against the pre-computed config
+		// is unreliable — videoEncoderConfig returns WebCodecs-normalized values
+		// (bitrate scaled per codec), and Effect 1 deliberately doesn't track
+		// bitrate/framerate — so always applying the live values here is both
+		// simpler and correct.
 		const br = bitrate();
 		const fps = framerate();
-		let config = encoderConfig();
-		if (
-			!config || config.width !== actualWidth || config.height !== actualHeight ||
-			config.bitrate !== br || config.framerate !== fps
-		) {
-			config = await videoEncoderConfig({
-				width: actualWidth,
-				height: actualHeight,
-				bitrate: br,
-				frameRate: fps,
-				tryHardware: true,
-			});
-			videoEncodeNode.configure(config);
-		}
+		const config = await videoEncoderConfig({
+			width: actualWidth,
+			height: actualHeight,
+			bitrate: br,
+			frameRate: fps,
+			tryHardware: true,
+		});
+		videoEncodeNode.configure(config);
 		// Update canvas display signals — Effects 1/2 are guarded so these won't
 		// trigger encoder reconfiguration.
 		setEncoderConfig(config);
