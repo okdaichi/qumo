@@ -1,4 +1,4 @@
-import { type Accessor, createEffect, createSignal, onMount, Show, untrack } from "solid-js";
+import { type Accessor, createSignal, onMount, Show } from "solid-js";
 import { type BroadcastPath, type GroupWriter, TrackMux } from "@qumo/moq";
 import { Broadcast, type Track } from "@qumo/moq/msf";
 import {
@@ -50,8 +50,6 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 	const [resolution, setResolution] = createSignal<keyof typeof RESOLUTIONS>("720p");
 	const [framerate, setFramerate] = createSignal<(typeof FRAMERATES)[number]>(30);
 	const [bitrate, setBitrate] = createSignal(2_500_000);
-	// Resolved asynchronously by the first effect below; read synchronously by the second effect and startStreaming.
-	const [encoderConfig, setEncoderConfig] = createSignal<VideoEncoderConfig | undefined>();
 
 	let canvasEle: HTMLCanvasElement | undefined;
 	let lastKeyframeTime = 0;
@@ -60,13 +58,8 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 	let videoEncodeNode: VideoEncodeNode | undefined;
 	let audioContext: AudioContext | undefined;
 	let audioEncodeNode: AudioEncodeNode | undefined;
-	// Active Broadcast instance — set when streaming starts; cleared on stop.
-	let broadcastRef: Broadcast | undefined;
 	// Audio track catalog entry — set in startStreaming if audio is available.
 	let audioTrackDef: Track | undefined;
-	// Guards Effects 1 and 2 from firing while streaming is active.
-	// Using a plain ref (not signal) so that toggling it never itself triggers effects.
-	let streamingActive = false;
 
 	onMount(() => {
 		if (canvasEle) {
@@ -88,47 +81,6 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 
 			audioContext = new AudioContext({ sampleRate: 48000 });
 			audioEncodeNode = new AudioEncodeNode(audioContext);
-		}
-	});
-
-	// Effect 1: pre-compute encoder config from canvas dimensions. Reads
-	// bitrate/framerate untracked so dragging those sliders pre-stream doesn't
-	// refire this (expensive, async) effect ~once per step — the live values are
-	// applied in startStreaming. Skipped while streaming.
-	createEffect(() => {
-		const width = canvasWidth();
-		const height = canvasHeight();
-		if (streamingActive || !videoEncodeNode || width <= 0 || height <= 0) return;
-		const br = untrack(bitrate);
-		const fps = untrack(framerate);
-		void videoEncoderConfig({
-			width,
-			height,
-			bitrate: br,
-			frameRate: fps,
-			tryHardware: true,
-		})
-			.then(setEncoderConfig);
-	});
-
-	// Effect 2: applies the resolved config to the encoder (pre-stream only).
-	// Skipped while streaming — the encoder is already correctly configured by startStreaming.
-	createEffect(() => {
-		const config = encoderConfig();
-		if (streamingActive || !config || !videoEncodeNode) return;
-		videoEncodeNode.configure(config);
-		if (broadcastRef) {
-			const updatedTrack: Track = {
-				name: "video",
-				role: "video",
-				packaging: "loc",
-				isLive: true,
-				codec: config.codec,
-				width: config.width,
-				height: config.height,
-			};
-			const tracks: Track[] = audioTrackDef ? [updatedTrack, audioTrackDef] : [updatedTrack];
-			broadcastRef.setCatalog({ version: 1, tracks }).catch(console.error);
 		}
 	});
 
@@ -190,16 +142,10 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 			actualHeight = s?.height ?? canvasHeight();
 		}
 
-		// Lock effects out before touching any signals — prevents Effect 1/2 from
-		// re-firing and calling videoEncodeNode.configure() a second time.
-		streamingActive = true;
-
 		// Always (re)compute the encoder config at the actual captured dimensions
-		// with the current quality picks. Comparing against the pre-computed config
-		// is unreliable — videoEncoderConfig returns WebCodecs-normalized values
-		// (bitrate scaled per codec), and Effect 1 deliberately doesn't track
-		// bitrate/framerate — so always applying the live values here is both
-		// simpler and correct.
+		// with the current quality picks. videoEncoderConfig returns
+		// WebCodecs-normalized values (bitrate scaled per codec), so don't cache
+		// or compare — just apply the live values here at Start.
 		const br = bitrate();
 		const fps = framerate();
 		const config = await videoEncoderConfig({
@@ -210,9 +156,7 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 			tryHardware: true,
 		});
 		videoEncodeNode.configure(config);
-		// Update canvas display signals — Effects 1/2 are guarded so these won't
-		// trigger encoder reconfiguration.
-		setEncoderConfig(config);
+		// Size the preview canvas to the actual stream dimensions.
 		setCanvasWidth(actualWidth);
 		setCanvasHeight(actualHeight);
 
@@ -254,7 +198,6 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 			? [initialTrack, audioTrackDef]
 			: [initialTrack];
 		const broadcast = new Broadcast({ version: 1, tracks: initialTracks });
-		broadcastRef = broadcast;
 
 		// Register video track handler — runs the encoder loop when subscribed.
 		await broadcast.registerTrack(initialTrack, {
@@ -354,9 +297,7 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 	};
 
 	const stopStreaming = () => {
-		streamingActive = false;
 		cancelPublish();
-		broadcastRef = undefined;
 		audioTrackDef = undefined;
 		audioContext?.suspend().catch(() => {});
 		if (sourceNode) {
