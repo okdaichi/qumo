@@ -39,6 +39,13 @@ const BITRATE_MIN = 500_000;
 const BITRATE_MAX = 6_000_000;
 const BITRATE_STEP = 100_000;
 
+// Media-source options for the segmented switcher. `label` is also used for the
+// "Streaming from" status line so it doesn't show the raw signal value.
+const SOURCES: { id: MediaSourceType; label: string; icon: string }[] = [
+	{ id: "camera", label: "Camera", icon: "📷" },
+	{ id: "screen", label: "Screen", icon: "🖥️" },
+];
+
 export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 	const mux = props.mux;
 
@@ -325,16 +332,22 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 
 			<div class="controls">
 				<div class="source-selector">
-					<label for="source-type">Media Source:</label>
-					<select
-						id="source-type"
-						value={sourceType()}
-						onChange={(e) => setSourceType(e.currentTarget.value as MediaSourceType)}
-						disabled={isStreaming()}
-					>
-						<option value="camera">Camera</option>
-						<option value="screen">Screen Share</option>
-					</select>
+					<label>Media Source</label>
+					<div class="segmented" role="group" aria-label="Media source">
+						{SOURCES.map((s) => (
+							<button
+								type="button"
+								class="segmented-btn"
+								classList={{ active: sourceType() === s.id }}
+								aria-pressed={sourceType() === s.id}
+								disabled={isStreaming()}
+								onClick={() => setSourceType(s.id)}
+								title={isStreaming() ? "Stop streaming to switch source" : s.label}
+							>
+								<span aria-hidden="true">{s.icon}</span> {s.label}
+							</button>
+						))}
+					</div>
 				</div>
 
 				<div class="encoder-controls">
@@ -401,7 +414,8 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 
 			<Show when={isStreaming()}>
 				<div class="status-message">
-					Streaming from: {sourceType()}
+					Streaming from:{" "}
+					{SOURCES.find((s) => s.id === sourceType())?.label ?? sourceType()}
 				</div>
 			</Show>
 
