@@ -311,7 +311,7 @@ func TestConn_WriteInterleavedFrame(t *testing.T) {
 	}
 }
 
-func TestConn_CloseAndRemoteAddr(t *testing.T) {
+func TestConn_RemoteAddr(t *testing.T) {
 	mc := newMockConn()
 	conn := newConn(mc)
 
@@ -322,6 +322,11 @@ func TestConn_CloseAndRemoteAddr(t *testing.T) {
 	if addr.String() != "127.0.0.1:5678" {
 		t.Errorf("RemoteAddr() = %v, want %v", addr.String(), "127.0.0.1:5678")
 	}
+}
+
+func TestConn_Close(t *testing.T) {
+	mc := newMockConn()
+	conn := newConn(mc)
 
 	err := conn.Close()
 	if err != nil {
