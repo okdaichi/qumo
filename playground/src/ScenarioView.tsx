@@ -3,12 +3,8 @@ import { connect, DefaultTrackMux } from "@qumo/moq";
 import type { Session } from "@qumo/moq";
 import { PublishBoard } from "./publish/PublishBoard.tsx";
 import { SubscribeBoard } from "./subscribe/SubscribeBoard.tsx";
-import {
-	type ConnectionState,
-	ConnectionStatus,
-	friendlyConnError,
-	sanitizeReason,
-} from "./ConnectionStatus.tsx";
+import { type ConnectionState, ConnectionStatus, friendlyConnError } from "./ConnectionStatus.tsx";
+import { sanitizeReason } from "./errors.ts";
 import { buildTransportOptions } from "./cert.ts";
 import { relayUrlFor, type ScenarioId, SCENARIOS } from "./scenarios.ts";
 import { PushInstructions } from "./PushInstructions.tsx";
