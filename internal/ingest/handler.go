@@ -40,8 +40,10 @@ type ingestHandler struct {
 	once      sync.Once
 }
 
+var newBroadcastFunc = msf.NewBroadcast
+
 func newIngestHandler(ctx context.Context) (*ingestHandler, error) {
-	b, err := msf.NewBroadcast(msf.Catalog{Version: 1})
+	b, err := newBroadcastFunc(msf.Catalog{Version: 1})
 	if err != nil {
 		return nil, fmt.Errorf("initializing broadcast: %w", err)
 	}

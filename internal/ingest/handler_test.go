@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
 
 	"github.com/qumo-dev/gomoqt/moqt"
+	"github.com/qumo-dev/gomoqt/msf"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -330,6 +332,17 @@ func TestNewIngestHandler(t *testing.T) {
 	require.NotNil(t, h.broadcast)
 	require.NotNil(t, h.video)
 	require.NotNil(t, h.audio)
+}
+
+func TestNewIngestHandler_BroadcastError(t *testing.T) {
+	orig := newBroadcastFunc
+	defer func() { newBroadcastFunc = orig }()
+	newBroadcastFunc = func(msf.Catalog) (*msf.Broadcast, error) {
+		return nil, fmt.Errorf("mock error")
+	}
+
+	_, err := newIngestHandler(context.Background())
+	require.ErrorContains(t, err, "initializing broadcast: mock error")
 }
 
 func TestIngestHandler_Close(t *testing.T) {
