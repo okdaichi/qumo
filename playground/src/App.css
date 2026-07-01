@@ -41,9 +41,9 @@
 	padding: 12px 16px;
 }
 
-/* --- Scenario picker (#137) --- */
+/* --- Shared segmented control (scenario picker #137, publish source) --- */
 
-.scenario-tabs {
+.segmented {
 	display: inline-flex;
 	flex-wrap: wrap;
 	gap: 4px;
@@ -53,7 +53,7 @@
 	padding: 4px;
 }
 
-.scenario-tab {
+.segmented-btn {
 	border: 1px solid transparent;
 	background: transparent;
 	color: var(--text-muted);
@@ -63,14 +63,19 @@
 	border-radius: 7px;
 }
 
-.scenario-tab:hover:not(.active) {
+.segmented-btn:hover:not(.active):not(:disabled) {
 	color: var(--text);
 }
 
-.scenario-tab.active {
+.segmented-btn.active {
 	background: var(--accent);
 	color: #fff;
 	border-color: transparent;
+}
+
+.segmented-btn:disabled {
+	cursor: not-allowed;
+	opacity: 0.5;
 }
 
 /* --- Shared path control (#137) --- */

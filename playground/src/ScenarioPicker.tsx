@@ -6,13 +6,13 @@ export function ScenarioPicker(props: {
 	onPick: (id: ScenarioId) => void;
 }) {
 	return (
-		<div class="scenario-tabs" role="tablist" aria-label="Demo scenario">
+		<div class="segmented" role="tablist" aria-label="Demo scenario">
 			{SCENARIO_ORDER.map((id) => (
 				<button
 					type="button"
 					role="tab"
 					aria-selected={props.scenario === id}
-					class="scenario-tab"
+					class="segmented-btn"
 					classList={{ active: props.scenario === id }}
 					onClick={() => props.onPick(id)}
 				>
