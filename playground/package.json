@@ -5,11 +5,11 @@
 	"type": "module",
 	"scripts": {
 		"dev": "vite",
-		"build": "tsc -b && vite build",
+		"build": "deno check src && vite build",
 		"preview": "vite preview"
 	},
 	"dependencies": {
-		"@deno/vite-plugin": "^1.0.6",
+		"@deno/vite-plugin": "^2.0.2",
 		"solid-js": "^1.9.12"
 	},
 	"devDependencies": {

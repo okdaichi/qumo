@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Playground production UI build repaired (`playground`):** `npm run build` / `mage webbuild` was broken by two pre-existing issues. (1) `@deno/vite-plugin` 1.0.6 crashed under vite 7 / deno 2.8 (`resolveViteSpecifier: Cannot read properties of undefined (reading 'startsWith')`) — upgraded to `^2.0.2`, which supports vite 5–8 and current deno, so `vite build` now succeeds. (2) the build's `tsc -b` type-check could not resolve jsr imports (`@qumo/moq`, `@okdaichi/*`) because standalone `tsc` ignores `deno.json`'s import map; the build script now type-checks via `deno check src` (which resolves jsr and passes cleanly) before `vite build`.
 - **RTSP ingest now works with ffmpeg (`internal/ingest`):** Two protocol bugs surfaced by the RTSP interop test, either of which aborted every ffmpeg RTSP publish: (1) the SETUP handler parsed the Transport header with a strict `Sscanf("RTP/AVP/TCP;interleaved=%d-%d")` that rejected ffmpeg's actual `RTP/AVP/TCP;unicast;interleaved=0-1` (extra `;unicast;`) with 400 Bad Request — now parsed robustly via `parseInterleavedChannels`; (2) AAC track detection was case-sensitive (`mpeg4-generic`) while ffmpeg emits `MPEG4-GENERIC` — codec detection is now case-insensitive, and an empty SDP `a=control` no longer matches every SETUP.
 
 ### Changed
