@@ -333,10 +333,8 @@ func TestConn_Close(t *testing.T) {
 
 	serverConnCh := make(chan net.Conn, 1)
 	go func() {
-		c, err := ln.Accept()
-		if err == nil {
-			serverConnCh <- c
-		}
+		c, _ := ln.Accept()
+		serverConnCh <- c
 	}()
 
 	clientConn, err := net.Dial("tcp", ln.Addr().String())
