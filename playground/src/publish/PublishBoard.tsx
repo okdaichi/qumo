@@ -108,7 +108,9 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 				frameRate: framerate(),
 			});
 		} catch (err) {
-			setError(friendlyMessage(err));
+			// Pass the source type so a denied screen-share reads as screen-share,
+			// not "Camera or microphone".
+			setError(friendlyMessage(err, sourceType()));
 			console.error("Failed to start streaming:", err);
 			return;
 		}

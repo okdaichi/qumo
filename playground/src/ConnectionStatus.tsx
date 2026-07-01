@@ -1,5 +1,6 @@
 import { Show } from "solid-js";
 import type { CertHashProblem } from "./cert.ts";
+import { sanitizeReason } from "./errors.ts";
 
 // WebTransport session lifecycle as surfaced to the user (issue #134).
 // "connecting" until the connect() promise settles; "connected" on success;
@@ -51,6 +52,8 @@ export function ConnectionStatus(props: {
 // Map a raw WebTransport connect failure to a concise, actionable message.
 // Returns null when the failure is cert-related — ConnectionStatus already
 // shows the cert remediation, so a duplicate reason would only clutter the bar.
+// (When certHashProblem is null the cert hash IS configured correctly, so we
+// don't mention it here — only suggest checking that the relay is reachable.)
 export function friendlyConnError(
 	err: unknown,
 	certHashProblem: CertHashProblem | null,
@@ -58,22 +61,5 @@ export function friendlyConnError(
 	if (certHashProblem) return null;
 	const raw = err instanceof Error ? err.message : String(err);
 	const cleaned = sanitizeReason(raw, "the relay did not accept the connection");
-	return `Could not connect to the relay: ${cleaned}. Check that it's running and that VITE_CERT_HASH is set.`;
-}
-
-// Defensively clean a relay-provided close reason before display. SolidJS
-// escapes text interpolation (so there's no HTML-injection sink), but the relay
-// is an untrusted peer — strip control characters and clamp the length so it
-// can't flood the status bar. Falls back to `fallback` when nothing remains.
-export function sanitizeReason(reason: string | undefined, fallback: string): string {
-	const isPrintable = (ch: string) => {
-		const c = ch.codePointAt(0)!;
-		return c >= 0x20 && c !== 0x7f;
-	};
-	const cleaned = Array.from(reason ?? "")
-		.filter(isPrintable)
-		.join("")
-		.trim()
-		.slice(0, 200);
-	return cleaned || fallback;
+	return `Could not connect to the relay: ${cleaned}. Check that it's running and try again.`;
 }
