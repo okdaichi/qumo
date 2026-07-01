@@ -22,6 +22,11 @@ linters:
       - linters: [gosec]
         path: "internal/cli/"
         text: "G304"
+      # False positive: cert file paths come from a user-configured dir (CLI flag /
+      # QUMO_PLAYGROUND_CERT_DIR env / per-user cache), not external user input.
+      - linters: [gosec]
+        path: "internal/playground/"
+        text: "G304"
       # False positive: slice bounds are guaranteed by the RTMP/QUIC encoding protocol logic
       - linters: [gosec]
         text: "G602"

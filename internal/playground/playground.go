@@ -98,7 +98,9 @@ func Run(ctx context.Context, o Options) error {
 	// Print the URL the user should open. When the UI binds a wildcard address
 	// (public hosting), fall back to "localhost" so the printed URL is at least
 	// locally reachable; the public URL is whatever the user/proxy serves.
-	os.Stdout.WriteString(uiDisplayURL(o.UIAddr) + "\n")
+	if _, err := os.Stdout.WriteString(uiDisplayURL(o.UIAddr) + "\n"); err != nil {
+		slog.Warn("failed to write playground URL to stdout", "err", err)
+	}
 
 	// 5. Block until a signal arrives or either server exits on its own.
 	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)

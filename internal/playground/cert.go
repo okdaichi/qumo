@@ -55,7 +55,7 @@ func EnsureCert(dir string) (*Cert, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return nil, fmt.Errorf("create cert dir %q: %w", dir, err)
 	}
 
