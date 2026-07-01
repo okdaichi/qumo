@@ -4,6 +4,7 @@ import { type Session, SubscribeErrorCode } from "@qumo/moq";
 import { parseCatalog } from "@qumo/moq/msf";
 import { deserializeMediaFrame } from "../publish/media_frame.ts";
 import { background, withCancel } from "@okdaichi/golikejs/context";
+import { friendlyMessage } from "../errors.ts";
 import type { BroadcastPath } from "@qumo/moq";
 
 export function SubscribeBoard(props: { session: Promise<Session>; path: Accessor<string> }) {
@@ -111,7 +112,13 @@ export function SubscribeBoard(props: { session: Promise<Session>; path: Accesso
 				async ([catalogTrack, catalogErr]) => {
 					if (catalogErr) {
 						if (!isSubscribed()) return;
+						// Catalog TrackNotFound is the common "nobody is publishing to
+						// this path yet" case — friendlyMessage maps it to actionable text.
+						setError(friendlyMessage(catalogErr));
 						console.warn("[Subscribe] catalog subscribe failed:", catalogErr);
+						// No catalog => no stream to recover; drop back to Start so the
+						// user can retry without clicking Stop first.
+						setIsSubscribed(false);
 						return;
 					}
 
@@ -181,7 +188,9 @@ export function SubscribeBoard(props: { session: Promise<Session>; path: Accesso
 				([videoTrack, videoErr]) => {
 					if (videoErr) {
 						if (!isSubscribed()) return;
+						setError(friendlyMessage(videoErr));
 						console.warn("[Subscribe] video subscribe failed:", videoErr);
+						setIsSubscribed(false);
 						return;
 					}
 
@@ -315,8 +324,7 @@ export function SubscribeBoard(props: { session: Promise<Session>; path: Accesso
 
 			setIsSubscribed(true);
 		} catch (err) {
-			const errorMessage = err instanceof Error ? err.message : String(err);
-			setError(errorMessage);
+			setError(friendlyMessage(err));
 			console.error("Failed to start subscribing:", err);
 			setIsSubscribed(false);
 		}
@@ -353,9 +361,7 @@ export function SubscribeBoard(props: { session: Promise<Session>; path: Accesso
 			</div>
 
 			<Show when={error()}>
-				<div class="error-message">
-					Error: {error()}
-				</div>
+				<div class="error-message">{error()}</div>
 			</Show>
 
 			<Show when={isSubscribed()}>

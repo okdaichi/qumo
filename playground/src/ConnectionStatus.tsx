@@ -57,7 +57,8 @@ export function friendlyConnError(
 ): string | null {
 	if (certHashProblem) return null;
 	const raw = err instanceof Error ? err.message : String(err);
-	return `Could not connect to the relay: ${raw}`;
+	const cleaned = sanitizeReason(raw, "the relay did not accept the connection");
+	return `Could not connect to the relay: ${cleaned}. Check that it's running and that VITE_CERT_HASH is set.`;
 }
 
 // Defensively clean a relay-provided close reason before display. SolidJS

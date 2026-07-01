@@ -50,7 +50,14 @@ export function ScenarioView(props: {
 					setConnState("closed");
 				},
 				(e) => {
-					setConnError(e instanceof Error ? e.message : String(e));
+					// Transport errors can carry opaque quic/TLS internals; strip
+					// control chars and clamp the length before display.
+					setConnError(
+						sanitizeReason(
+							e instanceof Error ? e.message : String(e),
+							"Connection failed",
+						),
+					);
 					setConnState("failed");
 				},
 			);

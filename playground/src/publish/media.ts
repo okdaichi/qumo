@@ -39,8 +39,11 @@ export const getMediaStream = async (
 				throw new Error(`Unsupported media source type: ${type}`);
 		}
 	} catch (err) {
-		throw new Error(
-			`Failed to get ${type} media: ${err instanceof Error ? err.message : String(err)}`,
-		);
+		// Rethrow the ORIGINAL error (typically a DOMException) unchanged.
+		// The UI classifies these by name (NotAllowedError, NotFoundError, …)
+		// into an actionable message, so wrapping them in a plain Error — which
+		// drops .name — would defeat that. We only log the source type here.
+		console.error(`[media] get${type} stream failed:`, err);
+		throw err;
 	}
 };
