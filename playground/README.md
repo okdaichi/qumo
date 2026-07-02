@@ -139,8 +139,12 @@ share one `mage cert` certificate, so a single `VITE_CERT_HASH` validates them.
 
 ```bash
 deno task dev      # Vite dev server
-npm run build      # type-check + production build to dist/
-npm run preview    # preview the production build
+deno task build    # type-check (deno check) + production build to dist/
+deno task preview  # preview the production build
+
+Install deps first with `deno install` (the project is Deno-managed —
+`deno.lock` is the source of truth; `npm install` cannot resolve the
+`@deno/vite-plugin` jsr deps).
 ```
 
 ## Project layout

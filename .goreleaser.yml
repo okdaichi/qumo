@@ -4,6 +4,11 @@ project_name: qumo
 before:
   hooks:
     - go mod tidy
+    # Build the playground web UI so the Go binary embeds the real UI via
+    # //go:embed all:playground/dist (otherwise it embeds only the placeholder).
+    # Needs deno (jsr deps + `deno check`) and node (Vite) on the runner.
+    - cd playground && deno install
+    - cd playground && deno task build
 
 builds:
   - id: qumo
