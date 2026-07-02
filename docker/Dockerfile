@@ -2,11 +2,15 @@
 # The Go binary embeds playground/dist via //go:embed all:playground/dist, so
 # the real UI must exist before `go build`. The build needs Deno (jsr deps +
 # `deno check`) and Node (Vite), so Deno is installed into a Node base image.
+# Deno has no official multi-arch alpine image, so install it via the official
+# installer, which downloads the matching arch binary (amd64/arm64). The version
+# is pinned for reproducible release builds and must match .github/workflows/release.yml.
+ARG DENO_VERSION=2.8.1
 FROM node:22-alpine AS frontend
-RUN apk add --no-cache curl unzip \
- && curl -fsSL https://deno.land/install.sh | sh \
- && cp /root/.deno/bin/deno /usr/local/bin/deno \
- && deno --version
+RUN apk add --no-cache curl unzip ; \
+    curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/root/.deno sh -s v${DENO_VERSION} ; \
+    test -x /root/.deno/bin/deno
+ENV PATH="/root/.deno/bin:${PATH}"
 WORKDIR /ui
 COPY playground/ ./
 RUN deno install && deno task build

@@ -654,11 +654,23 @@ func Web() error {
 func WebBuild() error {
 	fmt.Println("🔨 Building web demo...")
 
-	cmd := exec.Command("npm", "run", "build")
-	cmd.Dir = "playground"
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	// The project is Deno-managed (deno.lock is the source of truth), so install
+	// deps with `deno install` — `npm install` cannot resolve the @deno/vite-plugin
+	// jsr deps — then run the build script (`deno check src && vite build`).
+	webDir := "playground"
+	for _, args := range [][]string{
+		{"deno", "install"},
+		{"deno", "task", "build"},
+	} {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = webDir
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // WebClean cleans web build artifacts
