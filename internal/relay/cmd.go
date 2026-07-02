@@ -22,6 +22,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/quic-go/quic-go"
 	"github.com/qumo-dev/gomoqt/moqt"
+	"github.com/qumo-dev/qumo/internal/cors"
 )
 
 // sanitizeLog strips CR and LF from s to prevent log injection.
@@ -52,6 +53,10 @@ func sanitizeLog(s string) string {
 //	REMOTE_AUTH_TOKEN        - bearer token for remote resolver
 //	REMOTE_RESOLVE_INTERVAL  - remote discovery polling interval (default: "15s")
 //	REMOTE_TLS_ENABLED       - "true" to enable TLS for remote resolver
+//	CORS_ALLOWED_ORIGINS     - comma-separated WebTransport origins allowed to
+//	                           connect (default: same-origin only; "*" allows any).
+//	                           Set this when serving the UI from a different
+//	                           origin than the relay (e.g. a Vite dev server).
 func Run(_ []string) error {
 	addr := envOr("RELAY_ADDR", "0.0.0.0:4433")
 	certFile := envOr("CERT_FILE", "certs/server.crt")
@@ -198,6 +203,7 @@ func Run(_ []string) error {
 		},
 		Config:           &relayCfg,
 		TrackMux:         trackMux,
+		AllowedOrigins:   cors.LoadAllowed(),
 		localResolver:    localResolver,
 		remoteResolver:   remoteResolver,
 		credentialClient: credentialClient,

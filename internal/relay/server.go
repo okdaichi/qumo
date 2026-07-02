@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/qumo-dev/gomoqt/moqt"
+	"github.com/qumo-dev/qumo/internal/cors"
 )
 
 // authTrackName is the well-known MoQ track name on which publishers send
@@ -27,6 +28,12 @@ type Server struct {
 	MOQDialer *moqt.Dialer
 	Config    *Config
 	TrackMux  *moqt.TrackMux
+
+	// AllowedOrigins is the list of WebTransport origins the browser-facing
+	// handler accepts (CSWT mitigation). nil/empty = same-origin only (secure
+	// default); "*" allows any. Populated from CORS_ALLOWED_ORIGINS by the
+	// relay command. See internal/cors.
+	AllowedOrigins []string
 
 	// credentialClient is non-nil when QUMO_CREDENTIAL_URL is configured.
 	// It handles credential introspection and usage reporting.
@@ -91,9 +98,10 @@ func (s *Server) init() {
 		s.MOQServer.TrackMux = s.TrackMux
 
 		s.webtransportHandler = &moqt.WebTransportHandler{
-			TrackMux: s.TrackMux,
-			Handler:  moqt.HandleFunc(s.Relay),
-			Logger:   s.MOQServer.Logger,
+			TrackMux:    s.TrackMux,
+			Handler:     moqt.HandleFunc(s.Relay),
+			Logger:      s.MOQServer.Logger,
+			CheckOrigin: cors.NewChecker(s.AllowedOrigins),
 		}
 
 		// ConnContext intercepts each accepted QUIC connection before the MOQ
