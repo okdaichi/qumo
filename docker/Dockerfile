@@ -1,16 +1,24 @@
 # Stage 1: build the playground web UI.
 # The Go binary embeds playground/dist via //go:embed all:playground/dist, so
 # the real UI must exist before `go build`. The build needs Deno (jsr deps +
-# `deno check`) and Node (Vite), so Deno is installed into a Node base image.
-# Deno has no official multi-arch alpine image, so install it via the official
-# installer, which downloads the matching arch binary (amd64/arm64). The version
-# is pinned for reproducible release builds and must match .github/workflows/release.yml.
-ARG DENO_VERSION=2.8.1
+# `deno check`) and Node (Vite). Deno has no official multi-arch alpine image and
+# deno.land's install.sh is unreliable, so download the pinned binary directly
+# from GitHub releases, picking the right arch. DENO_VERSION must match
+# .github/workflows/release.yml.
 FROM node:22-alpine AS frontend
-RUN apk add --no-cache curl unzip ; \
-    curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/root/.deno sh -s v${DENO_VERSION} ; \
-    test -x /root/.deno/bin/deno
-ENV PATH="/root/.deno/bin:${PATH}"
+ARG DENO_VERSION=2.8.1
+RUN apk add --no-cache curl unzip \
+ && case "$(uname -m)" in \
+      x86_64)  DARCH=x86_64-unknown-linux-gnu ;; \
+      aarch64) DARCH=aarch64-unknown-linux-gnu ;; \
+      *) echo "unsupported arch: $(uname -m)"; exit 1 ;; \
+    esac \
+ && curl -fsSL -o /tmp/deno.zip \
+      "https://github.com/denoland/deno/releases/download/v${DENO_VERSION}/deno-${DARCH}.zip" \
+ && unzip -o /tmp/deno.zip -d /usr/local/bin \
+ && rm /tmp/deno.zip \
+ && deno --version \
+ && deno --version | grep -q "${DENO_VERSION}"
 WORKDIR /ui
 COPY playground/ ./
 RUN deno install && deno task build
