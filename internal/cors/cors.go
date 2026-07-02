@@ -10,6 +10,7 @@
 package cors
 
 import (
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -18,8 +19,17 @@ import (
 )
 
 // EnvVar names the environment variable holding the comma-separated list of
-// allowed WebTransport origins. The entry "*" allows any origin.
+// allowed WebTransport origins. The entry "*" allows any origin; the entry
+// [SameHost] allows any port on the request's own host.
 const EnvVar = "CORS_ALLOWED_ORIGINS"
+
+// SameHost is a special allow-list entry that accepts any request whose Origin
+// host matches the request Host, ignoring the port. It suits deployments where
+// the UI and the WebTransport server run on the same host but different ports —
+// e.g. qumo playground, which derives the relay URL per-request from the
+// browser's own Host, so Origin.Host and the relay Host always share a host.
+// It is stricter than "*": a different host is still rejected.
+const SameHost = "same-host"
 
 // LoadAllowed reads the allowed-origin list from EnvVar. Returns nil when unset
 // — the secure same-origin default (see [NewChecker]).
@@ -38,8 +48,10 @@ func LoadAllowed() []string {
 // accepted when:
 //   - it carries no Origin header (non-browser clients: SDKs, CLIs),
 //   - allowed contains the wildcard "*",
-//   - its Origin is listed in allowed, or
-//   - its Origin host matches the request Host (same-origin browser request).
+//   - its Origin is listed in allowed,
+//   - allowed contains [SameHost] and the Origin host equals the request Host
+//     (port-insensitive), or
+//   - its Origin host matches the request Host including port (same-origin).
 //
 // An empty allowed slice mirrors webtransport-go's default checkSameOrigin:
 // only headerless and same-origin requests pass. This is the secure default;
@@ -47,6 +59,7 @@ func LoadAllowed() []string {
 // (e.g. a separate Vite dev server or a multi-origin deployment).
 func NewChecker(allowed []string) func(*http.Request) bool {
 	wildcard := slices.Contains(allowed, "*")
+	sameHost := slices.Contains(allowed, SameHost)
 	allowedSet := make(map[string]struct{}, len(allowed))
 	for _, o := range allowed {
 		allowedSet[o] = struct{}{}
@@ -66,6 +79,23 @@ func NewChecker(allowed []string) func(*http.Request) bool {
 		if err != nil {
 			return false
 		}
+		// Same-host (port-insensitive) mode, e.g. qumo playground where the UI
+		// and relay share a host but differ by port.
+		if sameHost && equalHost(u.Host, r.Host) {
+			return true
+		}
 		return strings.EqualFold(u.Host, r.Host)
 	}
+}
+
+// equalHost reports whether two host[:port] strings refer to the same host,
+// ignoring any port (e.g. "localhost:5178" and "localhost:4433" match).
+func equalHost(a, b string) bool {
+	if ah, _, err := net.SplitHostPort(a); err == nil {
+		a = ah
+	}
+	if bh, _, err := net.SplitHostPort(b); err == nil {
+		b = bh
+	}
+	return strings.EqualFold(a, b)
 }

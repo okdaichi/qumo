@@ -54,7 +54,8 @@ func sanitizeLog(s string) string {
 //	REMOTE_RESOLVE_INTERVAL  - remote discovery polling interval (default: "15s")
 //	REMOTE_TLS_ENABLED       - "true" to enable TLS for remote resolver
 //	CORS_ALLOWED_ORIGINS     - comma-separated WebTransport origins allowed to
-//	                           connect (default: same-origin only; "*" allows any).
+//	                           connect (default: same-origin only; "*" allows any;
+//	                           "same-host" allows any port on the request's host).
 //	                           Set this when serving the UI from a different
 //	                           origin than the relay (e.g. a Vite dev server).
 func Run(_ []string) error {
