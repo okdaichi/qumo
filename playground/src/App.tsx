@@ -5,10 +5,9 @@ function App() {
 	return (
 		<div class="app">
 			<header class="app-header">
-				<h1>{import.meta.env.VITE_APP_NAME ?? "qumo"}</h1>
+				<h1>qumo</h1>
 				<p class="app-subtitle">AV live streaming over MoQ / WebTransport</p>
 			</header>
-
 			<Dashboard />
 		</div>
 	);

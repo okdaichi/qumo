@@ -126,8 +126,14 @@ func Help() error {
 	return nil
 }
 
-// Build builds the qumo binary
+// Build builds the qumo binary, embedding the playground web UI. The frontend
+// is built first (WebBuild) so the binary ships with the real UI; without it
+// `go:embed` would embed only the placeholder index.html.
 func Build() error {
+	if err := WebBuild(); err != nil {
+		return fmt.Errorf("web build: %w", err)
+	}
+
 	fmt.Println("🔨 Building qumo binary...")
 
 	binaryName := "qumo"

@@ -18,15 +18,18 @@ import (
 func TestRun_Unit(t *testing.T) {
 	origRelay := runRelay
 	origRTMP := runRTMP
+	origPlayground := runPlayground
 	defer func() {
 		runRelay = origRelay
 		runRTMP = origRTMP
+		runPlayground = origPlayground
 	}()
 
 	tests := map[string]struct {
 		args               []string
 		stubRelay          func([]string) error
 		stubRTMP           func([]string) error
+		stubPlayground     func([]string) error
 		wantCode           int
 		wantStderrContains []string
 	}{
@@ -70,6 +73,25 @@ func TestRun_Unit(t *testing.T) {
 			wantCode:           1,
 			wantStderrContains: []string{"error: rtmp-fail"},
 		},
+		"playground success": {
+			args:           []string{"playground"},
+			stubPlayground: func(_ []string) error { return nil },
+			wantCode:       0,
+		},
+		"playground error": {
+			args:               []string{"playground"},
+			stubPlayground:     func(_ []string) error { return fmt.Errorf("pg-fail") },
+			wantCode:           1,
+			wantStderrContains: []string{"error: pg-fail"},
+		},
+		"playground passes args": {
+			args: []string{"playground", "extra"},
+			stubPlayground: func(a []string) error {
+				assert.Equal(t, []string{"extra"}, a)
+				return nil
+			},
+			wantCode: 0,
+		},
 	}
 
 	for name, tt := range tests {
@@ -83,6 +105,11 @@ func TestRun_Unit(t *testing.T) {
 				runRTMP = tt.stubRTMP
 			} else {
 				runRTMP = func([]string) error { return nil }
+			}
+			if tt.stubPlayground != nil {
+				runPlayground = tt.stubPlayground
+			} else {
+				runPlayground = func([]string) error { return nil }
 			}
 
 			// capture stderr

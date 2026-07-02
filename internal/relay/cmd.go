@@ -138,15 +138,21 @@ func Run(_ []string) error {
 	}
 
 	relayCfg := Config{
-		NodeID:                 nodeID,
-		Region:                 os.Getenv("REGION"),
-		Role:                   os.Getenv("ROLE"),
-		AdvertiseAddr:          advertiseAddr,
-		GroupCacheSize:         groupCacheSize,
-		FrameCapacity:          frameCapacity,
-		Peers:                  peers,
-		LocalResolverInterval:  localResolver.Interval(),
-		RemoteResolverInterval: remoteResolver.Interval(),
+		NodeID:                nodeID,
+		Region:                os.Getenv("REGION"),
+		Role:                  os.Getenv("ROLE"),
+		AdvertiseAddr:         advertiseAddr,
+		GroupCacheSize:        groupCacheSize,
+		FrameCapacity:         frameCapacity,
+		Peers:                 peers,
+		LocalResolverInterval: localResolver.Interval(),
+	}
+	// The remote resolver is optional: NewRemoteResolver returns nil when
+	// REMOTE_RESOLVER_URL is unset (the common single-node/demo case). The
+	// consumer already treats a nil resolver + zero interval as "disabled"
+	// (server.go), so mirror that here rather than dereferencing nil.
+	if remoteResolver != nil {
+		relayCfg.RemoteResolverInterval = remoteResolver.Interval()
 	}
 
 	// Setup signal handling for graceful shutdown

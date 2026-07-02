@@ -8,7 +8,13 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
-dist
+# Vite build output. Ignore its contents but keep the committed placeholder
+# (index.html + .gitkeep) so `go:embed all:playground/dist` in the Go binary
+# always has a match on a fresh clone. Ignoring the directory itself (just
+# `dist`) would also exclude the placeholder, hence `dist/*` + negations.
+dist/*
+!dist/.gitkeep
+!dist/index.html
 dist-ssr
 *.local
 

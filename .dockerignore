@@ -42,7 +42,12 @@ docs/
 
 # Node modules
 **/node_modules/
-playground/
+# Keep the playground frontend source out of the relay image context, but the
+# committed dist placeholder must remain — `//go:embed all:playground/dist`
+# (embed.go) needs it at `go build` time. (The real UI is embedded by `mage
+# build`, which runs `mage webbuild` first; the image builds with the placeholder.)
+playground/*
+!playground/dist/
 
 # Magefiles
 magefiles/
