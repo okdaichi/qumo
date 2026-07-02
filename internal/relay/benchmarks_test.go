@@ -228,23 +228,51 @@ func BenchmarkTrackDistributor_Broadcast(b *testing.B) {
 		{"1000_subscribers", 1000},
 	}
 
-	for _, tt := range tests {
-		b.Run(tt.name, func(b *testing.B) {
-			dist := &trackDistributor{}
+	// broadcast() notifies cap-1 signal channels. Two states matter for any
+	// "skip the select when len(ch)>0" fast path:
+	//
+	//   - drained: subscribers keep up, so the channel is empty on the next
+	//     broadcast — the common steady state. The fast path adds a len() load
+	//     + branch before a send that still succeeds.
+	//   - full: the channel already holds a pending signal (backpressure). The
+	//     fast path skips the select entirely.
+	//
+	// Measuring only "full" overstates such an optimization (it is the sole
+	// case it helps), so both states are swept. The drained drain runs inside
+	// the timed loop but is invariant across base/PR, so it cancels in a delta.
+	for _, state := range []string{"drained", "full"} {
+		state := state
+		for _, tt := range tests {
+			tt := tt
+			b.Run(state+"/"+tt.name, func(b *testing.B) {
+				dist := &trackDistributor{}
 
-			// Create subscriber channels
-			for i := 0; i < tt.subscribers; i++ {
-				ch := make(chan struct{}, 1)
-				dist.subscribers = append(dist.subscribers, ch)
-			}
+				chs := make([]chan struct{}, 0, tt.subscribers)
+				for i := 0; i < tt.subscribers; i++ {
+					ch := make(chan struct{}, 1)
+					dist.subscribers = append(dist.subscribers, ch)
+					chs = append(chs, ch)
+					if state == "full" {
+						ch <- struct{}{} // pre-fill: stays full across iterations
+					}
+				}
 
-			b.ResetTimer()
-			b.ReportAllocs()
+				b.ResetTimer()
+				b.ReportAllocs()
 
-			for range b.N {
-				dist.broadcast()
-			}
-		})
+				for range b.N {
+					dist.broadcast()
+					if state == "drained" {
+						for _, ch := range chs {
+							select {
+							case <-ch:
+							default:
+							}
+						}
+					}
+				}
+			})
+		}
 	}
 }
 
