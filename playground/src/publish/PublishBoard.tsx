@@ -1,4 +1,4 @@
-import { type Accessor, createSignal, onMount, Show } from "solid-js";
+import { type Accessor, createSignal, onCleanup, onMount, Show } from "solid-js";
 import { type BroadcastPath, type GroupWriter, TrackMux } from "@qumo/moq";
 import { Broadcast, type Track } from "@qumo/moq/msf";
 import {
@@ -13,6 +13,7 @@ import { getMediaStream, type MediaSourceType } from "./media.ts";
 import { background, type CancelFunc, type Context, withCancel } from "@okdaichi/golikejs/context";
 import { MediaFrame } from "./media_frame.ts";
 import { friendlyMessage } from "../errors.ts";
+import { createStatsTicker } from "../stats.ts";
 import { Camera, Monitor } from "lucide-solid";
 import type { Component } from "solid-js";
 
@@ -61,6 +62,15 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 	const [resolution, setResolution] = createSignal<keyof typeof RESOLUTIONS>("720p");
 	const [framerate, setFramerate] = createSignal<(typeof FRAMERATES)[number]>(30);
 	const [bitrate, setBitrate] = createSignal(2_500_000);
+
+	// Live stats overlay (#139): fps + media bitrate from a 1s rolling meter, plus
+	// the encoder's queue depth sampled on the same tick. Cleared on stop.
+	const [encQueue, setEncQueue] = createSignal(0);
+	const videoStats = createStatsTicker(
+		1000,
+		() => setEncQueue(videoEncodeNode?.encodeQueueSize ?? 0),
+	);
+	onCleanup(() => videoStats.stop());
 
 	let canvasEle: HTMLCanvasElement | undefined;
 	let lastKeyframeTime = 0;
@@ -262,6 +272,8 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 
 						const err = await currentGroup!.writeFrame(new MediaFrame(chunk));
 						if (err) throw err;
+						// Tally the published frame for the live stats overlay.
+						videoStats.mark(chunk.byteLength);
 					},
 				});
 
@@ -314,6 +326,7 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 		}
 
 		setIsStreaming(true);
+		videoStats.start();
 		console.log(`Started streaming from ${sourceType()}`);
 	};
 
@@ -326,6 +339,7 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 			sourceNode.dispose();
 			sourceNode = null;
 		}
+		videoStats.stop();
 		setIsStreaming(false);
 	};
 
@@ -441,6 +455,28 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 						background: "#000",
 					}}
 				/>
+				<Show when={isStreaming()}>
+					<dl class="stats-overlay" aria-live="off">
+						<div>
+							<dt>res</dt>
+							<dd>{canvasWidth()}×{canvasHeight()}</dd>
+						</div>
+						<div>
+							<dt>fps</dt>
+							<dd>{videoStats.stats().fps}</dd>
+						</div>
+						<div>
+							<dt>br</dt>
+							<dd>{videoStats.stats().bitrateMbps} Mbps</dd>
+						</div>
+						<Show when={encQueue() > 0}>
+							<div>
+								<dt>queue</dt>
+								<dd>{encQueue()}</dd>
+							</div>
+						</Show>
+					</dl>
+				</Show>
 			</div>
 		</div>
 	);

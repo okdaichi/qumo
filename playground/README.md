@@ -134,6 +134,9 @@ share one `mage cert` certificate, so a single `VITE_CERT_HASH` validates them.
   stop and restart to apply a change mid-session.
 - **Subscribe:** mute, volume, and fullscreen. These are viewer controls only —
   MoQ is live, so there is no pause/seek/scrub.
+- **Stats overlay:** while a stream is active, both boards show a live readout
+  over the preview — resolution, fps, media bitrate, and (publish) encoder
+  queue / (subscribe) RTT and decoder queue. Updated once per second.
 
 ## Develop
 
