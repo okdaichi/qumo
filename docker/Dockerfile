@@ -1,13 +1,16 @@
 # Stage 1: build the playground web UI.
 # The Go binary embeds playground/dist via //go:embed all:playground/dist, so
 # the real UI must exist before `go build`. The build needs Deno (jsr deps +
-# `deno check`) and Node (Vite). Deno has no official multi-arch alpine image and
-# deno.land's install.sh is unreliable, so download the pinned binary directly
-# from GitHub releases, picking the right arch. DENO_VERSION must match
+# `deno check`) and Node (Vite). Deno only publishes glibc-linked linux binaries
+# (no musl), so the base must be glibc — node:22-slim (Debian) gives us that plus
+# a Vite-compatible Node. Deno has no official multi-arch image, so download the
+# pinned binary from GitHub releases with arch detection. DENO_VERSION must match
 # .github/workflows/release.yml.
-FROM node:22-alpine AS frontend
+FROM node:22-slim AS frontend
 ARG DENO_VERSION=2.8.1
-RUN apk add --no-cache curl unzip \
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends curl unzip ca-certificates \
+ && rm -rf /var/lib/apt/lists/* \
  && case "$(uname -m)" in \
       x86_64)  DARCH=x86_64-unknown-linux-gnu ;; \
       aarch64) DARCH=aarch64-unknown-linux-gnu ;; \
