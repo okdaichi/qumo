@@ -27,6 +27,14 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # Deno is required by the goreleaser `before` hooks to build the playground
+      # web UI (jsr deps + `deno check`). Node (for Vite) is preinstalled on the
+      # ubuntu runner. See .goreleaser.yml.
+      - name: Set up Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:
