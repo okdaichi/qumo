@@ -78,6 +78,15 @@
 	opacity: 0.5;
 }
 
+/* Inline icon inside a segmented button: sized to the text and stroked with
+   currentColor, so it inherits the button's color (incl. the active state). */
+.source-icon {
+	width: 1.05em;
+	height: 1.05em;
+	display: inline-block;
+	vertical-align: -0.2em;
+}
+
 /* --- Shared path control (#137) --- */
 
 .path-control {

@@ -13,6 +13,8 @@ import { getMediaStream, type MediaSourceType } from "./media.ts";
 import { background, type CancelFunc, type Context, withCancel } from "@okdaichi/golikejs/context";
 import { MediaFrame } from "./media_frame.ts";
 import { friendlyMessage } from "../errors.ts";
+import { Camera, Monitor } from "lucide-solid";
+import type { Component } from "solid-js";
 
 // Encode an ArrayBuffer or ArrayBufferView as a Base64 string.
 function encodeBase64(buf: ArrayBufferLike | ArrayBufferView): string {
@@ -40,10 +42,11 @@ const BITRATE_MAX = 6_000_000;
 const BITRATE_STEP = 100_000;
 
 // Media-source options for the segmented switcher. `label` is also used for the
-// "Streaming from" status line so it doesn't show the raw signal value.
-const SOURCES: { id: MediaSourceType; label: string; icon: string }[] = [
-	{ id: "camera", label: "Camera", icon: "📷" },
-	{ id: "screen", label: "Screen", icon: "🖥️" },
+// "Streaming from" status line so it doesn't show the raw signal value. Icons
+// come from lucide-solid (public icon set) rather than hand-rolled SVG.
+const SOURCES: { id: MediaSourceType; label: string; icon: Component<{ class?: string }> }[] = [
+	{ id: "camera", label: "Camera", icon: Camera },
+	{ id: "screen", label: "Screen", icon: Monitor },
 ];
 
 export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
@@ -334,19 +337,24 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 				<div class="source-selector">
 					<label>Media Source</label>
 					<div class="segmented" role="group" aria-label="Media source">
-						{SOURCES.map((s) => (
-							<button
-								type="button"
-								class="segmented-btn"
-								classList={{ active: sourceType() === s.id }}
-								aria-pressed={sourceType() === s.id}
-								disabled={isStreaming()}
-								onClick={() => setSourceType(s.id)}
-								title={isStreaming() ? "Stop streaming to switch source" : s.label}
-							>
-								<span aria-hidden="true">{s.icon}</span> {s.label}
-							</button>
-						))}
+						{SOURCES.map((s) => {
+							const Icon = s.icon;
+							return (
+								<button
+									type="button"
+									class="segmented-btn"
+									classList={{ active: sourceType() === s.id }}
+									aria-pressed={sourceType() === s.id}
+									disabled={isStreaming()}
+									onClick={() => setSourceType(s.id)}
+									title={isStreaming()
+										? "Stop streaming to switch source"
+										: s.label}
+								>
+									<Icon class="source-icon" /> {s.label}
+								</button>
+							);
+						})}
 					</div>
 				</div>
 
@@ -368,10 +376,9 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 						FPS
 						<select
 							value={framerate()}
-							onChange={(e) =>
-								setFramerate(
-									Number(e.currentTarget.value) as (typeof FRAMERATES)[number],
-								)}
+							onChange={(e) => setFramerate(
+								Number(e.currentTarget.value) as (typeof FRAMERATES)[number],
+							)}
 							disabled={isStreaming()}
 						>
 							{FRAMERATES.map((fps) => <option value={fps}>{fps}</option>)}

@@ -10,6 +10,7 @@
 	},
 	"dependencies": {
 		"@deno/vite-plugin": "^2.0.2",
+		"lucide-solid": "^1.23.0",
 		"solid-js": "^1.9.12"
 	},
 	"devDependencies": {
