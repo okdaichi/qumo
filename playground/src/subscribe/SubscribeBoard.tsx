@@ -5,6 +5,7 @@ import { parseCatalog } from "@qumo/moq/msf";
 import { deserializeMediaFrame } from "../publish/media_frame.ts";
 import { background, withCancel } from "@okdaichi/golikejs/context";
 import { friendlyMessage } from "../errors.ts";
+import { createStatsTicker } from "../stats.ts";
 import type { BroadcastPath } from "@qumo/moq";
 
 export function SubscribeBoard(props: { session: Promise<Session>; path: Accessor<string> }) {
@@ -16,6 +17,18 @@ export function SubscribeBoard(props: { session: Promise<Session>; path: Accesso
 	const [volume, setVolume] = createSignal(1);
 	const [muted, setMuted] = createSignal(false);
 	const [isFullscreen, setIsFullscreen] = createSignal(false);
+
+	// Live stats overlay (#139): fps + media bitrate from a 1s rolling meter,
+	// plus decoder queue depth and the session RTT sampled on the same tick.
+	const [decQueue, setDecQueue] = createSignal(0);
+	const [rtt, setRtt] = createSignal(0);
+	let statsSession: Session | undefined;
+	const videoStats = createStatsTicker(1000, () => {
+		setDecQueue(videoDecodeNode?.decodeQueueSize ?? 0);
+		if (statsSession) {
+			void statsSession.getStats().then((s) => setRtt(s.rtt ?? 0));
+		}
+	});
 
 	let canvasEle: HTMLCanvasElement | undefined;
 	let previewEle: HTMLDivElement | undefined;
@@ -96,6 +109,7 @@ export function SubscribeBoard(props: { session: Promise<Session>; path: Accesso
 			}
 
 			const session = await props.session;
+			statsSession = session; // for RTT sampling in the stats ticker
 			const subscribePath = props.path() as BroadcastPath; // snapshot at subscription start
 
 			// Gate: the video loop awaits this before feeding any frames to the decoder.
@@ -242,6 +256,8 @@ export function SubscribeBoard(props: { session: Promise<Session>; path: Accesso
 											data,
 										});
 										controller.enqueue(chunk);
+										// Tally the decoded frame for the live stats overlay.
+										videoStats.mark(data.byteLength);
 										isKey = false;
 									}
 								}
@@ -323,6 +339,7 @@ export function SubscribeBoard(props: { session: Promise<Session>; path: Accesso
 			);
 
 			setIsSubscribed(true);
+			videoStats.start();
 		} catch (err) {
 			setError(friendlyMessage(err));
 			console.error("Failed to start subscribing:", err);
@@ -336,6 +353,8 @@ export function SubscribeBoard(props: { session: Promise<Session>; path: Accesso
 			currentCancel = null;
 		}
 		audioContext?.suspend().catch(() => {});
+		statsSession = undefined;
+		videoStats.stop();
 		setIsSubscribed(false);
 	};
 
@@ -385,6 +404,34 @@ export function SubscribeBoard(props: { session: Promise<Session>; path: Accesso
 						background: "#000",
 					}}
 				/>
+				<Show when={isSubscribed()}>
+					<dl class="stats-overlay" aria-live="off">
+						<div>
+							<dt>res</dt>
+							<dd>{canvasWidth()}×{canvasHeight()}</dd>
+						</div>
+						<div>
+							<dt>fps</dt>
+							<dd>{videoStats.stats().fps}</dd>
+						</div>
+						<div>
+							<dt>br</dt>
+							<dd>{videoStats.stats().bitrateMbps} Mbps</dd>
+						</div>
+						<Show when={rtt() > 0}>
+							<div>
+								<dt>rtt</dt>
+								<dd>{rtt()} ms</dd>
+							</div>
+						</Show>
+						<Show when={decQueue() > 0}>
+							<div>
+								<dt>queue</dt>
+								<dd>{decQueue()}</dd>
+							</div>
+						</Show>
+					</dl>
+				</Show>
 			</div>
 
 			<div class="viewer-controls">

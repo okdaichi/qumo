@@ -401,6 +401,7 @@ input[type="range"] {
 
 .video-preview {
 	width: 100%;
+	position: relative;
 }
 
 .video-preview canvas {
@@ -412,4 +413,38 @@ input[type="range"] {
 	border: 1px solid var(--border);
 	border-radius: 8px;
 	background: #000;
+}
+
+/* --- Live stats overlay (#139) --- */
+
+.stats-overlay {
+	position: absolute;
+	top: 8px;
+	left: 8px;
+	margin: 0;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px 12px;
+	padding: 4px 8px;
+	background: rgba(0, 0, 0, 0.6);
+	border-radius: 6px;
+	color: #fff;
+	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+	font-size: 0.72rem;
+	line-height: 1.5;
+	pointer-events: none;
+	user-select: none;
+}
+
+.stats-overlay > div {
+	display: inline-flex;
+	gap: 4px;
+}
+
+.stats-overlay dt {
+	color: rgba(255, 255, 255, 0.6);
+}
+
+.stats-overlay dd {
+	margin: 0;
 }
