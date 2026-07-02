@@ -13,7 +13,7 @@ import { getMediaStream, type MediaSourceType } from "./media.ts";
 import { background, type CancelFunc, type Context, withCancel } from "@okdaichi/golikejs/context";
 import { MediaFrame } from "./media_frame.ts";
 import { friendlyMessage } from "../errors.ts";
-import { CameraIcon, type IconProps, ScreenIcon } from "../icons.tsx";
+import { Camera, Monitor } from "lucide-solid";
 import type { Component } from "solid-js";
 
 // Encode an ArrayBuffer or ArrayBufferView as a Base64 string.
@@ -42,10 +42,11 @@ const BITRATE_MAX = 6_000_000;
 const BITRATE_STEP = 100_000;
 
 // Media-source options for the segmented switcher. `label` is also used for the
-// "Streaming from" status line so it doesn't show the raw signal value.
-const SOURCES: { id: MediaSourceType; label: string; icon: Component<IconProps> }[] = [
-	{ id: "camera", label: "Camera", icon: CameraIcon },
-	{ id: "screen", label: "Screen", icon: ScreenIcon },
+// "Streaming from" status line so it doesn't show the raw signal value. Icons
+// come from lucide-solid (public icon set) rather than hand-rolled SVG.
+const SOURCES: { id: MediaSourceType; label: string; icon: Component<{ class?: string }> }[] = [
+	{ id: "camera", label: "Camera", icon: Camera },
+	{ id: "screen", label: "Screen", icon: Monitor },
 ];
 
 export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {

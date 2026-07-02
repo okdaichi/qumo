@@ -7,6 +7,7 @@
     "jsr:@qumo/moq@~0.16.1": "0.16.1",
     "npm:@deno/vite-plugin@^2.0.2": "2.0.2_vite@7.3.2__@types+node@25.6.0",
     "npm:@types/node@^25.6.0": "25.6.0",
+    "npm:lucide-solid@^1.23.0": "1.23.0_solid-js@1.9.12",
     "npm:solid-js@^1.9.12": "1.9.12",
     "npm:typescript@~5.9.3": "5.9.3",
     "npm:vite-plugin-solid@^2.11.12": "2.11.12_solid-js@1.9.12_vite@7.3.2__@types+node@25.6.0_@types+node@25.6.0",
@@ -659,6 +660,12 @@
         "yallist"
       ]
     },
+    "lucide-solid@1.23.0_solid-js@1.9.12": {
+      "integrity": "sha512-vzVY2fITccYlJTrv5fHro9OONinnotXtNmAb/Sh1UOpMB/PtvFuF3FVz2Orh7/R7l5YdF1j4TOPmfgImHpzv0g==",
+      "dependencies": [
+        "solid-js"
+      ]
+    },
     "merge-anything@5.1.7": {
       "integrity": "sha512-eRtbOb1N5iyH0tkQDAoQ4Ipsp/5qSR79Dzrz8hEPxRX10RWWR/iQXdoKmBSRCThY1Fh5EhISDtpSc93fpxUniQ==",
       "dependencies": [
@@ -844,6 +851,7 @@
       "dependencies": [
         "npm:@deno/vite-plugin@^2.0.2",
         "npm:@types/node@^25.6.0",
+        "npm:lucide-solid@^1.23.0",
         "npm:solid-js@^1.9.12",
         "npm:typescript@~5.9.3",
         "npm:vite-plugin-solid@^2.11.12",
