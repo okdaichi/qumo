@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"io/fs"
 	"os"
 
 	"github.com/qumo-dev/qumo/internal/ingest"
+	"github.com/qumo-dev/qumo/internal/playground"
 	"github.com/qumo-dev/qumo/internal/relay"
 	"github.com/qumo-dev/qumo/internal/version"
 )
@@ -14,7 +17,37 @@ var (
 	runRelay = relay.Run
 	runRTMP  = ingest.RunRTMP
 	runRTSP  = ingest.RunRTSP
+	runPlayground = func(args []string) error {
+		o, err := playground.ParseFlags(args, playground.Options{
+			Assets:     mustSubAssets(),
+			StartRelay: func() error { return runRelay(nil) },
+		})
+		if err != nil {
+			if playground.IsErrHelp(err) {
+				// -h/--help: print usage to stdout, exit 0.
+				playground.UsageHelp(os.Stdout)
+				return nil
+			}
+			// Bad flag / unexpected arg: surface the error plus a usage hint.
+			playground.UsageHelp(os.Stderr)
+			return err
+		}
+		return playground.Run(context.Background(), o)
+	}
 )
+
+// mustSubAssets returns the embedded playground UI rooted at the dist content
+// root. The embed is declared in embed.go; fs.Sub relocates files so they
+// appear at the FS root (index.html, assets/...) as the playground package
+// expects. A panic here is unreachable: the compile-time embed guarantees the
+// "playground/dist" subtree exists.
+func mustSubAssets() fs.FS {
+	sub, err := fs.Sub(playgroundAssets, "playground/dist")
+	if err != nil {
+		panic(fmt.Sprintf("qumo: embed playground/dist: %v", err))
+	}
+	return sub
+}
 
 func main() {
 	os.Exit(run(os.Args[1:]))
@@ -45,6 +78,8 @@ func run(args []string) int {
 		err = runRTMP(cmdArgs)
 	case "rtsp":
 		err = runRTSP(cmdArgs)
+	case "playground":
+		err = runPlayground(cmdArgs)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n", cmd)
 		printUsage()
@@ -65,6 +100,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  relay      Start the MoQ relay server")
 	fmt.Fprintln(os.Stderr, "  rtmp       Start the RTMP ingest server")
 	fmt.Fprintln(os.Stderr, "  rtsp       Start the RTSP ingest server")
+	fmt.Fprintln(os.Stderr, "  playground Start a local demo (relay + web UI) on http://127.0.0.1:8080")
 	fmt.Fprintln(os.Stderr, "  version    Print version information")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Configuration:")

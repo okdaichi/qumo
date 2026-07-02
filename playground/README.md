@@ -14,24 +14,78 @@ for the HLS egress scenario tracked in the [Demo UI Improvements milestone][mile
 
 ## Run it
 
-The demo needs a running relay plus the Vite dev server. From the **repo root**:
+There are two ways to run the demo:
 
-```bash
-# 1. Generate a WebTransport cert (writes VITE_CERT_HASH to playground/.env)
-mage cert
+- **`qumo playground`** — the self-contained distribution/demo path. A single
+  binary that generates a dev cert, starts the relay in-process, serves the
+  embedded UI, and exposes runtime config via `/config` (no build-time
+  `VITE_CERT_HASH` needed). Build it from the repo root:
 
-# 2. Terminal A — start the relay
-mage relay        # or: ./bin/qumo-relay
+  ```bash
+  mage build          # builds the UI, then the binary with the UI embedded
+  ./bin/qumo playground
+  ```
 
-# 3. Terminal B — start the demo
-mage web
-```
+  Then open <http://127.0.0.1:8080>. The dev cert is cached under your per-user
+  cache dir (`os.UserCacheDir`/qumo/playground) and reused until it nears
+  expiry; set `QUMO_PLAYGROUND_CERT_DIR` to override its location (e.g. to share
+  a cert with `mage cert`'s `./certs`).
 
-Then open <http://localhost:5173>.
+  Flags (`qumo playground -h`):
 
-The cert hash is required: Chrome's `serverCertificateHashes` rejects the relay's
-self-signed cert without it, so without `VITE_CERT_HASH` the connection fails.
-`mage cert` handles generating the cert and writing the hash; see `.env.example`.
+  | Flag            | Default          | Purpose                                              |
+  | --------------- | ---------------- | ---------------------------------------------------- |
+  | `--ui-addr`     | `127.0.0.1:8080` | Address the UI HTTP server binds.                    |
+  | `--relay-addr`  | `127.0.0.1:4433` | Address the relay WebTransport server binds.         |
+
+  There is deliberately **no `--host` flag**. The browser-facing relay URL is
+  derived at request time from whatever host the UI was opened at: open
+  `http://localhost:8080` and `/config` returns `relayUrl: https://localhost:4433`;
+  open `https://example.com` (behind a proxy) and it returns
+  `https://example.com:4433`. So the relay target always matches the address in
+  the address bar, with nothing to configure.
+
+  ### Hosting publicly (behind your own TLS proxy)
+
+  WebTransport requires a secure context, and `localhost` is the only HTTP host
+  that counts — so to serve the demo on a public host, put a TLS-terminating
+  reverse proxy (nginx/Caddy/Cloudflare) in front of the UI:
+
+  ```bash
+  # On the host: relay binds a public interface so its UDP/QUIC port is reachable;
+  # UI stays loopback for the proxy to forward to.
+  qumo playground --relay-addr 0.0.0.0:4433
+  # Then: proxy  https://example.com  ->  127.0.0.1:8080
+  #        (forward X-Forwarded-Host so /config picks up the public host)
+  #        allow  UDP/4433  through your firewall for WebTransport.
+  ```
+
+  The browser loads the UI over HTTPS (from your proxy), fetches `/config`, and
+  dials WebTransport to `https://example.com:4433`, pinning the dev cert by its
+  SHA-256 hash. The pin is by hash, not hostname, so the localhost-minted cert
+  works on a public host without regeneration.
+
+- **`mage web`** — the frontend development path (Vite dev server + HMR). The
+  demo needs a running relay plus the Vite dev server. From the **repo root**:
+
+  ```bash
+  # 1. Generate a WebTransport cert (writes VITE_CERT_HASH to playground/.env)
+  mage cert
+
+  # 2. Terminal A — start the relay
+  mage relay        # or: ./bin/qumo-relay
+
+  # 3. Terminal B — start the demo
+  mage web
+  ```
+
+  Then open <http://localhost:5173>.
+
+The cert hash is required in the dev path: Chrome's `serverCertificateHashes`
+rejects the relay's self-signed cert without it, so without `VITE_CERT_HASH` the
+connection fails. `mage cert` handles generating the cert and writing the hash;
+see `.env.example`. (`qumo playground` sidesteps this by serving the hash at
+runtime via `/config`.)
 
 ### Configuration
 
@@ -40,8 +94,9 @@ Environment variables live in `playground/.env` (see `.env.example`):
 | Variable          | Description                                              |
 | ----------------- | -------------------------------------------------------- |
 | `VITE_RELAY_URL`  | Relay WebTransport URL (must be HTTPS).                  |
-| `VITE_APP_NAME`   | Title shown in the demo header.                          |
 | `VITE_CERT_HASH`  | SHA-256 (hex) of the relay cert. Run `mage cert` to set. |
+
+The header title is a fixed `qumo` (not configurable).
 
 ## Scenarios
 
