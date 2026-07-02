@@ -25,6 +25,10 @@ func TestNewChecker(t *testing.T) {
 		"host comparison is case-insensitive":       {origin: "https://RELAY:4433", host: "relay:4433", want: true},
 		"same-origin differing port rejected":       {origin: "https://relay.example", host: "relay.example:4433", want: false},
 		"malformed origin rejected":                 {allowed: []string{"http://localhost:5178"}, origin: "://bad", host: "127.0.0.1:4433", want: false},
+		"same-host mode allows differing port":      {allowed: []string{"same-host"}, origin: "http://localhost:5178", host: "localhost:4433", want: true},
+		"same-host mode allows portless origin":     {allowed: []string{"same-host"}, origin: "http://relay.example", host: "relay.example:4433", want: true},
+		"same-host mode rejects different host":     {allowed: []string{"same-host"}, origin: "http://evil.example", host: "relay.example:4433", want: false},
+		"same-host mode is case-insensitive":        {allowed: []string{"same-host"}, origin: "http://LOCALHOST:5178", host: "localhost:4433", want: true},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {

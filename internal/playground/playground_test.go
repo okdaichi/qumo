@@ -4,6 +4,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/qumo-dev/qumo/internal/cors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -13,8 +14,8 @@ func TestUIDisplayURL(t *testing.T) {
 		uiAddr string
 		want   string
 	}{
-		"loopback bind":        {"127.0.0.1:8080", "http://127.0.0.1:8080"},
-		"wildcard to localhost": {"0.0.0.0:8080", "http://localhost:8080"},
+		"loopback bind":           {"127.0.0.1:8080", "http://127.0.0.1:8080"},
+		"wildcard to localhost":   {"0.0.0.0:8080", "http://localhost:8080"},
 		"empty host to localhost": {":8080", "http://localhost:8080"},
 	}
 	for name, tt := range tests {
@@ -55,4 +56,22 @@ func TestConfigureRelayEnv_DoesNotStompRelayName(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, configureRelayEnv("127.0.0.1:4433", cert))
 	assert.Equal(t, "my-relay", os.Getenv("RELAY_NAME"))
+}
+
+func TestConfigureRelayEnv_DefaultsCORSAllowedOrigins(t *testing.T) {
+	// The UI and relay share a host but differ by port; the same-host default
+	// lets the browser connect out of the box without configuring CORS.
+	t.Setenv("CORS_ALLOWED_ORIGINS", "")
+	cert, err := EnsureCert(t.TempDir())
+	require.NoError(t, err)
+	require.NoError(t, configureRelayEnv("127.0.0.1:4433", cert))
+	assert.Equal(t, cors.SameHost, os.Getenv("CORS_ALLOWED_ORIGINS"))
+}
+
+func TestConfigureRelayEnv_RespectsExplicitCORSAllowedOrigins(t *testing.T) {
+	t.Setenv("CORS_ALLOWED_ORIGINS", "https://app.example.com")
+	cert, err := EnsureCert(t.TempDir())
+	require.NoError(t, err)
+	require.NoError(t, configureRelayEnv("127.0.0.1:4433", cert))
+	assert.Equal(t, "https://app.example.com", os.Getenv("CORS_ALLOWED_ORIGINS"))
 }

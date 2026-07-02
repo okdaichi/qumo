@@ -10,6 +10,8 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
+	"github.com/qumo-dev/qumo/internal/cors"
 )
 
 // Defaults for the local demo. The UI and relay are loopback-only by default;
@@ -160,6 +162,14 @@ func configureRelayEnv(relayAddr string, cert *Cert) error {
 	// RELAY_NAME is cosmetic; don't stomp a user-set value.
 	if os.Getenv("RELAY_NAME") == "" {
 		if err := os.Setenv("RELAY_NAME", "playground"); err != nil {
+			return err
+		}
+	}
+	// Default the WebTransport origin policy so the browser UI (served on
+	// UIAddr) can reach the relay (same host, different port — the relay URL is
+	// derived per-request from the browser's Host). Respect an explicit value.
+	if os.Getenv(cors.EnvVar) == "" {
+		if err := os.Setenv(cors.EnvVar, cors.SameHost); err != nil {
 			return err
 		}
 	}
