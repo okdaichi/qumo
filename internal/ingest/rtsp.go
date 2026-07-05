@@ -305,10 +305,30 @@ func (t *rtspTrack) handleVideoRTP(p *rtsp.RTPPacket) {
 	switch {
 	case typ >= 1 && typ <= 23:
 		// Single NAL unit
+		if rtspDebug() {
+			slog.Info("rtsp video packet",
+				"kind", "single",
+				"rtp_ts", p.Header.Timestamp,
+				"nal_type", int(typ),
+			)
+		}
 		t.pushNALU(p.Header.Timestamp, p.Payload)
 	case typ == 28:
 		// FU-A fragmentation: reassemble across packets, push on the final fragment.
-		if nalu := t.reassembleFU(p.Payload); nalu != nil {
+		fuHeader := p.Payload[1]
+		start := (fuHeader >> 7) & 1
+		end := (fuHeader >> 6) & 1
+		nalu := t.reassembleFU(p.Payload)
+		if rtspDebug() {
+			slog.Info("rtsp video packet",
+				"kind", "fu-a",
+				"rtp_ts", p.Header.Timestamp,
+				"nal_type", int(fuHeader&0x1F),
+				"start", start == 1, "end", end == 1,
+				"completed", nalu != nil,
+			)
+		}
+		if nalu != nil {
 			t.pushNALU(p.Header.Timestamp, nalu)
 		}
 	}
@@ -375,10 +395,11 @@ func wrapAVCC(nalu []byte) []byte {
 }
 
 // rtspDebug reports whether ingest-side RTSP diagnostics are enabled. Set
-// QUMO_RTSP_DEBUG=1 to log every pushed video NALU's raw RTP timestamp,
-// derived PTS, and NAL type — used to root-cause timestamp anomalies (e.g.
-// #229) that only reproduce on CI and can't be inspected from the subscriber.
-var rtspDebug = sync.OnceValue(func() bool { return os.Getenv("QUMO_RTSP_DEBUG") != "" })
+// QUMO_RTSP_DEBUG=1 to log every video RTP packet's raw timestamp, NAL type,
+// and FU-A fragment flags — used to root-cause timestamp anomalies (e.g. #229)
+// that only reproduce on CI and can't be inspected from the subscriber. Read
+// fresh each call (not cached) so a test can enable it mid-binary-run.
+func rtspDebug() bool { return os.Getenv("QUMO_RTSP_DEBUG") != "" }
 
 func (t *rtspTrack) pushNALU(timestamp uint32, nalu []byte) {
 	if t.session == nil {
@@ -388,14 +409,6 @@ func (t *rtspTrack) pushNALU(timestamp uint32, nalu []byte) {
 	data := wrapAVCC(nalu)
 	pts := int64(timestamp) * 1000 / 90 // 90kHz clock to microseconds
 	isKey := (nalu[0] & 0x1F) == 5
-	if rtspDebug() {
-		slog.Info("rtsp video nalu",
-			"rtp_ts", timestamp,
-			"pts_us", pts,
-			"nal_type", int(nalu[0]&0x1F),
-			"key", isKey,
-		)
-	}
 	t.session.PushVideo(pts, data, isKey)
 }
 
