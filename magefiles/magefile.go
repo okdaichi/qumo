@@ -258,10 +258,17 @@ func Check() error {
 	return nil
 }
 
-// Relay starts the qumo-relay server
+// Relay starts the qumo-relay server.
+//
+// This is the local-dev convenience wrapper around `qumo relay`: it applies
+// dev-friendly defaults (a dual-stack bind, an advertised address — required for
+// the wildcard bind — and CORS allowing the `mage web` Vite origins) when the
+// user hasn't set them, so `mage relay` + `mage web` connect out of the box.
+// User-set env vars always win. The production `qumo relay` binary keeps its
+// own secure defaults (same-origin CORS) — only this wrapper relaxes them.
 func Relay() error {
 	fmt.Println("📡 Starting qumo relay server...")
-	fmt.Println("   Config: via Docker environment (see docker/docker-compose.static.yml)")
+	fmt.Println("   Config: via environment (dev defaults applied; see below)")
 	fmt.Println("   Certs: certs/server.crt, certs/server.key (run 'mage cert')")
 	fmt.Println("   Host: https://localhost:4433 (WebTransport/QUIC)")
 	fmt.Println()
@@ -280,9 +287,8 @@ func Relay() error {
 		}
 	}()
 
-	// Config is read from environment variables.
-	// For local dev, set env vars or source relay-config.example.env.
 	cmd := exec.CommandContext(ctx, "go", "run", ".", "relay")
+	cmd.Env = relayDevEnv()
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	// On Windows, exec.CommandContext only kills the direct process (go run),
@@ -303,6 +309,36 @@ func Relay() error {
 		return nil // cancelled by signal, not an error
 	}
 	return err
+}
+
+// relayDevEnv returns os.Environ() plus dev-friendly defaults for `qumo relay`,
+// applied only when the user hasn't set them: a dual-stack bind (RELAY_ADDR),
+// an advertised address (required for the wildcard bind), and CORS allowing the
+// `mage web` Vite origins. It logs which defaults it applied so the relaxation
+// is visible. These affect ONLY this dev wrapper, not the `qumo relay` binary.
+func relayDevEnv() []string {
+	defaults := map[string]string{
+		"RELAY_ADDR":           ":4433",
+		"ADVERTISE_ADDR":       "localhost:4433",
+		"CORS_ALLOWED_ORIGINS": "http://localhost:5173,http://127.0.0.1:5173",
+	}
+	applied := []string{}
+	env := os.Environ()
+	for _, e := range env {
+		if eq := strings.IndexByte(e, '='); eq > 0 {
+			if _, ok := defaults[e[:eq]]; ok {
+				delete(defaults, e[:eq])
+			}
+		}
+	}
+	for k, v := range defaults {
+		env = append(env, k+"="+v)
+		applied = append(applied, k)
+	}
+	if len(applied) > 0 {
+		fmt.Printf("   Dev defaults applied (override via env): %s\n", strings.Join(applied, ", "))
+	}
+	return env
 }
 
 // Dev starts the relay in development mode.

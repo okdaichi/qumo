@@ -34,7 +34,9 @@ func sanitizeLog(s string) string {
 //
 // Configuration is read from environment variables:
 //
-//	RELAY_ADDR                   - listen address (default: "0.0.0.0:4433")
+//	RELAY_ADDR                   - listen address (default: ":4433", dual-stack:
+//	                               binds both IPv4 and IPv6 so `localhost` works
+//	                               on hosts where it resolves to ::1)
 //	CERT_FILE                    - TLS certificate file (default: "certs/server.crt")
 //	KEY_FILE                     - TLS key file (default: "certs/server.key")
 //	CA_FILE                      - PEM CA certificate; enables mTLS when set
@@ -59,7 +61,7 @@ func sanitizeLog(s string) string {
 //	                           Set this when serving the UI from a different
 //	                           origin than the relay (e.g. a Vite dev server).
 func Run(_ []string) error {
-	addr := envOr("RELAY_ADDR", "0.0.0.0:4433")
+	addr := envOr("RELAY_ADDR", ":4433")
 	certFile := envOr("CERT_FILE", "certs/server.crt")
 	keyFile := envOr("KEY_FILE", "certs/server.key")
 
