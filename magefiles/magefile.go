@@ -341,6 +341,41 @@ func relayDevEnv() []string {
 	return env
 }
 
+// ingestDevEnv returns os.Environ() with dev-friendly defaults for the
+// standalone RTSP/RTMP ingest servers, applied only when unset:
+//   - The MoQT serve address lands each server on the playground scenario's
+//     own origin port (RTSP :4543 / RTMP :4443), not the shared :4433 relay
+//     port — so `mage rtsp:serve` / `mage rtmp:serve` line up with the
+//     scenario the web UI picks, instead of colliding with the echo relay.
+//   - CORS_ALLOWED_ORIGINS allows the `mage web` Vite origin, without which
+//     the browser's WebTransport handshake is rejected cross-origin.
+//
+// It logs which defaults it applied so the relaxation is visible. These affect
+// ONLY these dev wrappers, not the underlying `qumo rtsp` / `qumo rtmp` binary.
+func ingestDevEnv(serveAddrKey, serveAddrVal string) []string {
+	defaults := map[string]string{
+		serveAddrKey:           serveAddrVal,
+		"CORS_ALLOWED_ORIGINS": "http://localhost:5173,http://127.0.0.1:5173",
+	}
+	applied := []string{}
+	env := os.Environ()
+	for _, e := range env {
+		if eq := strings.IndexByte(e, '='); eq > 0 {
+			if _, ok := defaults[e[:eq]]; ok {
+				delete(defaults, e[:eq])
+			}
+		}
+	}
+	for k, v := range defaults {
+		env = append(env, k+"="+v)
+		applied = append(applied, k)
+	}
+	if len(applied) > 0 {
+		fmt.Printf("   Dev defaults applied (override via env): %s\n", strings.Join(applied, ", "))
+	}
+	return env
+}
+
 // Dev starts the relay in development mode.
 func Dev() error {
 	fmt.Println("🚀 Starting development environment...")
@@ -363,11 +398,13 @@ type Rtmp mg.Namespace
 // Rtsp provides RTSP ingest commands.
 type Rtsp mg.Namespace
 
-// Serve starts the RTSP ingest server (RTSP → MoQT bridge).
+// Serve starts the RTSP ingest server (RTSP → MoQT bridge) on the playground's
+// RTSP scenario origin (MoQT :4543, RTSP :8554) so it lines up with the web UI's
+// "RTSP ingest" scenario without colliding with the echo relay on :4433.
 func (Rtsp) Serve() error {
 	fmt.Println("📡 Starting RTSP ingest server...")
-	fmt.Println("   RTSP:   rtsp://localhost:8554/live/stream")
-	fmt.Println("   MoQT:   https://localhost:4433 (WebTransport/QUIC)")
+	fmt.Println("   RTSP:   rtsp://localhost:8554/rtsp/<id>")
+	fmt.Println("   MoQT:   https://localhost:4543 (WebTransport/QUIC)")
 	fmt.Println()
 	fmt.Println("💡 Push a stream with ffmpeg:")
 	fmt.Println("   mage rtsp:stream")
@@ -388,6 +425,7 @@ func (Rtsp) Serve() error {
 	}()
 
 	cmd := exec.CommandContext(ctx, "go", "run", ".", "rtsp")
+	cmd.Env = ingestDevEnv("RTSP_SERVE_ADDR", ":4543")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Cancel = func() error {
@@ -413,10 +451,10 @@ func (Rtsp) Serve() error {
 //
 // Environment variables:
 //
-//	RTSP_PATH=/live/demo  RTSP path          (default: /live/demo)
+//	RTSP_PATH=/rtsp/demo  RTSP path          (default: /rtsp/demo)
 //	RTSP_ADDR=host:port                (default: localhost:8554)
 func (Rtsp) Stream() error {
-	path := envOrDefault("RTSP_PATH", "/live/demo")
+	path := envOrDefault("RTSP_PATH", "/rtsp/demo")
 	addr := envOrDefault("RTSP_ADDR", "localhost:8554")
 
 	rtspURL := "rtsp://" + addr + path
@@ -494,14 +532,20 @@ func (Rtsp) Demo() {
 	fmt.Println("  Terminal 3 — Push a test stream via ffmpeg:")
 	fmt.Println("    $ mage rtsp:stream")
 	fmt.Println()
+	fmt.Println("  Then open http://localhost:5173/?scenario=rtsp&path=/rtsp/demo")
+	fmt.Println("  (the RTSP scenario subscribes to the :4543 origin) and click")
+	fmt.Println("  'Start Subscribing'.")
+	fmt.Println()
 }
 
-// Serve starts the RTMP ingest server (RTMP → MoQT bridge).
+// Serve starts the RTMP ingest server (RTMP → MoQT bridge) on the playground's
+// RTMP scenario origin (MoQT :4443, RTMP :1935) so it lines up with the web UI's
+// "RTMP ingest" scenario without colliding with the echo relay on :4433.
 func (Rtmp) Serve() error {
 	fmt.Println("📡 Starting RTMP ingest server...")
 	fmt.Println("   Config: via -config flag")
-	fmt.Println("   RTMP:   rtmp://localhost:1935/live/<stream-key>")
-	fmt.Println("   MoQT:   https://localhost:4433 (WebTransport/QUIC)")
+	fmt.Println("   RTMP:   rtmp://localhost:1935/rtmp/<id>")
+	fmt.Println("   MoQT:   https://localhost:4443 (WebTransport/QUIC)")
 	fmt.Println()
 	fmt.Println("💡 Push a stream with ffmpeg:")
 	fmt.Println("   mage rtmp:stream")
@@ -522,6 +566,7 @@ func (Rtmp) Serve() error {
 	}()
 
 	cmd := exec.CommandContext(ctx, "go", "run", ".", "rtmp", "-config", "config.rtmp.yaml")
+	cmd.Env = ingestDevEnv("RTMP_SERVE_ADDR", ":4443")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Cancel = func() error {
@@ -547,11 +592,11 @@ func (Rtmp) Serve() error {
 //
 // Environment variables:
 //
-//	APP=live       RTMP application name (default: live)
+//	APP=rtmp       RTMP application name (default: rtmp)
 //	KEY=demo       Stream key           (default: demo)
 //	RTMP_ADDR=host:port                (default: localhost:1935)
 func (Rtmp) Stream() error {
-	app := envOrDefault("APP", "live")
+	app := envOrDefault("APP", "rtmp")
 	key := envOrDefault("KEY", "demo")
 	addr := envOrDefault("RTMP_ADDR", "localhost:1935")
 
@@ -576,8 +621,8 @@ func (Rtmp) Stream() error {
 	fmt.Println("   Audio:           AAC 48kHz stereo")
 	fmt.Println()
 	fmt.Println("📺 To watch in browser:")
-	fmt.Println("   1. Open http://localhost:5173")
-	fmt.Println("   2. Set Broadcast Path to:", broadcastPath)
+	fmt.Println("   1. Open http://localhost:5173/?scenario=rtmp&path=" + broadcastPath)
+	fmt.Println("   2. (the RTMP scenario subscribes to the :4443 origin)")
 	fmt.Println("   3. Click 'Start Subscribing'")
 	fmt.Println()
 
@@ -643,18 +688,19 @@ func (Rtmp) Demo() {
 	fmt.Println("  Terminal 3 — Push a test stream via ffmpeg:")
 	fmt.Println("    $ mage rtmp:stream")
 	fmt.Println()
-	fmt.Println("  Then open http://localhost:5173 in your browser,")
-	fmt.Println("  set Broadcast Path to /live/demo, and click 'Start Subscribing'.")
+	fmt.Println("  Then open http://localhost:5173/?scenario=rtmp&path=/rtmp/demo")
+	fmt.Println("  (the RTMP scenario subscribes to the :4443 origin) and click")
+	fmt.Println("  'Start Subscribing'.")
 	fmt.Println()
 	fmt.Println("┌──────────────────────────────────────────────────────────────┐")
 	fmt.Println("│  ffmpeg ──RTMP──▶ qumo (:1935)                              │")
 	fmt.Println("│                    │                                         │")
 	fmt.Println("│                    ▼                                         │")
-	fmt.Println("│                  MoQT/QUIC (:4433)                           │")
+	fmt.Println("│                  MoQT/QUIC (:4443)                           │")
 	fmt.Println("│                    │                                         │")
 	fmt.Println("│                    ▼                                         │")
 	fmt.Println("│              Browser (:5173)                                 │")
-	fmt.Println("│         /live/demo → catalog, video, audio                   │")
+	fmt.Println("│         /rtmp/demo → catalog, video, audio                   │")
 	fmt.Println("└──────────────────────────────────────────────────────────────┘")
 	fmt.Println()
 	fmt.Println("💡 Custom stream key:  APP=myapp KEY=mystream mage rtmp:stream")
