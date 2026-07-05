@@ -10,6 +10,7 @@
 package cors
 
 import (
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -84,7 +85,17 @@ func NewChecker(allowed []string) func(*http.Request) bool {
 		if sameHost && equalHost(u.Host, r.Host) {
 			return true
 		}
-		return strings.EqualFold(u.Host, r.Host)
+		if strings.EqualFold(u.Host, r.Host) {
+			return true
+		}
+		// Reachable only when the request carries an Origin the allow-list
+		// doesn't permit. Surface it (origin + host + remediation hint) so a
+		// misconfigured CORS_ALLOWED_ORIGINS — the common "browser can't
+		// connect" cause — isn't a silent handshake reset with no server trace.
+		slog.Info("webtransport origin rejected",
+			"origin", o, "host", r.Host,
+			"hint", "add the origin to "+EnvVar+" (or \""+SameHost+"\" / \"*\")")
+		return false
 	}
 }
 
