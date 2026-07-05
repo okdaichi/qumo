@@ -309,7 +309,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **G115 excluded globally:** Integer overflow conversions in RTMP/AMF3/QUIC protocol
   encoding are intentional truncations mandated by the respective wire formats.
 
-## [v0.4.0] - 2026-04-15
+## [v0.4.0]
 
 ### Breaking Changes
 
@@ -444,8 +444,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Basic Mage build automation.
 - CI workflow with test coverage.
 
-[Unreleased]: https://github.com/qumo-dev/qumo/compare/v0.4.0...HEAD
-[v0.4.0]: https://github.com/qumo-dev/qumo/compare/v0.3.1...v0.4.0
+[Unreleased]: https://github.com/qumo-dev/qumo/compare/v0.3.1...HEAD
+[v0.4.0]: https://github.com/qumo-dev/qumo/compare/v0.3.1...HEAD
 [v0.3.1]: https://github.com/qumo-dev/qumo/compare/v0.3.0...v0.3.1
 [v0.3.0]: https://github.com/qumo-dev/qumo/compare/v0.2.0...v0.3.0
 [v0.2.0]: https://github.com/qumo-dev/qumo/compare/v0.1.0...v0.2.0
