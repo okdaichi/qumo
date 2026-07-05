@@ -87,10 +87,12 @@ export function friendlyMessage(err: unknown, source?: MediaSourceType): string 
 	// SubscribeErrorCode, which @qumo/moq surfaces as a WebTransportStreamError
 	// whose `.code` is that code. TrackNotFound is the common demo case: the
 	// subscriber asked for a path nobody is publishing to.
+	const noStreamYet =
+		"No stream at this path yet. Make sure the publisher — or the RTMP/RTSP pusher — is running, then click Start again.";
 	const code = moqCode(err);
 	if (code !== undefined) {
 		if (code === SubscribeErrorCode.TrackNotFound) {
-			return "No stream at this path yet. Make sure the publisher — or the RTMP/RTSP pusher — is running, then click Start again.";
+			return noStreamYet;
 		}
 		if (code === SubscribeErrorCode.Unauthorized) {
 			return "The relay refused this stream as unauthorized.";
@@ -98,6 +100,17 @@ export function friendlyMessage(err: unknown, source?: MediaSourceType): string 
 		if (code === SubscribeErrorCode.SubscribeTimeout) {
 			return "Timed out waiting for the stream. Make sure the publisher is running, then try again.";
 		}
+	}
+
+	// A subscribe stream the peer reset before sending any response. When the
+	// relay resets without a MoQ code (or the code is lost), @qumo/moq surfaces
+	// it as a bare "WebTransportError: Received RESET_STREAM" wrapped in a
+	// "failed to read SUBSCRIBE response type" message — no `.code` to classify.
+	// In the subscribe context this still means "nobody is publishing to this
+	// path", so map it to the same actionable text as TrackNotFound rather than
+	// the generic connection-failure fallback (the relay IS reachable).
+	if (/subscri/i.test(raw) && /reset_stream/i.test(raw)) {
+		return noStreamYet;
 	}
 
 	// WebTransport / TLS handshake noise from the transport layer.
