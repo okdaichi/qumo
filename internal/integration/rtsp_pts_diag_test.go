@@ -5,6 +5,7 @@ package integration
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
 	"testing"
 	"time"
@@ -31,6 +32,12 @@ func TestRTSP_PTSDiagnostic(t *testing.T) {
 	if !ffpub.Available() {
 		t.Skip("ffmpeg not on PATH")
 	}
+
+	// Enable ingest-side raw-RTP-timestamp logging so CI logs show the exact
+	// timestamps assigned to each NALU (SPS/PPS/SEI vs the FU-A IDR) at the
+	// regression site — distinguishing an ffmpeg timestamp glitch from an
+	// ingest reassembly bug. See #229.
+	os.Setenv("QUMO_RTSP_DEBUG", "1")
 
 	mux := moqt.NewTrackMux(0)
 	rtspAddr, serveURL := setupRTSPPipeline(t, mux)

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"strings"
 	"sync"
 
@@ -373,6 +374,12 @@ func wrapAVCC(nalu []byte) []byte {
 	return data
 }
 
+// rtspDebug reports whether ingest-side RTSP diagnostics are enabled. Set
+// QUMO_RTSP_DEBUG=1 to log every pushed video NALU's raw RTP timestamp,
+// derived PTS, and NAL type — used to root-cause timestamp anomalies (e.g.
+// #229) that only reproduce on CI and can't be inspected from the subscriber.
+var rtspDebug = sync.OnceValue(func() bool { return os.Getenv("QUMO_RTSP_DEBUG") != "" })
+
 func (t *rtspTrack) pushNALU(timestamp uint32, nalu []byte) {
 	if t.session == nil {
 		return
@@ -381,6 +388,14 @@ func (t *rtspTrack) pushNALU(timestamp uint32, nalu []byte) {
 	data := wrapAVCC(nalu)
 	pts := int64(timestamp) * 1000 / 90 // 90kHz clock to microseconds
 	isKey := (nalu[0] & 0x1F) == 5
+	if rtspDebug() {
+		slog.Info("rtsp video nalu",
+			"rtp_ts", timestamp,
+			"pts_us", pts,
+			"nal_type", int(nalu[0]&0x1F),
+			"key", isKey,
+		)
+	}
 	t.session.PushVideo(pts, data, isKey)
 }
 
