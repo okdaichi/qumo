@@ -77,8 +77,8 @@ go build -ldflags "-s -w \
 - `mage demo:ps` - List demo containers
 
 ### 🔧 Utilities
-- `mage cert` - Generate TLS certificates
-- `mage hash` - Compute cert hash
+- `mage cert` - Generate a local-dev WebTransport cert. Prefers **mkcert** (browser-trusted, no pinning, no expiry churn) when on PATH; falls back to a 14-day self-signed cert that pins via `VITE_CERT_HASH`. Install mkcert via `brew install mkcert` / `winget install FiloSottile.mkcert`. Set `CERT_HOSTS=host[,host…]` to add extra SANs (mkcert path only) for LAN/hostname access.
+- `mage hash` - Compute cert SHA-256 (used by the self-signed fallback path)
 
 ## Usage
 

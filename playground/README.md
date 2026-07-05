@@ -69,7 +69,7 @@ There are two ways to run the demo:
   demo needs a running relay plus the Vite dev server. From the **repo root**:
 
   ```bash
-  # 1. Generate a WebTransport cert (writes VITE_CERT_HASH to playground/.env)
+  # 1. Generate a WebTransport cert
   mage cert
 
   # 2. Terminal A — start the relay
@@ -81,11 +81,18 @@ There are two ways to run the demo:
 
   Then open <http://localhost:5173>.
 
-The cert hash is required in the dev path: Chrome's `serverCertificateHashes`
-rejects the relay's self-signed cert without it, so without `VITE_CERT_HASH` the
-connection fails. `mage cert` handles generating the cert and writing the hash;
-see `.env.example`. (`qumo playground` sidesteps this by serving the hash at
-runtime via `/config`.)
+`mage cert` prefers **mkcert** when it's on PATH: it signs a long-lived
+localhost cert that chains to a trusted local root CA, so the browser trusts it
+directly — no `VITE_CERT_HASH`, no 14-day expiry, no Vite restart. Install
+mkcert with `brew install mkcert` / `winget install FiloSottile.mkcert` (see the
+[mkcert README](https://github.com/FiloSottile/mkcert)). Set
+`CERT_HOSTS=192.168.1.10,desktop.local mage cert` to add extra SANs if you reach
+the demo from another device on the LAN. When mkcert is absent,
+`mage cert` falls back to a 14-day self-signed cert and writes its SHA-256 to
+`playground/.env` as `VITE_CERT_HASH`; in that fallback the hash **is** required,
+because Chrome's `serverCertificateHashes` rejects the self-signed cert without
+it. (`qumo playground` sidesteps both by serving the hash at runtime via
+`/config`.)
 
 ### Configuration
 
@@ -94,7 +101,7 @@ Environment variables live in `playground/.env` (see `.env.example`):
 | Variable          | Description                                              |
 | ----------------- | -------------------------------------------------------- |
 | `VITE_RELAY_URL`  | Relay WebTransport URL (must be HTTPS).                  |
-| `VITE_CERT_HASH`  | SHA-256 (hex) of the relay cert. Run `mage cert` to set. |
+| `VITE_CERT_HASH`  | SHA-256 (hex) of the relay cert. Set by `mage cert` in its self-signed fallback; **not needed** when `mage cert` uses mkcert (browser-trusted). |
 
 The header title is a fixed `qumo` (not configurable).
 
@@ -125,7 +132,9 @@ mage demo:push    # opt-in ffmpeg test-pattern pushers → /rtmp/demo, /rtsp/dem
 ```
 
 The RTMP/RTSP tabs also show a copy-pasteable ffmpeg push command. All origins
-share one `mage cert` certificate, so a single `VITE_CERT_HASH` validates them.
+share one `mage cert` certificate. With mkcert the single cert is
+browser-trusted for every origin; in the self-signed fallback a single
+`VITE_CERT_HASH` (from `mage cert`) validates them.
 
 ## Controls
 
