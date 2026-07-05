@@ -94,7 +94,7 @@ func (s *Session) RegisterAudio(cfg *AACConfig) error {
 func (s *Session) PushVideo(timestampUS int64, data []byte, isKeyframe bool) {
 	f := moqt.NewFrame(mediaFrameSize(timestampUS, len(data)))
 	writeMediaFrame(f, timestampUS, data)
-	s.handler.video.push(f, isKeyframe)
+	s.handler.video.push(f, isKeyframe, timestampUS)
 }
 
 // PushAudio appends converted audio data (raw AAC frame) as an

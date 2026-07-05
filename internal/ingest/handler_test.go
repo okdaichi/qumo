@@ -113,7 +113,7 @@ func TestVideoTrack_Push(t *testing.T) {
 	// First push creates a new group (keyframe).
 	f1 := moqt.NewFrame(4)
 	f1.Write([]byte{0x17, 0x01, 0x00, 0x00})
-	v.push(f1, true)
+	v.push(f1, true, 1000)
 
 	assert.Equal(t, moqt.GroupSequence(1), v.buf.head())
 	g := v.buf.get(1)
@@ -124,7 +124,7 @@ func TestVideoTrack_Push(t *testing.T) {
 	// Non-keyframe appends to current group.
 	f2 := moqt.NewFrame(3)
 	f2.Write([]byte{0x27, 0x01, 0x00})
-	v.push(f2, false)
+	v.push(f2, false, 2000)
 
 	assert.Equal(t, moqt.GroupSequence(1), v.buf.head()) // same group
 	assert.Equal(t, f2, g.next(1))
@@ -132,13 +132,50 @@ func TestVideoTrack_Push(t *testing.T) {
 	// New keyframe starts a new group and completes the old one.
 	f3 := moqt.NewFrame(4)
 	f3.Write([]byte{0x17, 0x01, 0x00, 0x00})
-	v.push(f3, true)
+	v.push(f3, true, 3000)
 
 	assert.Equal(t, moqt.GroupSequence(2), v.buf.head())
 	assert.True(t, g.isComplete()) // old group completed
 	g2 := v.buf.get(2)
 	require.NotNil(t, g2)
 	assert.Equal(t, f3, g2.next(0))
+}
+
+// TestVideoTrack_Push_SameTimestampKeyframesCollapses verifies the #229 fix: a
+// publisher that emits several keyframe NALUs at the same presentation time
+// (e.g. ffmpeg's RTSP muxer emitting redundant IDRs in one access unit) must
+// not open a fresh MoQT group for each — they belong to one access unit, so one
+// group. Opening one group per redundant IDR caused rapid micro-group churn
+// that the relay ring / bounded collector window delivered out of order,
+// observed downstream as a spurious PTS regression.
+func TestVideoTrack_Push_SameTimestampKeyframesCollapses(t *testing.T) {
+	v := newVideoTrack(context.Background())
+
+	// First keyframe opens group 1.
+	k1 := moqt.NewFrame(4)
+	k1.Write([]byte{0x17, 0x01, 0x00, 0x00})
+	v.push(k1, true, 5000)
+
+	// Two more keyframes at the SAME timestamp must NOT open new groups.
+	k2 := moqt.NewFrame(4)
+	k2.Write([]byte{0x17, 0x01, 0x00, 0x00})
+	v.push(k2, true, 5000)
+	k3 := moqt.NewFrame(4)
+	k3.Write([]byte{0x17, 0x01, 0x00, 0x00})
+	v.push(k3, true, 5000)
+
+	assert.Equal(t, moqt.GroupSequence(1), v.buf.head(), "same-timestamp keyframes should share one group")
+	g := v.buf.get(1)
+	require.NotNil(t, g)
+	assert.Equal(t, k1, g.next(0))
+	assert.Equal(t, k2, g.next(1))
+	assert.Equal(t, k3, g.next(2))
+
+	// A keyframe at a new timestamp opens a new group.
+	k4 := moqt.NewFrame(4)
+	k4.Write([]byte{0x17, 0x01, 0x00, 0x00})
+	v.push(k4, true, 6000)
+	assert.Equal(t, moqt.GroupSequence(2), v.buf.head())
 }
 
 // ---------------------------------------------------------------------------
@@ -165,7 +202,7 @@ func TestVideoTrack_Close(t *testing.T) {
 	// Push a video frame to create a group.
 	f := moqt.NewFrame(3)
 	f.Write([]byte{0x17, 0x01, 0x00})
-	v.push(f, true)
+	v.push(f, true, 1000)
 
 	g := v.buf.get(1)
 	require.NotNil(t, g)
@@ -343,7 +380,7 @@ func TestIngestHandler_Close(t *testing.T) {
 		// Push a video frame so there's a current group.
 		f := moqt.NewFrame(3)
 		f.Write([]byte{0x17, 0x01, 0x00})
-		h.video.push(f, true)
+		h.video.push(f, true, 1000)
 
 		g := h.video.buf.get(1)
 		require.NotNil(t, g)
