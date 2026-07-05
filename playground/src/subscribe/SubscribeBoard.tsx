@@ -217,7 +217,6 @@ export function SubscribeBoard(props: { session: Promise<Session>; path: Accesso
 									"[Subscribe] video: catalog ready, starting decode loop",
 								);
 
-								let frameCount = 0;
 								while (isSubscribed()) {
 									const [group, groupErr] = await videoTrack.acceptGroup(
 										ctx.done(),
@@ -236,19 +235,6 @@ export function SubscribeBoard(props: { session: Promise<Session>; path: Accesso
 										const { timestamp, data } = deserializeMediaFrame(
 											frame.bytes,
 										);
-
-										// Log first 10 frames for diagnostics.
-										if (frameCount < 10) {
-											const hex = Array.from(data.slice(0, 48))
-												.map((b: number) => b.toString(16).padStart(2, "0"))
-												.join(" ");
-											console.log(
-												`[Subscribe] video #${frameCount}: type=${
-													isKey ? "key" : "delta"
-												} ts=${timestamp} len=${data.byteLength} hex=[${hex}]`,
-											);
-											frameCount++;
-										}
 
 										const chunk = new EncodedVideoChunk({
 											type: isKey ? "key" : "delta",
