@@ -265,8 +265,16 @@ type rtspTrack struct {
 	// aacDepack reassembles AAC access units from mpeg4-generic RTP payloads.
 	aacDepack *aacDepacketizer
 
-	// RTP reassembly
+	// fuBuffer reassembles an in-flight H.264 FU-A NAL unit across fragments.
 	fuBuffer []byte
+
+	// Access-unit reassembly for H.264 (RFC 6184). NAL units sharing an RTP
+	// timestamp belong to one access unit; they are accumulated in auNALUs and
+	// flushed as a single AVCC sample (concatenated length-prefixed NALUs) when
+	// the timestamp changes or the RTP marker bit marks the AU boundary.
+	auNALUs [][]byte
+	auTS    uint32
+	auOpen  bool
 }
 
 func (t *rtspTrack) handleFrame(f *rtsp.InterleavedFrame) {
@@ -290,9 +298,19 @@ func (t *rtspTrack) handleAudioRTP(p *rtsp.RTPPacket) {
 	if err != nil {
 		return
 	}
-	for _, au := range aus {
-		t.session.PushAudio(au.pts, au.data)
+	// Coalesce every access unit carried by this RTP packet into a single
+	// MoQT group. ffmpeg packs 3–4 AAC frames per mpeg4-generic packet; pushing
+	// them as N separate groups bursts N concurrent QUIC streams (MoQT maps one
+	// group to one stream), and gomoqt delivers groups in stream-arrival order
+	// — so a burst arrives out of PTS order and the decoder pops. One group
+	// keeps the frames on a single stream, delivered in order.
+	ptss := make([]int64, len(aus))
+	frames := make([][]byte, len(aus))
+	for i, au := range aus {
+		ptss[i] = au.pts
+		frames[i] = au.data
 	}
+	t.session.PushAudioFrames(ptss, frames)
 }
 
 func (t *rtspTrack) handleVideoRTP(p *rtsp.RTPPacket) {
@@ -300,17 +318,99 @@ func (t *rtspTrack) handleVideoRTP(p *rtsp.RTPPacket) {
 		return
 	}
 
-	typ := p.Payload[0] & 0x1F
+	// A change in RTP timestamp marks the start of a new access unit (RFC 6184
+	// §7.1.1): flush the accumulated NALUs as one AVCC sample before admitting
+	// any NALU from the new timestamp. This is also the safety net for the
+	// marker-bit boundary below.
+	if t.auOpen && p.Header.Timestamp != t.auTS {
+		t.flushAccessUnit()
+	}
+	t.auTS = p.Header.Timestamp
+	t.auOpen = true
+	t.auNALUs = append(t.auNALUs, t.extractNALUs(p.Payload)...)
+
+	// The RTP marker bit is set on the last packet of an access unit; flushing
+	// here gives the lowest-latency boundary and avoids holding the AU until the
+	// next timestamp arrives.
+	if p.Header.Marker {
+		t.flushAccessUnit()
+	}
+}
+
+// extractNALUs returns the complete H.264 NAL units carried by a single RTP
+// packet payload, handling the three RFC 6184 payload types:
+//
+//   - Single NAL (types 1–23): the whole payload is one NALU.
+//   - STAP-A (type 24): several NALUs aggregated with 2-byte length prefixes.
+//   - FU-A (type 28): a fragment; reassembled across packets, returned only on
+//     the final fragment.
+//
+// NAL types 0 and 25–31 are reserved/ignored. Returns nil for an FU-A middle
+// fragment (the NALU is still in flight).
+func (t *rtspTrack) extractNALUs(payload []byte) [][]byte {
+	typ := payload[0] & 0x1F
 	switch {
 	case typ >= 1 && typ <= 23:
-		// Single NAL unit
-		t.pushNALU(p.Header.Timestamp, p.Payload)
+		return [][]byte{payload}
+	case typ == 24:
+		return parseSTAPA(payload)
 	case typ == 28:
-		// FU-A fragmentation: reassemble across packets, push on the final fragment.
-		if nalu := t.reassembleFU(p.Payload); nalu != nil {
-			t.pushNALU(p.Header.Timestamp, nalu)
+		if nalu := t.reassembleFU(payload); nalu != nil {
+			return [][]byte{nalu}
+		}
+		return nil
+	}
+	return nil
+}
+
+// parseSTAPA splits an H.264 STAP-A aggregation packet (RFC 6184 §5.7) into its
+// component NAL units. Each entry is [uint16BE length][NALU]. A truncated entry
+// stops parsing; the well-formed NALUs parsed so far are returned.
+func parseSTAPA(payload []byte) [][]byte {
+	var nalus [][]byte
+	for off := 1; off+2 <= len(payload); {
+		n := int(binary.BigEndian.Uint16(payload[off:]))
+		off += 2
+		if off+n > len(payload) || n == 0 {
+			break
+		}
+		nalus = append(nalus, payload[off:off+n:off+n])
+		off += n
+	}
+	return nalus
+}
+
+// flushAccessUnit emits the accumulated access unit as a single AVCC sample
+// (concatenated 4-byte-length-prefixed NALUs) — the sample-stream format
+// matching the avc1 codec string and catalog initData — and resets the
+// accumulator. It is a no-op when no NALUs are accumulated.
+//
+// Pushing one AVCC sample per access unit (rather than one per NALU) is what
+// the WebCodecs VideoDecoder expects: an EncodedVideoChunk is one access unit.
+// ffmpeg's RTSP muxer emits several IDR NALUs at the same presentation
+// timestamp within one access unit; emitting them as separate same-PTS frames
+// caused two of every three to be marked `delta` by the player and decoded as
+// competing pictures.
+func (t *rtspTrack) flushAccessUnit() {
+	if !t.auOpen || len(t.auNALUs) == 0 {
+		t.auOpen = false
+		t.auNALUs = nil
+		return
+	}
+	var data []byte
+	isKey := false
+	for _, nalu := range t.auNALUs {
+		data = appendAVCC(data, nalu)
+		if nalu[0]&0x1F == 5 { // IDR slice
+			isKey = true
 		}
 	}
+	pts := int64(t.auTS) * 1000 / 90 // 90 kHz clock → microseconds
+	if t.session != nil {
+		t.session.PushVideo(pts, data, isKey)
+	}
+	t.auNALUs = nil
+	t.auOpen = false
 }
 
 // maxFUBufferSize caps a single reassembled H.264 NAL unit. A real NAL is far
@@ -325,7 +425,7 @@ var maxFUBufferSize = 16 << 20 // 16 MiB
 // returned when the final (end) fragment arrives, and nil while a NAL unit is
 // still in flight. The reconstructed first byte combines the FU indicator's
 // forbidden-zero-bit + NRI (top 3 bits, 0xE0) with the FU header's NAL type
-// (low 5 bits). Callers push the returned NAL unit via pushNALU.
+// (low 5 bits). Callers push the returned NAL unit via [extractNALUs].
 //
 // Safety: a middle/end fragment with no active reassembly (no preceding start)
 // is dropped rather than appended to a nil buffer, which would yield a NAL
@@ -363,25 +463,24 @@ func (t *rtspTrack) reassembleFU(payload []byte) []byte {
 	return nil
 }
 
-// wrapAVCC prefixes a NAL unit with a 4-byte big-endian length — the AVCC
-// sample-stream format that matches the avc1 codec string and the
-// AVCDecoderConfigurationRecord carried in the catalog initData.
+// appendAVCC appends a NAL unit, prefixed with a 4-byte big-endian length, to
+// data — the AVCC sample-stream format that matches the avc1 codec string and
+// the AVCDecoderConfigurationRecord carried in the catalog initData.
+func appendAVCC(data, nalu []byte) []byte {
+	var lenBuf [4]byte
+	binary.BigEndian.PutUint32(lenBuf[:], uint32(len(nalu)))
+	data = append(data, lenBuf[:]...)
+	data = append(data, nalu...)
+	return data
+}
+
+// wrapAVCC prefixes a single NAL unit with a 4-byte big-endian length. Retained
+// for tests that exercise the single-NAL framing directly.
 func wrapAVCC(nalu []byte) []byte {
 	data := make([]byte, 4+len(nalu))
 	binary.BigEndian.PutUint32(data, uint32(len(nalu)))
 	copy(data[4:], nalu)
 	return data
-}
-
-func (t *rtspTrack) pushNALU(timestamp uint32, nalu []byte) {
-	if t.session == nil {
-		return
-	}
-	// Emit AVCC (length-prefixed), matching the avc1 catalog codec string.
-	data := wrapAVCC(nalu)
-	pts := int64(timestamp) * 1000 / 90 // 90kHz clock to microseconds
-	isKey := (nalu[0] & 0x1F) == 5
-	t.session.PushVideo(pts, data, isKey)
 }
 
 func extractParameterSets(fmtp string) (sps, pps [][]byte) {

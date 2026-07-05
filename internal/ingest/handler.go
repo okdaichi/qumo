@@ -219,6 +219,24 @@ func (s *singleTrack) push(f *moqt.Frame) {
 	s.buf.notify()
 }
 
+// pushFrames emits multiple frames as a single MoQT group, in slice order. Use
+// when one source packet carries several access units (e.g. a multi-AU AAC RTP
+// packet): one group keeps the frames on a single QUIC stream so the subscriber
+// receives them in order, where pushing each as its own group would burst
+// concurrent streams that race and arrive out of PTS order.
+func (s *singleTrack) pushFrames(frames []*moqt.Frame) {
+	if len(frames) == 0 {
+		return
+	}
+	g := s.buf.openGroup()
+	for _, f := range frames {
+		g.append(f)
+	}
+	g.complete.Store(true)
+
+	s.buf.notify()
+}
+
 // serve writes buffered groups to a single MoQT TrackWriter. It blocks
 // until the subscriber disconnects or the publisher ends.
 func (s *singleTrack) serve(tw *moqt.TrackWriter) {
