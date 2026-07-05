@@ -138,26 +138,37 @@ func (h *ingestHandler) close() {
 // ---------------------------------------------------------------------------
 
 // videoTrack manages a video track with keyframe-based group boundaries.
-// Each keyframe opens a new MoQT group so that subscribers joining
-// mid-stream always get a clean decode point (GOP alignment).
+// Each keyframe opens a new MoQT group so that subscribers joining mid-stream
+// always get a clean decode point (GOP alignment).
+//
+// A new group is opened on a keyframe only when its timestamp differs from the
+// group currently being filled. This collapses redundant same-timestamp keyframe
+// NALUs into one group: some publishers (e.g. ffmpeg's RTSP muxer in #229) emit
+// several IDR NALUs back-to-back at the same presentation time, and opening a
+// fresh group for each produces rapid micro-group churn that the relay ring /
+// bounded collector window can deliver out of order — observed downstream as a
+// spurious PTS regression. Logically those IDRs belong to one access unit, so
+// one group is correct.
 type videoTrack struct {
 	buf       *trackBuffer
 	ctx       context.Context
 	currentMu sync.Mutex
 	current   *sourceGroup
+	currentTS int64 // presentation time (µs) of the group being filled; 0 before the first
 }
 
 func newVideoTrack(ctx context.Context) *videoTrack {
 	return &videoTrack{buf: newTrackBuffer(ctx, "video"), ctx: ctx}
 }
 
-func (v *videoTrack) push(f *moqt.Frame, isKeyframe bool) {
+func (v *videoTrack) push(f *moqt.Frame, isKeyframe bool, timestampUS int64) {
 	v.currentMu.Lock()
-	if v.current == nil || isKeyframe {
+	if v.current == nil || (isKeyframe && timestampUS != v.currentTS) {
 		if v.current != nil {
 			v.current.complete.Store(true)
 		}
 		v.current = v.buf.openGroup()
+		v.currentTS = timestampUS
 	}
 	v.current.append(f)
 	v.currentMu.Unlock()

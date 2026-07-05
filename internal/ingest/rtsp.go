@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
 	"strings"
 	"sync"
 
@@ -305,30 +304,10 @@ func (t *rtspTrack) handleVideoRTP(p *rtsp.RTPPacket) {
 	switch {
 	case typ >= 1 && typ <= 23:
 		// Single NAL unit
-		if rtspDebug() {
-			slog.Info("rtsp video packet",
-				"kind", "single",
-				"rtp_ts", p.Header.Timestamp,
-				"nal_type", int(typ),
-			)
-		}
 		t.pushNALU(p.Header.Timestamp, p.Payload)
 	case typ == 28:
 		// FU-A fragmentation: reassemble across packets, push on the final fragment.
-		fuHeader := p.Payload[1]
-		start := (fuHeader >> 7) & 1
-		end := (fuHeader >> 6) & 1
-		nalu := t.reassembleFU(p.Payload)
-		if rtspDebug() {
-			slog.Info("rtsp video packet",
-				"kind", "fu-a",
-				"rtp_ts", p.Header.Timestamp,
-				"nal_type", int(fuHeader&0x1F),
-				"start", start == 1, "end", end == 1,
-				"completed", nalu != nil,
-			)
-		}
-		if nalu != nil {
+		if nalu := t.reassembleFU(p.Payload); nalu != nil {
 			t.pushNALU(p.Header.Timestamp, nalu)
 		}
 	}
@@ -393,13 +372,6 @@ func wrapAVCC(nalu []byte) []byte {
 	copy(data[4:], nalu)
 	return data
 }
-
-// rtspDebug reports whether ingest-side RTSP diagnostics are enabled. Set
-// QUMO_RTSP_DEBUG=1 to log every video RTP packet's raw timestamp, NAL type,
-// and FU-A fragment flags — used to root-cause timestamp anomalies (e.g. #229)
-// that only reproduce on CI and can't be inspected from the subscriber. Read
-// fresh each call (not cached) so a test can enable it mid-binary-run.
-func rtspDebug() bool { return os.Getenv("QUMO_RTSP_DEBUG") != "" }
 
 func (t *rtspTrack) pushNALU(timestamp uint32, nalu []byte) {
 	if t.session == nil {
