@@ -40,9 +40,11 @@ docker compose -f docker/docker-compose.static.yml down
 Quick start (demo scenarios)
 
 Brings up the relay (MoQ-MoQ echo) plus RTMP and RTSP ingest origins together,
-all sharing one `mage cert` cert so a single pinned `VITE_CERT_HASH` validates
-every origin. The RTMP/RTSP servers are standalone origins — subscribers connect
-to the matching origin directly (they do not dial the relay).
+all sharing one `mage cert` cert. With mkcert that single cert is
+browser-trusted for every origin (no pinning needed); in `mage cert`'s
+self-signed fallback a single pinned `VITE_CERT_HASH` validates them instead.
+The RTMP/RTSP servers are standalone origins — subscribers connect to the
+matching origin directly (they do not dial the relay).
 
 ```bash
 # 1. Bring up relay + rtmp + rtsp (generates the cert if missing)

@@ -679,9 +679,25 @@ func WebClean() error {
 	return sh.Rm("playground/dist")
 }
 
-// Cert generates a short-lived self-signed ECDSA certificate for WebTransport development.
-// Chrome's serverCertificateHashes requires the certificate validity to be ≤14 days.
-// The SHA-256 fingerprint is automatically written to playground/.env as VITE_CERT_HASH.
+// Cert generates a local-development WebTransport certificate.
+//
+// When mkcert (https://github.com/FiloSottile/mkcert) is on PATH it is preferred:
+// mkcert signs a long-lived localhost cert that chains to a trusted local root CA,
+// so the browser trusts it without WebTransport serverCertificateHashes pinning —
+// no VITE_CERT_HASH sync, no 14-day expiry, no Vite restart. Install mkcert with:
+//
+//	macOS:   brew install mkcert
+//	Windows: winget install FiloSottile.mkcert
+//	Linux:   see the mkcert README (sudo apt install libnss3-tools + binary)
+//
+// When mkcert is absent, Cert falls back to a 14-day self-signed ECDSA cert
+// (Chrome's serverCertificateHashes limit) and writes its SHA-256 to
+// playground/.env as VITE_CERT_HASH, so CI / headless / air-gapped environments
+// keep working unchanged.
+//
+// CERT_HOSTS (mkcert path only) is a comma-separated list of extra SANs to add
+// beyond the default localhost/127.0.0.1/::1 — useful for reaching the demo
+// from another device on the LAN (e.g. CERT_HOSTS=192.168.1.10,desktop.local).
 func Cert() error {
 	fmt.Println("🔐 Generating WebTransport-compatible TLS certificate...")
 
@@ -689,6 +705,75 @@ func Cert() error {
 		return err
 	}
 
+	certFile := filepath.Join("certs", "server.crt")
+	keyFile := filepath.Join("certs", "server.key")
+
+	if mkcertPath, err := exec.LookPath("mkcert"); err == nil {
+		// Install the local CA into the trust store before signing. mkcert will
+		// happily sign a cert that chains to its root CA whether or not that root
+		// is actually installed in the trust store, so a successful sign is NOT
+		// proof the browser will trust the result. If install fails (e.g. the
+		// Linux system store needs root), fall back to the self-signed path rather
+		// than handing the user an untrusted cert AND wiping the working
+		// VITE_CERT_HASH pin they may already have from a previous self-signed run.
+		if err := runAttached(mkcertPath, "-install"); err != nil {
+			fmt.Println("⚠️  mkcert -install failed — the signed cert would not be browser-trusted.")
+			fmt.Printf("    %v\n", err)
+			fmt.Println("    Falling back to a self-signed cert. To use the mkcert path, run")
+			fmt.Println("    `mkcert -install` (with sudo on Linux for the system store) and re-run `mage cert`.")
+			return selfSignCert(certFile, keyFile)
+		}
+		return signWithMkcert(mkcertPath, certFile, keyFile)
+	}
+
+	fmt.Println("⚠️  mkcert not found on PATH — falling back to 14-day self-signed cert.")
+	fmt.Println("   Install mkcert for zero-pinning local dev (see https://github.com/FiloSottile/mkcert).")
+	return selfSignCert(certFile, keyFile)
+}
+
+// signWithMkcert signs a long-lived localhost cert with mkcert. The caller must
+// have already run `mkcert -install` so the cert chains to a trusted local root
+// CA; because the cert is then browser-trusted, no VITE_CERT_HASH pinning is
+// needed and any stale hash from a prior self-signed run is cleared.
+func signWithMkcert(mkcertPath, certFile, keyFile string) error {
+	// SANs cover the default local-dev origins. CERT_HOSTS (comma-separated)
+	// appends extra SANs — e.g. CERT_HOSTS=192.168.1.10,desktop.local mage cert —
+	// so a cert trusted via the mkcert CA also validates when the demo is reached
+	// from another device on the LAN (hostname must match; CA trust alone isn't
+	// enough). Unset → localhost-only, unchanged behavior.
+	hosts := []string{"localhost", "127.0.0.1", "::1"}
+	if extra := os.Getenv("CERT_HOSTS"); extra != "" {
+		for _, h := range strings.Split(extra, ",") {
+			if h = strings.TrimSpace(h); h != "" {
+				hosts = append(hosts, h)
+			}
+		}
+	}
+
+	args := append([]string{"-cert-file", certFile, "-key-file", keyFile}, hosts...)
+	if err := runAttached(mkcertPath, args...); err != nil {
+		return fmt.Errorf("mkcert sign: %w", err)
+	}
+
+	// mkcert certs chain to a trusted local CA, so the browser needs no pinned
+	// hash. A stale VITE_CERT_HASH from a prior self-signed run would force
+	// pinning to the wrong cert, so clear it (and its comment) too.
+	if err := clearCertHashInEnv(); err != nil {
+		fmt.Println("⚠️  Warning: failed to clear stale VITE_CERT_HASH from .env:", err)
+	}
+
+	fmt.Println()
+	fmt.Println("✅ mkcert certificate generated (browser-trusted, no pinning needed)!")
+	fmt.Println("   📄 certs/server.crt")
+	fmt.Println("   🔑 certs/server.key")
+	fmt.Println("   🔓 No VITE_CERT_HASH required — the cert chains to your local mkcert root CA.")
+	return nil
+}
+
+// selfSignCert mints a 14-day ECDSA P-256 self-signed cert and writes its
+// SHA-256 to playground/.env as VITE_CERT_HASH for WebTransport pinning. This is
+// the fallback used when mkcert isn't available (CI, headless, air-gapped).
+func selfSignCert(certFile, keyFile string) error {
 	// Generate ECDSA P-256 key
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -721,12 +806,7 @@ func Cert() error {
 	}
 
 	// Write certificate PEM
-	certFile, err := os.Create(filepath.Join("certs", "server.crt"))
-	if err != nil {
-		return err
-	}
-	defer certFile.Close()
-	if err := pem.Encode(certFile, &pem.Block{Type: "CERTIFICATE", Bytes: certDER}); err != nil {
+	if err := writePEMFile(certFile, "CERTIFICATE", certDER); err != nil {
 		return err
 	}
 
@@ -735,12 +815,7 @@ func Cert() error {
 	if err != nil {
 		return err
 	}
-	keyFile, err := os.Create(filepath.Join("certs", "server.key"))
-	if err != nil {
-		return err
-	}
-	defer keyFile.Close()
-	if err := pem.Encode(keyFile, &pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}); err != nil {
+	if err := writePEMFile(keyFile, "EC PRIVATE KEY", keyDER); err != nil {
 		return err
 	}
 
@@ -758,8 +833,62 @@ func Cert() error {
 	fmt.Println("   🔑 certs/server.key")
 	fmt.Println("   🔐 VITE_CERT_HASH written to playground/.env")
 	fmt.Println()
-	fmt.Println("💡 Re-run 'mage cert' when the certificate expires")
+	fmt.Println("💡 Re-run 'mage cert' when the certificate expires (or install mkcert to avoid expiry).")
 	return nil
+}
+
+// runAttached runs name with args, wiring stdout/stderr to the mage process.
+func runAttached(name string, args ...string) error {
+	cmd := exec.Command(name, args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+// writePEMFile writes a single PEM block to path, creating or truncating it with
+// owner-only permissions (0600) — the private key must not be world-readable.
+func writePEMFile(path, blockType string, der []byte) error {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return pem.Encode(f, &pem.Block{Type: blockType, Bytes: der})
+}
+
+// certHashEnvComment is the comment line writeCertHashToEnv writes above
+// VITE_CERT_HASH. clearCertHashInEnv strips it too so self-sign → mkcert →
+// self-sign cycles don't accumulate orphan comment blocks.
+const certHashEnvComment = "# Certificate hash for WebTransport (auto-generated by mage cert)"
+
+// clearCertHashInEnv removes the VITE_CERT_HASH line (and its comment) from
+// playground/.env so a stale hash from a prior self-signed run can't pin the
+// browser to the wrong cert. Other entries are preserved. A missing .env is a
+// no-op.
+func clearCertHashInEnv() error {
+	envPath := filepath.Join("playground", ".env")
+	data, err := os.ReadFile(envPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
+	lines := strings.Split(string(data), "\n")
+	kept := make([]string, 0, len(lines))
+	found := false
+	for _, line := range lines {
+		if strings.HasPrefix(line, "VITE_CERT_HASH=") || line == certHashEnvComment {
+			found = true
+			continue
+		}
+		kept = append(kept, line)
+	}
+	if !found {
+		return nil
+	}
+	return os.WriteFile(envPath, []byte(strings.Join(kept, "\n")), 0644)
 }
 
 // computeCertHash reads the PEM certificate at certs/server.crt, computes
@@ -807,7 +936,7 @@ func writeCertHashToEnv(hash string) error {
 				lines = strings.Split(string(tpl), "\n")
 			}
 		}
-		lines = append(lines, "", "# Certificate hash for WebTransport (auto-generated by mage cert)")
+		lines = append(lines, "", certHashEnvComment)
 		lines = append(lines, "VITE_CERT_HASH="+hash)
 	}
 
@@ -1178,7 +1307,7 @@ func (Demo) Ps() error {
 }
 
 // ensureDemoCert generates the WebTransport cert via Cert() only when missing,
-// so `mage demo:up` does not churn the cert (and VITE_CERT_HASH) on every run.
+// so `mage demo:up` does not churn the cert on every run.
 func ensureDemoCert() error {
 	if _, err := os.Stat("certs/server.crt"); err == nil {
 		return nil

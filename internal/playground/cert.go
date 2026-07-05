@@ -124,6 +124,20 @@ func loadCertIfFresh(certFile, keyFile string) (*Cert, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse cached cert: %w", err)
 	}
+	// Chrome's WebTransport serverCertificateHashes rejects any cert whose
+	// validity period exceeds 14 days, so a long-lived cert (e.g. one signed by
+	// mkcert when QUMO_PLAYGROUND_CERT_DIR points at `certs/`) can't be pinned.
+	// Surface this rather than serving a hash the browser will reject — and rather
+	// than regenerating, which would clobber the shared file. The fix is on the
+	// user side (unset QUMO_PLAYGROUND_CERT_DIR to let playground mint its own
+	// short-lived cert, or point it at a ≤14d cert).
+	if validity := cert.NotAfter.Sub(cert.NotBefore); validity > certValidity {
+		return nil, fmt.Errorf(
+			"cached cert validity %s exceeds the WebTransport serverCertificateHashes %s limit; "+
+				"unset QUMO_PLAYGROUND_CERT_DIR (or use a ≤%s cert) so playground can pin it",
+			validity, certValidity, certValidity,
+		)
+	}
 	if time.Until(cert.NotAfter) <= certReuseThreshold {
 		return nil, errCertStale
 	}

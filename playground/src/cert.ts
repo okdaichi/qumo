@@ -29,6 +29,12 @@ export function parseCertHash(raw: string | undefined): ParsedCertHash {
 
 // Build WebTransport transport options from VITE_CERT_HASH. Returns the pinned
 // hash bytes (when usable) plus a problem label for UI remediation otherwise.
+//
+// "missing" is intentionally NOT reported as a problem: when the cert is signed
+// by mkcert (browser-trusted root CA) no pin is needed, so VITE_CERT_HASH is
+// deliberately unset. On the self-signed fallback a genuinely-forgotten
+// `mage cert` surfaces as a connection error via friendlyConnError instead.
+// Only a malformed hash (the user set one but it isn't valid hex) is flagged.
 export function buildTransportOptions(certHash: string | undefined): {
 	transportOptions: WebTransportOptions;
 	problem: CertHashProblem | null;
@@ -40,11 +46,10 @@ export function buildTransportOptions(certHash: string | undefined): {
 			{ algorithm: "sha-256", value: parsed.bytes },
 		];
 	}
-	const problem: CertHashProblem | null = "bytes" in parsed ? null : parsed.problem;
+	const problem: CertHashProblem | null =
+		"problem" in parsed && parsed.problem === "malformed" ? "malformed" : null;
 	if (problem) {
-		console.warn(
-			`[client] VITE_CERT_HASH ${problem} — run 'mage cert' to generate`,
-		);
+		console.warn("[client] VITE_CERT_HASH is malformed (expected 64 hex chars)");
 	}
 	return { transportOptions, problem };
 }
