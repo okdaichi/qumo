@@ -34,7 +34,19 @@ func TestRTSPInterop_Matrix(t *testing.T) {
 	// Dimensions are intentionally not asserted: the RTSP ingest hardcodes
 	// 1920x1080 in the catalog (it does not parse SPS dimensions), so the gate's
 	// dimension check is disabled (Width/Height = 0).
-	const ctsWindow = 1_000_000
+	//
+	// The CTS window bounds the legitimate PTS regression between consecutive
+	// decode-ordered frames (B-frame composition reorder). It must be at least the
+	// max reorder depth, which scales with the GOP length: GOP / fps. GOP≤30 cases
+	// fit in 1 s; gop60_720p30 (GOP=60 @ 30 fps) needs ~2 s — a hierarchical
+	// B-frame at a GOP boundary can legitimately be displayed up to a full GOP
+	// earlier than the preceding decode-order frame (CI observed a 1.97 s
+	// regression here). 2.5 s gives margin so a near-ceiling reorder doesn't
+	// re-flake under timing jitter.
+	const (
+		ctsWindow      = 1_000_000
+		ctsWindowGOP60 = 2_500_000
+	)
 	matrix := []struct {
 		name string
 		cfg  ffpub.Config
@@ -53,7 +65,7 @@ func TestRTSPInterop_Matrix(t *testing.T) {
 		{
 			name: "gop60_720p30",
 			cfg:  ffpub.Config{GOP: 60, Width: 1280, Height: 720, Framerate: 30},
-			exp:  Expectations{WantVideo: true, VideoCodecPrefix: "avc1.", MinVideoFrames: 5, MinKeyframes: 1, RequireInitData: true, MaxCTSWindowUS: ctsWindow},
+			exp:  Expectations{WantVideo: true, VideoCodecPrefix: "avc1.", MinVideoFrames: 5, MinKeyframes: 1, RequireInitData: true, MaxCTSWindowUS: ctsWindowGOP60},
 		},
 		{
 			name: "gop15_320x240_15fps",
