@@ -275,6 +275,27 @@ type rtspTrack struct {
 	auNALUs [][]byte
 	auTS    uint32
 	auOpen  bool
+
+	// PTS zero-basing. RTSP carries each track on its own RTP clock (per-SSRC
+	// random offset), so raw timestamps are not comparable across the audio and
+	// video tracks and start at an arbitrary multi-hour value. Subtracting the
+	// first frame's PTS puts every track on a common epoch (its first frame);
+	// because a publisher starts audio and video together at media t=0, the two
+	// zero-based timelines then share that epoch and advance in lockstep — which
+	// is what makes A/V sync possible once a downstream scheduler (e.g. the
+	// browser AudioWorklet) consumes the timestamps. RTMP is already zero-based.
+	ptsBase  int64
+	ptsBased bool
+}
+
+// normalizePTS subtracts the track's first-frame PTS baseline (lazily captured),
+// returning a zero-based presentation timestamp. Idempotent after the first call.
+func (t *rtspTrack) normalizePTS(pts int64) int64 {
+	if !t.ptsBased {
+		t.ptsBase = pts
+		t.ptsBased = true
+	}
+	return pts - t.ptsBase
 }
 
 func (t *rtspTrack) handleFrame(f *rtsp.InterleavedFrame) {
@@ -307,7 +328,7 @@ func (t *rtspTrack) handleAudioRTP(p *rtsp.RTPPacket) {
 	ptss := make([]int64, len(aus))
 	frames := make([][]byte, len(aus))
 	for i, au := range aus {
-		ptss[i] = au.pts
+		ptss[i] = t.normalizePTS(au.pts)
 		frames[i] = au.data
 	}
 	t.session.PushAudioFrames(ptss, frames)
@@ -405,7 +426,7 @@ func (t *rtspTrack) flushAccessUnit() {
 			isKey = true
 		}
 	}
-	pts := int64(t.auTS) * 1000 / 90 // 90 kHz clock → microseconds
+	pts := t.normalizePTS(int64(t.auTS) * 1000 / 90) // 90 kHz clock → microseconds
 	if t.session != nil {
 		t.session.PushVideo(pts, data, isKey)
 	}

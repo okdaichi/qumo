@@ -283,7 +283,9 @@ func TestHandleVideoRTP_AccessUnitAggregation(t *testing.T) {
 		require.Len(t, g.frames, 1, "same-timestamp NALUs must aggregate into one frame")
 
 		gotTS, body := videoFrameBody(t, sess, 0)
-		assert.Equal(t, int64(ts)*1000/90, gotTS, "PTS = RTP ts (90kHz) -> microseconds")
+		// PTS is zero-based against the first frame's RTP timestamp, so this
+		// first AU lands at PTS 0 (the baseline), not the raw RTP-derived value.
+		assert.Equal(t, int64(0), gotTS, "first AU zero-bases the PTS timeline")
 		want := appendAVCC(appendAVCC(appendAVCC(nil, []byte{0x65, 0xA1}), []byte{0x65, 0xA2}), []byte{0x65, 0xA3})
 		assert.Equal(t, want, body)
 	})
@@ -328,6 +330,50 @@ func TestHandleVideoRTP_AccessUnitAggregation(t *testing.T) {
 		// A later IDR opens a fresh group.
 		track.handleVideoRTP(&rtsp.RTPPacket{Header: rtsp.RTPHeader{Timestamp: 270000, Marker: true}, Payload: []byte{0x65, 0x03}})
 		assert.Greater(t, sess.handler.video.buf.head(), head1, "IDR AU must open a new group (keyframe)")
+	})
+}
+
+// TestRTSPTrack_ZeroBasedPTS locks in the per-track PTS zero-basing: each track
+// subtracts its first frame's PTS so the timeline starts at 0, while relative
+// spacing is preserved. This puts audio and video (independent RTP clocks) on a
+// shared epoch for downstream timestamp-based A/V sync, and keeps absolute PTS
+// values small. RTMP is already zero-based; this matches it.
+func TestRTSPTrack_ZeroBasedPTS(t *testing.T) {
+	t.Run("video timeline starts at 0, spacing preserved", func(t *testing.T) {
+		sess, track := newAggregationSession(t, "/live/pts-video")
+		defer sess.Close()
+
+		// RTP timestamps with a large, non-zero base (as RTSP random offsets
+		// produce) advancing one frame period (90 kHz / 30 fps = 3000 ticks).
+		const base uint32 = 3_000_000_000 // ~9.26 h at 90 kHz — a typical offset
+		drive := func(ts uint32) {
+			track.handleVideoRTP(&rtsp.RTPPacket{
+				Header:  rtsp.RTPHeader{Timestamp: ts, Marker: true},
+				Payload: []byte{0x41, 0xAA}, // non-IDR; appends to the open group
+			})
+		}
+		drive(base)        // first frame establishes the baseline -> PTS 0
+		drive(base + 3000) // +1 frame
+		drive(base + 6000) // +2 frames
+
+		g := sess.handler.video.buf.get(sess.handler.video.buf.head())
+		require.NotNil(t, g)
+		require.GreaterOrEqual(t, len(g.frames), 3)
+
+		// Zero-basing subtracts the baseline after scaling (90 kHz -> µs), so the
+		// expected PTS is ((base+delta)*1000/90) - (base*1000/90); integer
+		// truncation makes this differ from delta*1000/90 by at most 1 µs/frame.
+		ptsAt := func(deltaTicks uint32) int64 {
+			return int64(base+deltaTicks)*1000/90 - int64(base)*1000/90
+		}
+		ts0, _ := videoFrameBody(t, sess, 0)
+		ts1, _ := videoFrameBody(t, sess, 1)
+		ts2, _ := videoFrameBody(t, sess, 2)
+		assert.Equal(t, ptsAt(0), ts0, "first frame zero-bases the timeline (PTS 0)")
+		assert.Equal(t, ptsAt(3000), ts1, "second frame is one frame period later")
+		assert.Equal(t, ptsAt(6000), ts2, "third frame is two frame periods later")
+		// Sanity: the timeline is small and roughly frame-spaced, not multi-hour.
+		assert.Less(t, ts2, int64(100_000), "zero-based PTS stays small")
 	})
 }
 
