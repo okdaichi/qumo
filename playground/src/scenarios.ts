@@ -21,10 +21,17 @@ export interface Scenario {
 export const SCENARIOS: Record<ScenarioId, Scenario> = {
 	echo: {
 		id: "echo",
-		label: "Echo",
-		description: "Publish and subscribe from your browser — full round-trip over MoQ.",
+		label: "Webcam",
+		description: "Publish from your camera or screen, and subscribe back — full MoQ round-trip in the browser.",
 		port: 4433,
 		mode: "publish-subscribe",
+	},
+	camera: {
+		id: "camera",
+		label: "IP Camera",
+		description: "Pull a live RTSP stream from an IP camera (e.g. rtsp://user:pass@192.168.1.100/stream) directly into MoQ.",
+		port: 4543,
+		mode: "subscribe",
 	},
 	rtmp: {
 		id: "rtmp",
@@ -37,23 +44,16 @@ export const SCENARIOS: Record<ScenarioId, Scenario> = {
 	},
 	rtsp: {
 		id: "rtsp",
-		label: "RTSP",
+		label: "RTSP Push",
 		description: "Push an RTSP stream from ffmpeg and subscribe in the browser.",
 		port: 4543,
 		mode: "subscribe",
 		pushScheme: "rtsp",
 		pushPort: 8554,
 	},
-	camera: {
-		id: "camera",
-		label: "Camera",
-		description: "Pull a live stream from an RTSP IP camera directly into MoQ.",
-		port: 4543,
-		mode: "subscribe",
-	},
 };
 
-export const SCENARIO_ORDER: ScenarioId[] = ["echo", "rtmp", "rtsp", "camera"];
+export const SCENARIO_ORDER: ScenarioId[] = ["echo", "camera", "rtmp", "rtsp"];
 
 export function isScenarioId(x: string): x is ScenarioId {
 	return x in SCENARIOS;
