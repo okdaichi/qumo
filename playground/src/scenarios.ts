@@ -2,12 +2,14 @@
 // WebTransport origin port, UI mode, and (for ingest scenarios) the push
 // scheme/port used to build the ffmpeg command shown in the UI.
 
-export type ScenarioId = "echo" | "rtmp" | "rtsp";
+export type ScenarioId = "echo" | "rtmp" | "rtsp" | "camera";
 export type ScenarioMode = "publish-subscribe" | "subscribe";
 
 export interface Scenario {
 	id: ScenarioId;
 	label: string;
+	/** One-line description shown below the scenario picker. */
+	description: string;
 	/** WebTransport origin port for this scenario. */
 	port: number;
 	mode: ScenarioMode;
@@ -19,13 +21,22 @@ export interface Scenario {
 export const SCENARIOS: Record<ScenarioId, Scenario> = {
 	echo: {
 		id: "echo",
-		label: "Echo",
+		label: "Webcam",
+		description: "Publish from your camera or screen, and subscribe back — full MoQ round-trip in the browser.",
 		port: 4433,
 		mode: "publish-subscribe",
 	},
+	camera: {
+		id: "camera",
+		label: "IP Camera",
+		description: "Pull a live RTSP stream from an IP camera (e.g. rtsp://user:pass@192.168.1.100/stream) directly into MoQ.",
+		port: 4543,
+		mode: "subscribe",
+	},
 	rtmp: {
 		id: "rtmp",
-		label: "RTMP ingest",
+		label: "RTMP",
+		description: "Push an RTMP stream from ffmpeg and subscribe in the browser.",
 		port: 4443,
 		mode: "subscribe",
 		pushScheme: "rtmp",
@@ -33,7 +44,8 @@ export const SCENARIOS: Record<ScenarioId, Scenario> = {
 	},
 	rtsp: {
 		id: "rtsp",
-		label: "RTSP ingest",
+		label: "RTSP Push",
+		description: "Push an RTSP stream from ffmpeg and subscribe in the browser.",
 		port: 4543,
 		mode: "subscribe",
 		pushScheme: "rtsp",
@@ -41,7 +53,7 @@ export const SCENARIOS: Record<ScenarioId, Scenario> = {
 	},
 };
 
-export const SCENARIO_ORDER: ScenarioId[] = ["echo", "rtmp", "rtsp"];
+export const SCENARIO_ORDER: ScenarioId[] = ["echo", "camera", "rtmp", "rtsp"];
 
 export function isScenarioId(x: string): x is ScenarioId {
 	return x in SCENARIOS;

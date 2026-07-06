@@ -13,7 +13,9 @@
 }
 
 .app-header {
-	margin-bottom: 20px;
+	margin-bottom: 24px;
+	padding-bottom: 16px;
+	border-bottom: 1px solid var(--border);
 }
 
 .app-subtitle {
@@ -37,8 +39,9 @@
 	gap: var(--gap);
 	background: var(--surface);
 	border: 1px solid var(--border);
-	border-radius: 12px;
-	padding: 12px 16px;
+	border-radius: var(--radius);
+	padding: 14px 18px;
+	box-shadow: var(--shadow-sm);
 }
 
 /* --- Shared segmented control (scenario picker #137, publish source) --- */
@@ -132,8 +135,9 @@
 .push-instructions {
 	background: var(--surface);
 	border: 1px solid var(--border);
-	border-radius: 12px;
-	padding: 12px 16px;
+	border-radius: var(--radius);
+	padding: 14px 16px;
+	box-shadow: var(--shadow-sm);
 }
 
 .push-instructions-head {
@@ -248,9 +252,16 @@
 .subscribe-board {
 	background: var(--surface);
 	border: 1px solid var(--border);
-	border-radius: 12px;
-	padding: 16px;
-	min-width: 0; /* let grid track shrink and the video scale with it */
+	border-radius: var(--radius);
+	padding: 18px;
+	min-width: 0;
+	box-shadow: var(--shadow-sm);
+	transition: box-shadow var(--transition);
+}
+
+.publish-board:hover,
+.subscribe-board:hover {
+	box-shadow: var(--shadow-md);
 }
 
 .controls {
@@ -333,6 +344,30 @@ input[type="range"] {
 	max-width: 160px;
 }
 
+/* --- Video empty-state placeholder --- */
+
+.video-empty {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 8px;
+	width: 100%;
+	aspect-ratio: 16 / 9;
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+	background: var(--surface-2);
+	color: var(--text-muted);
+	font-size: 0.9rem;
+	text-align: center;
+	padding: 20px;
+}
+
+.video-empty-icon {
+	font-size: 2rem;
+	opacity: 0.4;
+}
+
 /* Fullscreen: fill the screen with the video, no letterbox distortion. */
 .video-preview:fullscreen {
 	width: 100vw;
@@ -358,9 +393,10 @@ input[type="range"] {
 	border-color: transparent;
 	color: #062a14;
 	font-weight: 600;
+	transition: filter var(--transition);
 }
 .btn-start:hover:not(:disabled) {
-	filter: brightness(1.05);
+	filter: brightness(1.08);
 	border-color: transparent;
 }
 
@@ -369,9 +405,10 @@ input[type="range"] {
 	border-color: transparent;
 	color: #2a0606;
 	font-weight: 600;
+	transition: filter var(--transition);
 }
 .btn-stop:hover:not(:disabled) {
-	filter: brightness(1.05);
+	filter: brightness(1.08);
 	border-color: transparent;
 }
 
@@ -424,13 +461,14 @@ input[type="range"] {
 	margin: 0;
 	display: flex;
 	flex-wrap: wrap;
-	gap: 4px 12px;
-	padding: 4px 8px;
-	background: rgba(0, 0, 0, 0.6);
-	border-radius: 6px;
+	gap: 4px 14px;
+	padding: 5px 10px;
+	background: rgba(0, 0, 0, 0.65);
+	backdrop-filter: blur(6px);
+	border-radius: var(--radius-sm);
 	color: #fff;
 	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-	font-size: 0.72rem;
+	font-size: 0.75rem;
 	line-height: 1.5;
 	pointer-events: none;
 	user-select: none;
@@ -447,4 +485,62 @@ input[type="range"] {
 
 .stats-overlay dd {
 	margin: 0;
+}
+
+/* --- Scenario description --- */
+
+.scenario-desc {
+	color: var(--text-muted);
+	font-size: 0.85rem;
+	margin-top: 8px;
+}
+
+/* --- Camera pull form --- */
+
+.camera-pull-form {
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	padding: 14px 16px;
+	box-shadow: var(--shadow-sm);
+	margin-bottom: var(--gap);
+}
+
+.camera-pull-form label {
+	font-size: 0.8rem;
+	color: var(--text-muted);
+	display: block;
+	margin-bottom: 4px;
+}
+
+.camera-pull-input {
+	width: 100%;
+	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+	font-size: 0.85rem;
+	box-sizing: border-box;
+}
+
+.camera-pull-actions {
+	margin-top: var(--gap);
+}
+
+.camera-pull-status {
+	margin-top: 8px;
+	font-size: 0.85rem;
+	color: var(--text-muted);
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.camera-pull-status[data-state="connecting"] {
+	color: var(--warn);
+}
+
+.camera-pull-status[data-state="active"] {
+	color: var(--ok);
+}
+
+.camera-pull-status[data-state="error"] {
+	color: var(--err);
 }
