@@ -107,6 +107,30 @@ func (s *Session) PushAudio(timestampUS int64, data []byte) {
 	s.handler.audio.push(f)
 }
 
+// PushAudioFrames appends one or more raw AAC frames as a single MoQT group,
+// each wrapped in a MediaFrame envelope and ordered by its presentation
+// timestamp. Use this when a source packet carries several access units (e.g.
+// an mpeg4-generic RTP packet packing 3–4 AAC frames): coalescing them into one
+// group avoids a burst of concurrent MoQT groups whose QUIC streams can be
+// delivered out of order, which would reach the decoder non-monotonically and
+// pop. The single-frame [PushAudio] is the degenerate case.
+//
+// Each timestampsUS[i] is the presentation timestamp, in microseconds, of
+// frames[i]. The slices must have equal length; a nil/empty call is a no-op.
+func (s *Session) PushAudioFrames(timestampsUS []int64, frames [][]byte) {
+	if len(frames) == 0 || len(timestampsUS) != len(frames) {
+		return
+	}
+	built := make([]*moqt.Frame, len(frames))
+	for i, data := range frames {
+		pts := timestampsUS[i]
+		f := moqt.NewFrame(mediaFrameSize(pts, len(data)))
+		writeMediaFrame(f, pts, data)
+		built[i] = f
+	}
+	s.handler.audio.pushFrames(built)
+}
+
 // Close ends the MoQT announcement and signals all subscribers that
 // the publisher has disconnected. It is safe to call multiple times.
 func (s *Session) Close() {

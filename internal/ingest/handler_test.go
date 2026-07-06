@@ -196,6 +196,38 @@ func TestSingleTrack_Push(t *testing.T) {
 	assert.True(t, g.isComplete()) // single-track groups are immediately complete
 }
 
+// TestSingleTrack_PushFrames covers the multi-frame coalescing path used by the
+// RTSP audio ingest: one source packet carrying N AAC frames becomes ONE MoQT
+// group with N frames. Pushing N separate groups would burst N concurrent QUIC
+// streams that arrive out of order; one group keeps them on a single stream.
+func TestSingleTrack_PushFrames(t *testing.T) {
+	s := newSingleTrack(context.Background())
+
+	frames := []*moqt.Frame{
+		moqt.NewFrame(2), moqt.NewFrame(2), moqt.NewFrame(2),
+	}
+	for _, f := range frames {
+		f.Write([]byte{0xAA, 0x01})
+	}
+	s.pushFrames(frames)
+
+	// Exactly one group holds all three frames, in order.
+	assert.Equal(t, moqt.GroupSequence(1), s.buf.head())
+	g := s.buf.get(1)
+	require.NotNil(t, g)
+	assert.True(t, g.isComplete())
+	for i, f := range frames {
+		assert.Equal(t, f, g.next(i), "frame %d must be in the single group at index %d", i, i)
+	}
+	assert.Nil(t, g.next(len(frames)), "no extra frames")
+}
+
+func TestSingleTrack_PushFrames_Empty(t *testing.T) {
+	s := newSingleTrack(context.Background())
+	s.pushFrames(nil) // must not panic or open a group
+	assert.Equal(t, moqt.GroupSequence(0), s.buf.head())
+}
+
 func TestVideoTrack_Close(t *testing.T) {
 	v := newVideoTrack(context.Background())
 
@@ -501,6 +533,43 @@ func TestSession_AudioIndependentGroups(t *testing.T) {
 		require.NotNil(t, g)
 		assert.True(t, g.isComplete())
 	}
+}
+
+// TestSession_PushAudioFrames covers the coalesced-audio path: all frames in one
+// call land in a SINGLE MoQT group (one QUIC stream), preserving their order.
+// This is the RTSP AAC ingest fix for the multi-AU-per-packet burst that
+// delivered audio out of PTS order and popped.
+func TestSession_PushAudioFrames(t *testing.T) {
+	mux := moqt.NewTrackMux(0)
+	sess, err := NewSession(mux, "/live/audio-coalesce")
+	require.NoError(t, err)
+	defer sess.Close()
+
+	// Three AAC frames from one RTP packet → one group, not three.
+	sess.PushAudioFrames(
+		[]int64{0, 21333, 42666},
+		[][]byte{{0xAF, 0x01}, {0xAF, 0x02}, {0xAF, 0x03}},
+	)
+
+	assert.Equal(t, moqt.GroupSequence(1), sess.handler.audio.buf.head(), "one coalesced group")
+	g := sess.handler.audio.buf.get(1)
+	require.NotNil(t, g)
+	assert.True(t, g.isComplete())
+	require.Len(t, g.frames, 3)
+	for i := 0; i < 3; i++ {
+		assert.NotNil(t, g.next(i), "frame %d present", i)
+	}
+
+	t.Run("mismatched lengths is a no-op", func(t *testing.T) {
+		sess.PushAudioFrames([]int64{0}, [][]byte{{0x01}, {0x02}}) // 1 ts, 2 frames
+		// No new group opened.
+		assert.Equal(t, moqt.GroupSequence(1), sess.handler.audio.buf.head())
+	})
+
+	t.Run("empty is a no-op", func(t *testing.T) {
+		sess.PushAudioFrames(nil, nil)
+		assert.Equal(t, moqt.GroupSequence(1), sess.handler.audio.buf.head())
+	})
 }
 
 // ---------------------------------------------------------------------------
