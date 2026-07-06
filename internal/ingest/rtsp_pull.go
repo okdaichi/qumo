@@ -80,7 +80,7 @@ func RunRTSPPull(args []string) error {
 	}()
 
 	slog.Info("RTSP pull ingest starting",
-		"source", srcURL, "broadcast_path", path, "serve", serveAddr)
+		"source", redactURL(srcURL), "broadcast_path", path, "serve", serveAddr)
 
 	// Pull loop with exponential backoff reconnect.
 	go func() {
@@ -138,6 +138,14 @@ func pullStream(ctx context.Context, srcURL string, sess *Session) error {
 			continue
 		}
 		trackURL := resolveControlURL(media.Control, srcURL)
+		// Security: reject SDP control attributes that point to a different
+		// origin (SSRF via malicious SDP). The resolved track URL must share
+		// the session URL's scheme + host + port.
+		if !sameOrigin(trackURL, srcURL) {
+			slog.Warn("RTSP track control URL points to a different origin, skipping (possible SSRF)",
+				"track_control", media.Control)
+			continue
+		}
 		rtpCh := uint8(nextChan)
 		rtcpCh := uint8(nextChan + 1)
 		nextChan += 2
@@ -199,4 +207,30 @@ func resolveControlURL(control, sessionURL string) string {
 		return sessionURL
 	}
 	return base.ResolveReference(ref).String()
+}
+
+// redactURL strips credentials (user:pass@) from a URL string so it is safe to
+// log without leaking passwords.
+func redactURL(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL // best-effort: return as-is if unparseable
+	}
+	u.User = nil
+	return u.String()
+}
+
+// sameOrigin reports whether two URLs share the same scheme, host, and port.
+// Used to reject SDP a=control attributes that redirect to a different server
+// (SSRF prevention).
+func sameOrigin(a, b string) bool {
+	ua, err := url.Parse(a)
+	if err != nil {
+		return false
+	}
+	ub, err := url.Parse(b)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(ua.Scheme, ub.Scheme) && ua.Host == ub.Host
 }

@@ -27,3 +27,18 @@ func TestResolveControlURL(t *testing.T) {
 		})
 	}
 }
+
+func TestRedactURL(t *testing.T) {
+	assert.Equal(t, "rtsp://camera:554/stream", redactURL("rtsp://admin:secret@camera:554/stream"))
+	assert.Equal(t, "rtsp://camera:554/stream", redactURL("rtsp://camera:554/stream"))
+	assert.Equal(t, "garbage", redactURL("garbage")) // unparseable → returned as-is
+}
+
+func TestSameOrigin(t *testing.T) {
+	const session = "rtsp://camera:554/stream"
+	assert.True(t, sameOrigin("rtsp://camera:554/stream/trackID=0", session)) // same origin
+	assert.True(t, sameOrigin("rtsp://camera:554/other", session))            // same host:port
+	assert.False(t, sameOrigin("rtsp://evil.com/stream", session))            // different host (SSRF)
+	assert.False(t, sameOrigin("http://camera:554/stream", session))          // different scheme
+	assert.False(t, sameOrigin("rtsp://camera:555/stream", session))          // different port
+}
