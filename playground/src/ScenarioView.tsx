@@ -1,4 +1,4 @@
-import { type Accessor, createSignal, onCleanup, onMount } from "solid-js";
+import { type Accessor, createEffect, createSignal, onCleanup, onMount, Show } from "solid-js";
 import { connect, DefaultTrackMux } from "@qumo/moq";
 import type { Session } from "@qumo/moq";
 import { PublishBoard } from "./publish/PublishBoard.tsx";
@@ -30,48 +30,36 @@ export function ScenarioView(props: {
 	const mux = DefaultTrackMux;
 	const relayUrl = relayUrlFor(props.scenario);
 
-	// Transport lifecycle surfaced to the UI (issue #134). Starts "connecting"
-	// the moment we dial; moves to "connected" on a successful handshake. The
-	// session's `closed` promise then surfaces a mid-session disconnect — it
-	// resolves with a close info on a graceful (relay-initiated) close and
-	// rejects on a transport error, so the two are distinguished.
 	const [connState, setConnState] = createSignal<ConnectionState>("connecting");
 	const [connError, setConnError] = createSignal<string | null>(null);
-	// The cert-hash problem (missing/malformed) is resolved after the runtime
-	// config is fetched, so it's a signal read reactively by ConnectionStatus.
 	const [certHashProblem, setCertHashProblem] = createSignal<CertHashProblem | null>(null);
 
-	// Defer the dial until the runtime config (cert hash, served at /config by
-	// `qumo playground`, or the VITE_CERT_HASH fallback in the `mage web` dev
-	// path) is resolved. SubscribeBoard awaits props.session lazily, so a
-	// deferred promise is safe: it resolves to whatever connect() returns once
-	// config is ready.
 	let dialSession!: (s: Promise<Session>) => void;
 	const session: Promise<Session> = new Promise<Promise<Session>>((resolve) => {
 		dialSession = resolve;
 	}).then((s) => s);
 
-	onMount(async () => {
-		const cfg = await getConfig();
-		const { transportOptions, problem } = buildTransportOptions(cfg.certHash);
-		setCertHashProblem(problem);
+	let certReady = false;
+	let cachedTransportOptions: ReturnType<typeof buildTransportOptions>["transportOptions"] | undefined;
+	let cachedProblem: CertHashProblem | null = null;
 
-		const connected = connect(relayUrl, { mux, transportOptions });
+	// Shared dial logic — called once the config is resolved AND (for camera)
+	// the pull is active. For non-camera scenarios it fires immediately in
+	// onMount.
+	const doDial = () => {
+		if (!certReady) return;
+		setConnState("connecting");
+		const connected = connect(relayUrl, { mux, transportOptions: cachedTransportOptions! });
 		dialSession(connected);
-
 		connected.then(
 			(s) => {
 				setConnState("connected");
-				// Mid-session disconnect detection: closed resolves on graceful
-				// close (-> "closed"), rejects on a transport error (-> "failed").
 				s.closed.then(
 					(info) => {
 						setConnError(sanitizeReason(info.reason, "Connection closed by the relay."));
 						setConnState("closed");
 					},
 					(e) => {
-						// Transport errors can carry opaque quic/TLS internals; strip
-						// control chars and clamp the length before display.
 						setConnError(
 							sanitizeReason(
 								e instanceof Error ? e.message : String(e),
@@ -83,24 +71,46 @@ export function ScenarioView(props: {
 				);
 			},
 			(e) => {
-				setConnError(friendlyConnError(e, problem));
+				setConnError(friendlyConnError(e, cachedProblem));
 				setConnState("failed");
 			},
 		);
+	};
+
+	onMount(async () => {
+		const cfg = await getConfig();
+		const { transportOptions, problem } = buildTransportOptions(cfg.certHash);
+		cachedTransportOptions = transportOptions;
+		cachedProblem = problem;
+		certReady = true;
+		setCertHashProblem(problem);
+
+		// Non-camera scenarios connect immediately. Camera waits for pullActive.
+		if (!isCamera) {
+			doDial();
+		}
 	});
 
-	// Drop the session when switching scenario (this view unmounts).
+	// Camera: dial when the pull becomes active.
+	createEffect(() => {
+		if (isCamera && pullActive() && certReady) {
+			doDial();
+		}
+	});
+
 	onCleanup(() => {
 		session.then((s) => s.close().catch(() => {})).catch(() => {});
 	});
 
 	return (
 		<>
-			<ConnectionStatus
-				state={connState()}
-				error={connError()}
-				certHashProblem={certHashProblem()}
-			/>
+			<Show when={!isCamera || pullActive()}>
+				<ConnectionStatus
+					state={connState()}
+					error={connError()}
+					certHashProblem={certHashProblem()}
+				/>
+			</Show>
 
 			{isCamera && (
 				<CameraPullForm
