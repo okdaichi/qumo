@@ -189,44 +189,7 @@ func (s *RTSPServer) handleConn(ctx context.Context, conn *rtsp.Conn) {
 				}
 			}
 
-			track := &rtspTrack{
-				session: sess,
-			}
-			if media != nil {
-				// Codec detection is case-insensitive: ffmpeg emits
-				// "MPEG4-GENERIC/..." (uppercase) for AAC, while the SDP rtpmap
-				// encoding-name is case-insensitive per RFC 3555.
-				rtpMap := strings.ToLower(media.RtpMap)
-				if media.Type == "video" && strings.Contains(rtpMap, "h264") {
-					track.kind = trackKindVideo
-					// Extract SPS/PPS
-					if fmtp := media.Fmtp; fmtp != "" {
-						sps, pps := extractParameterSets(fmtp)
-						if len(sps) > 0 && len(sps[0]) >= 4 {
-							cfg := &AVCConfig{
-								ProfileIDC:    sps[0][1],
-								ProfileCompat: sps[0][2],
-								LevelIDC:      sps[0][3],
-								NALULenSize:   4,
-								SPS:           sps,
-								PPS:           pps,
-							}
-							cfg.Width, cfg.Height = parseSPSDimensions(sps[0])
-							if err := sess.RegisterVideo(cfg); err != nil {
-								slog.Warn("failed to register video track", "error", err)
-							}
-							track.avcCfg = cfg
-						}
-					}
-				} else if media.Type == "audio" && strings.Contains(rtpMap, "mpeg4-generic") {
-					track.kind = trackKindAudio
-					cfg := parseAACConfigFromFmtp(media.Fmtp)
-					track.aacDepack = newAACDepacketizer(media.Fmtp, cfg.SampleRate)
-					if err := sess.RegisterAudio(cfg); err != nil {
-						slog.Warn("failed to register audio track", "error", err)
-					}
-				}
-			}
+			track := newRTSPTrackFromMedia(sess, media)
 
 			tracks[rtpChan] = track
 			resp.Header.Set("Transport", transport)
@@ -502,6 +465,48 @@ func wrapAVCC(nalu []byte) []byte {
 	binary.BigEndian.PutUint32(data, uint32(len(nalu)))
 	copy(data[4:], nalu)
 	return data
+}
+
+// newRTSPTrackFromMedia builds an rtspTrack from an SDP media description and
+// registers it with the session. Shared by the push SETUP handler (above) and
+// the pull DESCRIBE path (rtsp_pull.go). Codec detection is case-insensitive
+// (RFC 3555); H.264 video and mpeg4-generic/AAC audio are supported; anything
+// else returns a track with kind=0 (uninitialised) which the caller should skip.
+func newRTSPTrackFromMedia(sess *Session, media *rtsp.SDPMedia) *rtspTrack {
+	track := &rtspTrack{session: sess}
+	if media == nil {
+		return track
+	}
+	rtpMap := strings.ToLower(media.RtpMap)
+	if media.Type == "video" && strings.Contains(rtpMap, "h264") {
+		track.kind = trackKindVideo
+		if fmtp := media.Fmtp; fmtp != "" {
+			sps, pps := extractParameterSets(fmtp)
+			if len(sps) > 0 && len(sps[0]) >= 4 {
+				cfg := &AVCConfig{
+					ProfileIDC:    sps[0][1],
+					ProfileCompat: sps[0][2],
+					LevelIDC:      sps[0][3],
+					NALULenSize:   4,
+					SPS:           sps,
+					PPS:           pps,
+				}
+				cfg.Width, cfg.Height = parseSPSDimensions(sps[0])
+				if err := sess.RegisterVideo(cfg); err != nil {
+					slog.Warn("failed to register video track", "error", err)
+				}
+				track.avcCfg = cfg
+			}
+		}
+	} else if media.Type == "audio" && strings.Contains(rtpMap, "mpeg4-generic") {
+		track.kind = trackKindAudio
+		cfg := parseAACConfigFromFmtp(media.Fmtp)
+		track.aacDepack = newAACDepacketizer(media.Fmtp, cfg.SampleRate)
+		if err := sess.RegisterAudio(cfg); err != nil {
+			slog.Warn("failed to register audio track", "error", err)
+		}
+	}
+	return track
 }
 
 func extractParameterSets(fmtp string) (sps, pps [][]byte) {

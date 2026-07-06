@@ -56,7 +56,8 @@ mage build        # builds bin/qumo with version info
 ```bash
 qumo relay       # Start MoQ relay server (QUIC/MoQT, WebTransport, peer mesh)
 qumo rtmp        # Start RTMP ingest server (bridges RTMP → MoQT)
-qumo rtsp        # Start RTSP ingest server (bridges RTSP → MoQT)
+qumo rtsp        # Pull from an RTSP source (e.g. IP camera) and republish as MoQT
+qumo rtsp-push   # Start the RTSP push ingest server (bridges RTSP → MoQT)
 qumo playground  # One-command local demo: in-process relay + embedded web UI on http://127.0.0.1:8080
 qumo version     # Print build-time version info
 ```

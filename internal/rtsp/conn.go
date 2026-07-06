@@ -19,6 +19,14 @@ type Conn struct {
 }
 
 func newConn(transport net.Conn) *Conn {
+	return NewConn(transport)
+}
+
+// NewConn wraps an already-established network connection as an RTSP [Conn].
+// It is the client-side entry point: the server side constructs Conns via
+// [Listener.Accept]. The returned Conn can [Conn.WriteRequest] /
+// [Conn.ReadResponse] / [Conn.ReadRequest] (interleaved frames) symmetrically.
+func NewConn(transport net.Conn) *Conn {
 	return &Conn{
 		transport: transport,
 		br:        bufio.NewReader(transport),
