@@ -260,8 +260,8 @@ func TestPullStream_VideoOnly(t *testing.T) {
 // reassembled into one IDR NAL, then pushed to the Session.
 func TestPullStream_FUAFragmentation(t *testing.T) {
 	// FU-A: indicator (NRI=3, type=28) + FU header (start/end, type=5) + payload.
-	fuaStart := append([]byte{fuIndicator(3), 0x80 | 5, 0xAA})     // start, type=5
-	fuaEnd := append([]byte{fuIndicator(3), 0x40 | 5, 0xBB, 0xCC}) // end, type=5
+	fuaStart := []byte{fuIndicator(3), 0x80 | 5, 0xAA}     // start, type=5
+	fuaEnd := []byte{fuIndicator(3), 0x40 | 5, 0xBB, 0xCC} // end, type=5
 
 	addr := startFakeRTSPServer(t, buildTestSDP(false), []rtsp.InterleavedFrame{
 		{Channel: 0, Payload: append(buildRTPHeader(96, false, 1, 90000, 0x1111), fuaStart...)},
