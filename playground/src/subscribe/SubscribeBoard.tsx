@@ -5,8 +5,20 @@ import { parseCatalog } from "@qumo/moq/msf";
 import { deserializeMediaFrame } from "../publish/media_frame.ts";
 import { background, withCancel } from "@okdaichi/golikejs/context";
 import { friendlyMessage } from "../errors.ts";
+import { createLogger, createMediaLogger, MediaTags } from "@okdaichi/media-log";
 import { createStatsTicker } from "../stats.ts";
 import type { BroadcastPath } from "@qumo/moq";
+
+// Tagged, structured logging via @okdaichi/media-log. The video (decoder) logger
+// also carries media meters (fps/bitrate/gauge) that flush one diagnostic line
+// per second alongside the UI overlay.
+const log = createLogger("subscribe");
+const videoLog = createMediaLogger(MediaTags.decoder);
+const audioLog = createLogger(MediaTags.audio);
+const decFps = videoLog.meter.fps("decode");
+const decBitrate = videoLog.meter.bitrate("ingress");
+const rttGauge = videoLog.meter.gauge("rtt", { unit: "ms" });
+const queueGauge = videoLog.meter.gauge("decode queue");
 
 export function SubscribeBoard(props: { session: Promise<Session>; path: Accessor<string> }) {
 	const [isSubscribed, setIsSubscribed] = createSignal(false);
@@ -24,9 +36,15 @@ export function SubscribeBoard(props: { session: Promise<Session>; path: Accesso
 	const [rtt, setRtt] = createSignal(0);
 	let statsSession: Session | undefined;
 	const videoStats = createStatsTicker(1000, () => {
-		setDecQueue(videoDecodeNode?.decodeQueueSize ?? 0);
+		const q = videoDecodeNode?.decodeQueueSize ?? 0;
+		setDecQueue(q);
+		queueGauge.sample(q);
 		if (statsSession) {
-			void statsSession.getStats().then((s) => setRtt(s.rtt ?? 0));
+			void statsSession.getStats().then((s) => {
+				const r = s.rtt ?? 0;
+				setRtt(r);
+				rttGauge.sample(r);
+			});
 		}
 	});
 
@@ -134,7 +152,7 @@ export function SubscribeBoard(props: { session: Promise<Session>; path: Accesso
 						// Catalog TrackNotFound is the common "nobody is publishing to
 						// this path yet" case — friendlyMessage maps it to actionable text.
 						setError(friendlyMessage(catalogErr));
-						console.warn("[Subscribe] catalog subscribe failed:", catalogErr);
+						log.warn("catalog subscribe failed", { err: catalogErr });
 						// No catalog => no stream to recover; drop back to Start so the
 						// user can retry without clicking Stop first.
 						setIsSubscribed(false);
@@ -145,7 +163,7 @@ export function SubscribeBoard(props: { session: Promise<Session>; path: Accesso
 						const [group, groupErr] = await catalogTrack.acceptGroup(ctx.done());
 						if (groupErr) {
 							if (!isSubscribed()) break;
-							console.warn("[Subscribe] catalog acceptGroup:", groupErr);
+							log.warn("catalog acceptGroup failed", { err: groupErr });
 							break;
 						}
 
@@ -172,15 +190,12 @@ export function SubscribeBoard(props: { session: Promise<Session>; path: Accesso
 									...(description ? { description } : {}),
 								};
 								videoDecodeNode!.configure(cfg);
-								console.log("[Subscribe] VideoDecoder configured:", cfg.codec);
+								log.info("video decoder configured", { codec: cfg.codec });
 								// Update canvas bitmap dimensions to match the actual video so portrait
 								// (or any non-default-aspect) streams are not stretched.
 								if (videoTrack.width) setCanvasWidth(videoTrack.width);
 								if (videoTrack.height) setCanvasHeight(videoTrack.height);
-								console.log(
-									"[Subscribe] catalog received, video codec:",
-									videoTrack.codec,
-								);
+								log.info("catalog received", { videoCodec: videoTrack.codec });
 								if (!firstConfigReceived) {
 									firstConfigReceived = true;
 									resolveFirstConfig();
@@ -193,10 +208,9 @@ export function SubscribeBoard(props: { session: Promise<Session>; path: Accesso
 									sampleRate: audioTrack.samplerate ?? 48000,
 									numberOfChannels: parseInt(audioTrack.channelConfig ?? "2", 10),
 								});
-								console.log(
-									"[Subscribe] audio decoder configured:",
-									audioTrack.codec,
-								);
+								audioLog.info("audio decoder configured", {
+									codec: audioTrack.codec,
+								});
 							}
 						}
 					}
@@ -208,7 +222,7 @@ export function SubscribeBoard(props: { session: Promise<Session>; path: Accesso
 					if (videoErr) {
 						if (!isSubscribed()) return;
 						setError(friendlyMessage(videoErr));
-						console.warn("[Subscribe] video subscribe failed:", videoErr);
+						videoLog.warn("subscribe failed", { err: videoErr });
 						setIsSubscribed(false);
 						return;
 					}
@@ -218,9 +232,7 @@ export function SubscribeBoard(props: { session: Promise<Session>; path: Accesso
 							try {
 								// Wait for the first catalog before feeding any frames.
 								await firstConfigReady;
-								console.log(
-									"[Subscribe] video: catalog ready, starting decode loop",
-								);
+								videoLog.info("catalog ready, starting decode loop");
 
 								while (isSubscribed()) {
 									const [group, groupErr] = await videoTrack.acceptGroup(
@@ -228,10 +240,7 @@ export function SubscribeBoard(props: { session: Promise<Session>; path: Accesso
 									);
 									if (groupErr) {
 										if (!isSubscribed()) break;
-										console.error(
-											"[Subscribe] video acceptGroup error:",
-											groupErr,
-										);
+										videoLog.error("acceptGroup failed", { err: groupErr });
 										break;
 									}
 
@@ -247,15 +256,18 @@ export function SubscribeBoard(props: { session: Promise<Session>; path: Accesso
 											data,
 										});
 										controller.enqueue(chunk);
-										// Tally the decoded frame for the live stats overlay.
+										// Tally the decoded frame for the live stats overlay…
 										videoStats.mark(data.byteLength);
+										// …and for the periodic diagnostic log (fps + bitrate).
+										decFps.mark();
+										decBitrate.mark(data.byteLength);
 										isKey = false;
 									}
 								}
 								controller.close();
 							} catch (err) {
 								if (isSubscribed()) {
-									console.error("[Subscribe] video track error:", err);
+									videoLog.error("video track error", { err });
 									controller.error(err);
 								} else {
 									controller.close();
@@ -275,7 +287,7 @@ export function SubscribeBoard(props: { session: Promise<Session>; path: Accesso
 				async ([audioMoqTrack, audioMoqErr]) => {
 					if (audioMoqErr) {
 						if (!isSubscribed()) return;
-						console.warn("[Subscribe] audio subscribe failed:", audioMoqErr);
+						audioLog.warn("subscribe failed", { err: audioMoqErr });
 						return;
 					}
 					if (!audioDecodeNode || !audioContext) return;
@@ -293,10 +305,7 @@ export function SubscribeBoard(props: { session: Promise<Session>; path: Accesso
 									);
 									if (groupErr) {
 										if (!isSubscribed()) break;
-										console.error(
-											"moq: Error accepting audio group:",
-											groupErr,
-										);
+										audioLog.error("acceptGroup failed", { err: groupErr });
 										break;
 									}
 									for await (const frame of group.frames()) {
@@ -314,7 +323,7 @@ export function SubscribeBoard(props: { session: Promise<Session>; path: Accesso
 								controller.close();
 							} catch (err) {
 								if (isSubscribed()) {
-									console.error("Audio track error:", err);
+									audioLog.error("audio track error", { err });
 									controller.error(err);
 								} else {
 									controller.close();
@@ -333,7 +342,7 @@ export function SubscribeBoard(props: { session: Promise<Session>; path: Accesso
 			videoStats.start();
 		} catch (err) {
 			setError(friendlyMessage(err));
-			console.error("Failed to start subscribing:", err);
+			log.error("failed to start subscribing", { err });
 			setIsSubscribed(false);
 		}
 	};

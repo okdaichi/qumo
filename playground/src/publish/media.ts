@@ -1,3 +1,7 @@
+import { createLogger } from "@okdaichi/media-log";
+
+const log = createLogger("media");
+
 export type MediaSourceType = "camera" | "screen";
 
 export interface MediaConstraints {
@@ -43,7 +47,7 @@ export const getMediaStream = async (
 		// The UI classifies these by name (NotAllowedError, NotFoundError, …)
 		// into an actionable message, so wrapping them in a plain Error — which
 		// drops .name — would defeat that. We only log the source type here.
-		console.error(`[media] get${type} stream failed:`, err);
+		log.error(`get${type} stream failed`, { err });
 		throw err;
 	}
 };

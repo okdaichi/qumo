@@ -2,6 +2,7 @@
 	"imports": {
 		"@okdaichi/av-nodes": "jsr:@okdaichi/av-nodes@0.10.3",
 		"@okdaichi/golikejs": "jsr:@okdaichi/golikejs@0.9.0",
+		"@okdaichi/media-log": "jsr:@okdaichi/media-log@^0.1.0",
 		"@qumo/moq": "jsr:@qumo/moq@^0.16.1"
 	},
 	"fmt": {

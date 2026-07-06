@@ -13,6 +13,7 @@ import { getMediaStream, type MediaSourceType } from "./media.ts";
 import { background, type CancelFunc, type Context, withCancel } from "@okdaichi/golikejs/context";
 import { MediaFrame } from "./media_frame.ts";
 import { friendlyMessage } from "../errors.ts";
+import { createMediaLogger, MediaTags } from "@okdaichi/media-log";
 import { createStatsTicker } from "../stats.ts";
 import { Camera, Monitor } from "lucide-solid";
 import type { Component } from "solid-js";
@@ -28,6 +29,12 @@ function encodeBase64(buf: ArrayBufferLike | ArrayBufferView): string {
 }
 
 const GOP_DURATION = 1000; // 1 second
+
+// Tagged, structured, level-filtered logging via @okdaichi/media-log. The meters
+// flush one diagnostic fps/bitrate line per second alongside the UI overlay.
+const log = createMediaLogger(MediaTags.encoder);
+const encFps = log.meter.fps("encode");
+const encBitrate = log.meter.bitrate("egress");
 
 // Encode-quality presets (#135). Resolution maps to getUserMedia `ideal`
 // constraints (the camera picks the nearest mode); the encoder then encodes at
@@ -138,7 +145,7 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 			// Pass the source type so a denied screen-share reads as screen-share,
 			// not "Camera or microphone".
 			setError(friendlyMessage(err, sourceType()));
-			console.error("Failed to start streaming:", err);
+			log.error("failed to start streaming", { err });
 			return;
 		}
 
@@ -160,7 +167,7 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 				actualHeight = bitmap.height;
 				bitmap.close();
 			} catch (err) {
-				console.warn("[Publish] grabFrame failed, falling back to getSettings():", err);
+				log.warn("grabFrame failed, falling back to getSettings()", { err });
 				const s = videoTrack.getSettings();
 				actualWidth = s.width ?? canvasWidth();
 				actualHeight = s.height ?? canvasHeight();
@@ -191,7 +198,7 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 			// Codec/encoder unsupported — release the camera we just acquired.
 			stream.getTracks().forEach((t) => t.stop());
 			setError(friendlyMessage(err));
-			console.error("Failed to configure video encoder:", err);
+			log.error("failed to configure video encoder", { err });
 			return;
 		}
 		// Size the preview canvas to the actual stream dimensions.
@@ -217,7 +224,7 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 					channelConfig: String(audioCfg.numberOfChannels),
 				};
 			} catch (err) {
-				console.warn("[Publish] audio setup failed, continuing without audio:", err);
+				log.warn("audio setup failed, continuing without audio", { err });
 			}
 		}
 
@@ -265,7 +272,9 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 							const tracks: Track[] = audioTrackDef
 								? [updatedTrack, audioTrackDef]
 								: [updatedTrack];
-							broadcast.setCatalog({ version: 1, tracks }).catch(console.error);
+							broadcast.setCatalog({ version: 1, tracks }).catch((err: unknown) =>
+								log.error("setCatalog failed", { err })
+							);
 						}
 
 						if (chunk.type === "key") {
@@ -279,8 +288,11 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 
 						const err = await currentGroup!.writeFrame(new MediaFrame(chunk));
 						if (err) throw err;
-						// Tally the published frame for the live stats overlay.
+						// Tally the published frame for the live stats overlay…
 						videoStats.mark(chunk.byteLength);
+						// …and for the periodic diagnostic log line (fps + bitrate).
+						encFps.mark();
+						encBitrate.mark(chunk.byteLength);
 					},
 				});
 
@@ -342,13 +354,13 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 				const audioSource = audioContext.createMediaStreamSource(stream);
 				audioSource.connect(audioEncodeNode);
 			} catch (err) {
-				console.warn("[Publish] failed to connect audio source:", err);
+				log.warn("failed to connect audio source", { err });
 			}
 		}
 
 		setIsStreaming(true);
 		videoStats.start();
-		console.log(`Started streaming from ${sourceType()}`);
+		log.info("started streaming", { source: sourceType() });
 	};
 
 	const stopStreaming = () => {

@@ -1,6 +1,10 @@
 // Cert-hash parsing + WebTransport transport options for the demo.
 // Shared by every scenario (all origins use the same `mage cert` cert).
 
+import { createLogger } from "@okdaichi/media-log";
+
+const log = createLogger("cert");
+
 // Why the cert hash can't pin the relay cert: not configured, or present but
 // not a valid 64-char hex SHA-256.
 export type CertHashProblem = "missing" | "malformed";
@@ -46,10 +50,11 @@ export function buildTransportOptions(certHash: string | undefined): {
 			{ algorithm: "sha-256", value: parsed.bytes },
 		];
 	}
-	const problem: CertHashProblem | null =
-		"problem" in parsed && parsed.problem === "malformed" ? "malformed" : null;
+	const problem: CertHashProblem | null = "problem" in parsed && parsed.problem === "malformed"
+		? "malformed"
+		: null;
 	if (problem) {
-		console.warn("[client] VITE_CERT_HASH is malformed (expected 64 hex chars)");
+		log.warn("VITE_CERT_HASH is malformed (expected 64 hex chars)");
 	}
 	return { transportOptions, problem };
 }
