@@ -12,7 +12,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/qumo-dev/qumo/internal/cors"
 	"github.com/qumo-dev/qumo/internal/ingest"
 )
 
@@ -182,7 +181,10 @@ func (s *Server) handlePullStart(w http.ResponseWriter, r *http.Request) {
 		ServeAddr:      ":4543",
 		CertFile:       s.certFile,
 		KeyFile:        s.keyFile,
-		AllowedOrigins: cors.LoadAllowed(),
+		// The pull's MoQT server is a localhost dev tool started on-demand from
+		// the UI. Permissive CORS avoids same-host mismatches (127.0.0.1 vs
+		// localhost) that would block the browser's WebTransport handshake.
+		AllowedOrigins: []string{"*"},
 	})
 	if err != nil {
 		cancel()
