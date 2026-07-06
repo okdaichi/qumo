@@ -1,7 +1,7 @@
 package rtsp
 
 import (
-	"crypto/md5"
+	"crypto/md5" //nolint:gosec // MD5 is required by RFC 2617 for RTSP Digest auth.
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
@@ -176,7 +176,7 @@ func selectQop(advertised string) string {
 }
 
 func md5hex(s string) string {
-	sum := md5.Sum([]byte(s))
+	sum := md5.Sum([]byte(s)) //nolint:gosec // MD5 is required by RFC 2617 for RTSP Digest auth.
 	return hex.EncodeToString(sum[:])
 }
 
