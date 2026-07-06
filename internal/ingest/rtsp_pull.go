@@ -61,6 +61,7 @@ func RunRTSPPull(args []string) error {
 		return err
 	}
 	handle.Wait()
+	handle.Close()
 	return nil
 }
 

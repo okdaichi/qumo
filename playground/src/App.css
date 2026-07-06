@@ -520,6 +520,10 @@ input[type="range"] {
 	box-sizing: border-box;
 }
 
+.camera-pull-actions {
+	margin-top: var(--gap);
+}
+
 .camera-pull-status {
 	margin-top: 8px;
 	font-size: 0.85rem;

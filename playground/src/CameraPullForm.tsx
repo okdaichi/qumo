@@ -1,4 +1,4 @@
-import { type Accessor, createSignal, Show } from "solid-js";
+import { type Accessor, createSignal, onCleanup, Show } from "solid-js";
 
 export type PullState = "idle" | "connecting" | "active" | "error";
 
@@ -9,6 +9,14 @@ export function CameraPullForm(props: {
 	const [url, setUrl] = createSignal("");
 	const [state, setState] = createSignal<PullState>("idle");
 	const [error, setError] = createSignal<string | null>(null);
+
+	// Stop the pull when the form unmounts (e.g. scenario switch), so the
+	// server-side pull doesn't leak and block the next start with a 409.
+	onCleanup(() => {
+		if (state() === "active" || state() === "connecting") {
+			void fetch("/api/pull/stop", { method: "POST" }).catch(() => {});
+		}
+	});
 
 	const updateState = (s: PullState) => {
 		setState(s);
@@ -63,8 +71,7 @@ export function CameraPullForm(props: {
 			<Show when={state() === "idle" || state() === "error"}>
 				<button
 					type="button"
-					class="btn-start"
-					style={{ "margin-top": "8px" }}
+					class="btn-start camera-pull-actions"
 					onClick={startPull}
 					disabled={!url().trim()}
 				>
@@ -72,15 +79,14 @@ export function CameraPullForm(props: {
 				</button>
 			</Show>
 			<Show when={state() === "connecting"}>
-				<button type="button" class="btn-stop" style={{ "margin-top": "8px" }} disabled>
+				<button type="button" class="btn-stop camera-pull-actions" disabled>
 					Connecting…
 				</button>
 			</Show>
 			<Show when={state() === "active"}>
 				<button
 					type="button"
-					class="btn-stop"
-					style={{ "margin-top": "8px" }}
+					class="btn-stop camera-pull-actions"
 					onClick={stopPull}
 				>
 					Stop Pull

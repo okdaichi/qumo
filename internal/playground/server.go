@@ -175,7 +175,7 @@ func (s *Server) handlePullStart(w http.ResponseWriter, r *http.Request) {
 		path = "/live/camera"
 	}
 
-	ctx, cancel := context.WithCancel(r.Context())
+	ctx, cancel := context.WithCancel(context.Background())
 	handle, err := ingest.PullAndServe(ctx, ingest.PullConfig{
 		SourceURL:      req.URL,
 		BroadcastPath:  path,
@@ -214,7 +214,6 @@ func (s *Server) handlePullStop(w http.ResponseWriter, r *http.Request) {
 
 	s.pullMu.Lock()
 	handle := s.pullHandle
-	cancel := s.pullCancel
 	s.pullHandle = nil
 	s.pullCancel = nil
 	s.pullCtx = nil
@@ -225,10 +224,7 @@ func (s *Server) handlePullStop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	handle.Close()
-	if cancel != nil {
-		cancel()
-	}
+	handle.Close() // also calls h.cancel() — no need to cancel again
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
