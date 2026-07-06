@@ -14,9 +14,10 @@ import (
 
 var (
 	// overridable command handlers for easier unit-testing
-	runRelay = relay.Run
-	runRTMP  = ingest.RunRTMP
-	runRTSP  = ingest.RunRTSP
+	runRelay      = relay.Run
+	runRTMP       = ingest.RunRTMP
+	runRTSP       = ingest.RunRTSP     // push server (ANNOUNCE/RECORD)
+	runRTSPPull   = ingest.RunRTSPPull // pull client (DESCRIBE/SETUP/PLAY, camera ingest)
 	runPlayground = func(args []string) error {
 		o, err := playground.ParseFlags(args, playground.Options{
 			Assets:     mustSubAssets(),
@@ -77,6 +78,8 @@ func run(args []string) int {
 	case "rtmp":
 		err = runRTMP(cmdArgs)
 	case "rtsp":
+		err = runRTSPPull(cmdArgs)
+	case "rtsp-push":
 		err = runRTSP(cmdArgs)
 	case "playground":
 		err = runPlayground(cmdArgs)
@@ -99,7 +102,8 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "Commands:")
 	fmt.Fprintln(os.Stderr, "  relay      Start the MoQ relay server")
 	fmt.Fprintln(os.Stderr, "  rtmp       Start the RTMP ingest server")
-	fmt.Fprintln(os.Stderr, "  rtsp       Start the RTSP ingest server")
+	fmt.Fprintln(os.Stderr, "  rtsp       Pull from an RTSP source (e.g. IP camera) and republish as MoQT")
+	fmt.Fprintln(os.Stderr, "  rtsp-push  Start the RTSP push ingest server (ANNOUNCE/RECORD)")
 	fmt.Fprintln(os.Stderr, "  playground Start a local demo (relay + web UI) on http://127.0.0.1:8080")
 	fmt.Fprintln(os.Stderr, "  version    Print version information")
 	fmt.Fprintln(os.Stderr, "")

@@ -424,7 +424,7 @@ func (Rtsp) Serve() error {
 		}
 	}()
 
-	cmd := exec.CommandContext(ctx, "go", "run", ".", "rtsp")
+	cmd := exec.CommandContext(ctx, "go", "run", ".", "rtsp-push")
 	cmd.Env = ingestDevEnv("RTSP_SERVE_ADDR", ":4543")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -536,6 +536,61 @@ func (Rtsp) Demo() {
 	fmt.Println("  (the RTSP scenario subscribes to the :4543 origin) and click")
 	fmt.Println("  'Start Subscribing'.")
 	fmt.Println()
+}
+
+// Pull ingests from an RTSP source (e.g. an IP camera) and republishes as MoQT.
+//
+// Environment variables:
+//
+//	RTSP_URL=rtsp://user:pass@camera/stream  (required)
+//	RTSP_PATH=/live/camera                    (default /live/camera)
+//	RTSP_SERVE_ADDR=:4433                     (MoQT serve address)
+func (Rtsp) Pull() error {
+	rtspURL := envOrDefault("RTSP_URL", "")
+	if rtspURL == "" {
+		fmt.Println("❌ RTSP_URL is required!")
+		fmt.Println("   RTSP_URL=rtsp://user:pass@camera/stream mage rtsp:pull")
+		return fmt.Errorf("RTSP_URL not set")
+	}
+	path := envOrDefault("RTSP_PATH", "/live/camera")
+
+	fmt.Println("📡 Pulling from RTSP source...")
+	fmt.Println("   Source:", rtspURL)
+	fmt.Println("   Path:  ", path)
+	fmt.Println()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+	go func() {
+		select {
+		case <-sigCh:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+
+	cmd := exec.CommandContext(ctx, "go", "run", ".", "rtsp", rtspURL, path)
+	cmd.Env = ingestDevEnv("RTSP_SERVE_ADDR", ":4433")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return nil
+		}
+		if runtime.GOOS == "windows" {
+			return exec.Command("taskkill", "/F", "/T", "/PID",
+				strconv.Itoa(cmd.Process.Pid)).Run()
+		}
+		return cmd.Process.Kill()
+	}
+	err := cmd.Run()
+	if ctx.Err() != nil {
+		return nil
+	}
+	return err
 }
 
 // Serve starts the RTMP ingest server (RTMP → MoQT bridge) on the playground's
