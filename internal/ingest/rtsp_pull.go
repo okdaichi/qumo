@@ -132,7 +132,12 @@ func pullStream(ctx context.Context, srcURL string, sess *Session) error {
 	for i := range sdp.Medias {
 		media := &sdp.Medias[i]
 		track := newRTSPTrackFromMedia(sess, media)
-		if track.kind != trackKindVideo && track.kind != trackKindAudio {
+		// Skip tracks where codec detection didn't match. trackKindVideo is the
+		// zero value, so kind alone can't tell us — check the codec-specific
+		// fields (avcCfg for H.264, aacDepack for AAC).
+		isVideo := track.kind == trackKindVideo && track.avcCfg != nil
+		isAudio := track.kind == trackKindAudio && track.aacDepack != nil
+		if !isVideo && !isAudio {
 			slog.Info("skipping unsupported RTSP media",
 				"type", media.Type, "rtpmap", media.RtpMap)
 			continue

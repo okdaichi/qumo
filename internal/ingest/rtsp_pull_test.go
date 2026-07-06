@@ -109,10 +109,10 @@ func buildTestAudioRTP() []byte {
 }
 
 // startFakeRTSPServer starts a minimal RTSP server that responds to
-// OPTIONS/DESCRIBE/SETUP/PLAY and streams interleaved RTP before closing.
-// If authScheme is non-empty ("basic" or "digest"), DESCRIBE returns 401 on
-// the first attempt (without Authorization) and 200 on the retry (with it).
-func startFakeRTSPServer(t *testing.T, sdpBody string, frames map[uint8][]byte, authScheme string) string {
+// OPTIONS/DESCRIBE/SETUP/PLAY and streams interleaved RTP (in order) before
+// closing. If authScheme is non-empty ("basic" or "digest"), DESCRIBE returns
+// 401 on the first attempt (without Authorization) and 200 on the retry.
+func startFakeRTSPServer(t *testing.T, sdpBody string, frames []rtsp.InterleavedFrame, authScheme string) string {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -159,10 +159,8 @@ func startFakeRTSPServer(t *testing.T, sdpBody string, frames map[uint8][]byte, 
 				resp.Header.Set("Session", "fake-session")
 			case rtsp.MethodPlay:
 				_ = rc.WriteResponse(resp)
-				for ch, payload := range frames {
-					_ = rc.WriteInterleavedFrame(&rtsp.InterleavedFrame{
-						Channel: ch, Payload: payload,
-					})
+				for _, f := range frames {
+					_ = rc.WriteInterleavedFrame(&f)
 				}
 				return
 			}
@@ -205,10 +203,9 @@ func runPullAndVerify(t *testing.T, addr, url string, sess *Session, videoExpect
 // server with H.264 video + AAC audio → the pull client (DESCRIBE/SETUP/PLAY)
 // → interleaved RTP → depacketize → Session buffers receive frames.
 func TestPullStream_DefaultCase(t *testing.T) {
-	sdpBody := buildTestSDP(true) // video + audio
-	addr := startFakeRTSPServer(t, sdpBody, map[uint8][]byte{
-		0: buildTestVideoRTP(), // video channel
-		2: buildTestAudioRTP(), // audio channel
+	addr := startFakeRTSPServer(t, buildTestSDP(true), []rtsp.InterleavedFrame{
+		{Channel: 0, Payload: buildTestVideoRTP()},
+		{Channel: 2, Payload: buildTestAudioRTP()},
 	}, "")
 
 	trackMux := moqt.NewTrackMux(0)
@@ -219,12 +216,9 @@ func TestPullStream_DefaultCase(t *testing.T) {
 	runPullAndVerify(t, addr, "rtsp://"+addr+"/test", sess, true, true)
 }
 
-// TestPullStream_WithBasicAuth tests the 401→retry auth path: the fake server
-// challenges the first DESCRIBE with Basic, and the client retries with an
-// Authorization header built from the URL credentials.
 func TestPullStream_WithBasicAuth(t *testing.T) {
-	addr := startFakeRTSPServer(t, buildTestSDP(false), map[uint8][]byte{
-		0: buildTestVideoRTP(),
+	addr := startFakeRTSPServer(t, buildTestSDP(false), []rtsp.InterleavedFrame{
+		{Channel: 0, Payload: buildTestVideoRTP()},
 	}, "basic")
 
 	trackMux := moqt.NewTrackMux(0)
@@ -235,10 +229,9 @@ func TestPullStream_WithBasicAuth(t *testing.T) {
 	runPullAndVerify(t, addr, "rtsp://admin:secret@"+addr+"/test", sess, true, false)
 }
 
-// TestPullStream_WithDigestAuth tests the Digest 401→retry path.
 func TestPullStream_WithDigestAuth(t *testing.T) {
-	addr := startFakeRTSPServer(t, buildTestSDP(false), map[uint8][]byte{
-		0: buildTestVideoRTP(),
+	addr := startFakeRTSPServer(t, buildTestSDP(false), []rtsp.InterleavedFrame{
+		{Channel: 0, Payload: buildTestVideoRTP()},
 	}, "digest")
 
 	trackMux := moqt.NewTrackMux(0)
@@ -249,10 +242,9 @@ func TestPullStream_WithDigestAuth(t *testing.T) {
 	runPullAndVerify(t, addr, "rtsp://admin:secret@"+addr+"/test", sess, true, false)
 }
 
-// TestPullStream_VideoOnly tests pulling a video-only stream (no audio track).
 func TestPullStream_VideoOnly(t *testing.T) {
-	addr := startFakeRTSPServer(t, buildTestSDP(false), map[uint8][]byte{
-		0: buildTestVideoRTP(),
+	addr := startFakeRTSPServer(t, buildTestSDP(false), []rtsp.InterleavedFrame{
+		{Channel: 0, Payload: buildTestVideoRTP()},
 	}, "")
 
 	trackMux := moqt.NewTrackMux(0)
@@ -261,6 +253,81 @@ func TestPullStream_VideoOnly(t *testing.T) {
 	defer sess.Close()
 
 	runPullAndVerify(t, addr, "rtsp://"+addr+"/test", sess, true, false)
+}
+
+// TestPullStream_FUAFragmentation exercises H.264 FU-A reassembly through the
+// pull pipeline: two FU-A fragments (start + end) arrive on channel 0 and are
+// reassembled into one IDR NAL, then pushed to the Session.
+func TestPullStream_FUAFragmentation(t *testing.T) {
+	// FU-A: indicator (NRI=3, type=28) + FU header (start/end, type=5) + payload.
+	fuaStart := append([]byte{fuIndicator(3), 0x80 | 5, 0xAA})     // start, type=5
+	fuaEnd := append([]byte{fuIndicator(3), 0x40 | 5, 0xBB, 0xCC}) // end, type=5
+
+	addr := startFakeRTSPServer(t, buildTestSDP(false), []rtsp.InterleavedFrame{
+		{Channel: 0, Payload: append(buildRTPHeader(96, false, 1, 90000, 0x1111), fuaStart...)},
+		{Channel: 0, Payload: append(buildRTPHeader(96, true, 2, 90000, 0x1111), fuaEnd...)},
+	}, "")
+
+	trackMux := moqt.NewTrackMux(0)
+	sess, err := NewSession(trackMux, "/live/cam")
+	require.NoError(t, err)
+	defer sess.Close()
+
+	runPullAndVerify(t, addr, "rtsp://"+addr+"/test", sess, true, false)
+}
+
+// TestPullStream_SameTimestampAggregation verifies that multiple same-PTS IDR
+// NALUs (the ffmpeg RTSP muxer pattern) are aggregated into one AVCC frame.
+func TestPullStream_SameTimestampAggregation(t *testing.T) {
+	addr := startFakeRTSPServer(t, buildTestSDP(false), []rtsp.InterleavedFrame{
+		// Two single-NAL IDRs at the same timestamp; marker on the second.
+		{Channel: 0, Payload: append(buildRTPHeader(96, false, 1, 90000, 0x2222), 0x65, 0x01)},
+		{Channel: 0, Payload: append(buildRTPHeader(96, true, 2, 90000, 0x2222), 0x65, 0x02)},
+	}, "")
+
+	trackMux := moqt.NewTrackMux(0)
+	sess, err := NewSession(trackMux, "/live/cam")
+	require.NoError(t, err)
+	defer sess.Close()
+
+	runPullAndVerify(t, addr, "rtsp://"+addr+"/test", sess, true, false)
+}
+
+// TestPullStream_NoSupportedCodecs verifies pullStream returns an error when
+// the SDP has no H.264/AAC tracks.
+func TestPullStream_NoSupportedCodecs(t *testing.T) {
+	sdpBody := "v=0\r\nm=video 0 RTP/AVP 96\r\na=rtpmap:96 H265/90000\r\na=control:trackID=0\r\n"
+	addr := startFakeRTSPServer(t, sdpBody, nil, "")
+
+	trackMux := moqt.NewTrackMux(0)
+	sess, err := NewSession(trackMux, "/live/cam")
+	require.NoError(t, err)
+	defer sess.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err = pullStream(ctx, "rtsp://"+addr+"/test", sess)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no supported media tracks")
+}
+
+// TestPullStream_SSRFControlRejected verifies the sameOrigin guard rejects an
+// SDP a=control that points to a different host (SSRF via malicious SDP).
+func TestPullStream_SSRFControlRejected(t *testing.T) {
+	sdpBody := "v=0\r\nm=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\na=control:rtsp://evil.com/hack\r\n"
+	addr := startFakeRTSPServer(t, sdpBody, nil, "")
+
+	trackMux := moqt.NewTrackMux(0)
+	sess, err := NewSession(trackMux, "/live/cam")
+	require.NoError(t, err)
+	defer sess.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err = pullStream(ctx, "rtsp://"+addr+"/test", sess)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no supported media tracks",
+		"the SSRF track should be rejected, leaving no supported tracks")
 }
 
 // TestNewRTSPTrackFromMedia verifies the shared SDP→track helper used by both
