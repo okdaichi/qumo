@@ -83,7 +83,12 @@ export function SubscribeBoard(props: { session: Promise<Session>; path: Accesso
 			videoDecodeNode.connect(videoContext.destination);
 
 			// AudioContext for playback of the subscribed audio track.
-			audioContext = new AudioContext();
+			// Match the source rate (AAC 48 kHz). av-nodes' worklet converts
+			// frame PTS -> sample offset using context.sampleRate; if the context
+			// runs at the system default (e.g. 44100) every 1024-sample block is
+			// scheduled at the wrong offset under timestamp scheduling.
+			// PublishBoard already pins 48000.
+			audioContext = new AudioContext({ sampleRate: 48000 });
 			audioDecodeNode = new AudioDecodeNode(audioContext);
 			audioDecodeNode.connect(audioContext.destination);
 			// Apply the initial level (the gain effect below only fires on changes).
