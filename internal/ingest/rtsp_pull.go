@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -48,18 +49,92 @@ func RunRTSPPull(args []string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	trackMux := moqt.NewTrackMux(0)
-
-	sess, err := NewSession(trackMux, moqt.BroadcastPath(path))
+	handle, err := PullAndServe(ctx, PullConfig{
+		SourceURL:      srcURL,
+		BroadcastPath:  path,
+		ServeAddr:      serveAddr,
+		CertFile:       certFile,
+		KeyFile:        keyFile,
+		AllowedOrigins: allowedOrigins,
+	})
 	if err != nil {
-		return fmt.Errorf("rtsp pull session: %w", err)
+		return err
 	}
-	defer sess.Close()
+	handle.Wait()
+	return nil
+}
 
-	// MoQT origin (WebTransport/QUIC) — same wiring as RunRTSP.
+// PullConfig configures a PullAndServe call.
+type PullConfig struct {
+	SourceURL      string
+	BroadcastPath  string
+	ServeAddr      string
+	CertFile       string
+	KeyFile        string
+	AllowedOrigins []string
+}
+
+// PullHandle is a running RTSP pull ingest. Close stops the pull + MoQT server;
+// Wait blocks until the pull exits (error or context cancel).
+type PullHandle struct {
+	cancel  context.CancelFunc
+	done    chan struct{}
+	sess    *Session
+	moqSrv  *moqt.Server
+	srcURL  string
+	path    string
+	lastErr atomic.Value // string
+}
+
+// Close stops the pull and MoQT server.
+func (h *PullHandle) Close() {
+	h.cancel()
+	shutCtx, shutCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer shutCancel()
+	_ = h.moqSrv.Shutdown(shutCtx)
+	h.sess.Close()
+}
+
+// Wait blocks until the pull exits.
+func (h *PullHandle) Wait() {
+	<-h.done
+}
+
+// LastErr returns the last error from the pull loop, or "" if none.
+func (h *PullHandle) LastErr() string {
+	if v := h.lastErr.Load(); v != nil {
+		return v.(string)
+	}
+	return ""
+}
+
+// SourceURL returns the (redacted) source URL.
+func (h *PullHandle) SourceURL() string {
+	return redactURL(h.srcURL)
+}
+
+// Path returns the broadcast path.
+func (h *PullHandle) Path() string {
+	return h.path
+}
+
+// PullAndServe starts an RTSP pull ingest: dials the source, creates a Session
+// on a fresh TrackMux, serves MoQT (WebTransport) on serveAddr, and runs the
+// pull loop with reconnect. The returned PullHandle lets the caller stop the
+// pull (Close) or block until it exits (Wait).
+func PullAndServe(parentCtx context.Context, cfg PullConfig) (*PullHandle, error) {
+	ctx, cancel := context.WithCancel(parentCtx)
+
+	trackMux := moqt.NewTrackMux(0)
+	sess, err := NewSession(trackMux, moqt.BroadcastPath(cfg.BroadcastPath))
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("rtsp pull session: %w", err)
+	}
+
 	wtHandler := &moqt.WebTransportHandler{
 		TrackMux:    trackMux,
-		CheckOrigin: cors.NewChecker(allowedOrigins),
+		CheckOrigin: cors.NewChecker(cfg.AllowedOrigins),
 		Handler: moqt.HandleFunc(func(sess *moqt.Session) {
 			defer sess.CloseWithError(moqt.NoError, moqt.NoError.String())
 			<-sess.Context().Done()
@@ -68,28 +143,38 @@ func RunRTSPPull(args []string) error {
 	mux := http.NewServeMux()
 	mux.Handle("/", wtHandler)
 	moqSrv := &moqt.Server{
-		Addr:               serveAddr,
+		Addr:               cfg.ServeAddr,
 		WebTransportServer: moqt.NewWebTransportServer(mux),
 		TrackMux:           trackMux,
 	}
 	go func() {
-		if err := moqSrv.ListenAndServeTLS(certFile, keyFile); err != nil && ctx.Err() == nil {
+		if err := moqSrv.ListenAndServeTLS(cfg.CertFile, cfg.KeyFile); err != nil && ctx.Err() == nil {
 			slog.Error("MoQT server error", "err", err)
 			cancel()
 		}
 	}()
 
-	slog.Info("RTSP pull ingest starting",
-		"source", redactURL(srcURL), "broadcast_path", path, "serve", serveAddr)
+	h := &PullHandle{
+		cancel: cancel,
+		done:   make(chan struct{}),
+		sess:   sess,
+		moqSrv: moqSrv,
+		srcURL: cfg.SourceURL,
+		path:   cfg.BroadcastPath,
+	}
 
-	// Pull loop with exponential backoff reconnect.
+	slog.Info("RTSP pull ingest starting",
+		"source", redactURL(cfg.SourceURL), "broadcast_path", cfg.BroadcastPath, "serve", cfg.ServeAddr)
+
 	go func() {
+		defer close(h.done)
 		backoff := 2 * time.Second
 		for ctx.Err() == nil {
-			err := pullStream(ctx, srcURL, sess)
+			err := pullStream(ctx, cfg.SourceURL, sess)
 			if ctx.Err() != nil {
 				return
 			}
+			h.lastErr.Store(err.Error())
 			slog.Warn("RTSP pull disconnected, reconnecting", "error", err, "backoff", backoff)
 			select {
 			case <-time.After(backoff):
@@ -103,12 +188,7 @@ func RunRTSPPull(args []string) error {
 		}
 	}()
 
-	<-ctx.Done()
-
-	shutCtx, shutCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer shutCancel()
-	_ = moqSrv.Shutdown(shutCtx)
-	return nil
+	return h, nil
 }
 
 // pullStream connects to the RTSP source, sets up all tracks, and reads

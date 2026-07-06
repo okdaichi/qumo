@@ -88,7 +88,7 @@ func Run(ctx context.Context, o Options) error {
 	// 4. Launch the UI server. The relayUrl served at /config is derived per
 	//    request from the browser's Host header, so the server only needs the
 	//    relay port (not a preconfigured host).
-	ui := NewServer(o.UIAddr, portOf(o.RelayAddr), cert.HashHex, o.Assets)
+	ui := NewServerWithCerts(o.UIAddr, portOf(o.RelayAddr), cert.HashHex, cert.CertFile, cert.KeyFile, o.Assets)
 	uiDone := make(chan error, 1)
 	go func() {
 		uiDone <- ui.ListenAndServe()

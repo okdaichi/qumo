@@ -13,6 +13,7 @@ import { buildTransportOptions, type CertHashProblem } from "./cert.ts";
 import { getConfig } from "./config.ts";
 import { relayUrlFor, type ScenarioId, SCENARIOS } from "./scenarios.ts";
 import { PushInstructions } from "./PushInstructions.tsx";
+import { CameraPullForm, type PullState } from "./CameraPullForm.tsx";
 
 // Owns one WebTransport session for the active scenario. Each scenario is a
 // different origin, so the parent <Show> remounts this component (tearing down
@@ -23,6 +24,8 @@ export function ScenarioView(props: {
 }) {
 	const scenario = SCENARIOS[props.scenario];
 	const ingest = scenario.mode === "subscribe";
+	const isCamera = props.scenario === "camera";
+	const [pullActive, setPullActive] = createSignal(false);
 
 	const mux = DefaultTrackMux;
 	const relayUrl = relayUrlFor(props.scenario);
@@ -99,11 +102,27 @@ export function ScenarioView(props: {
 				certHashProblem={certHashProblem()}
 			/>
 
-			{ingest && <PushInstructions scenario={props.scenario} path={props.path} />}
+			{isCamera && (
+				<CameraPullForm
+					path={props.path}
+					onStateChange={(s: PullState) => setPullActive(s === "active")}
+				/>
+			)}
+			{ingest && !isCamera && (
+				<PushInstructions scenario={props.scenario} path={props.path} />
+			)}
 
 			<div class={ingest ? "boards single" : "boards"}>
 				{!ingest && <PublishBoard mux={mux} path={props.path} />}
-				<SubscribeBoard session={session} path={props.path} />
+				{(isCamera ? pullActive() : true) && (
+					<SubscribeBoard session={session} path={props.path} />
+				)}
+				{isCamera && !pullActive() && (
+					<div class="video-empty">
+						<span class="video-empty-icon">📷</span>
+						Enter a camera URL and click "Start Pull" to begin streaming.
+					</div>
+				)}
 			</div>
 		</>
 	);

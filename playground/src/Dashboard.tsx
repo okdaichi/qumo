@@ -2,7 +2,7 @@ import { createEffect, createSignal, Show } from "solid-js";
 import { ScenarioPicker } from "./ScenarioPicker.tsx";
 import { PathControl } from "./PathControl.tsx";
 import { ScenarioView } from "./ScenarioView.tsx";
-import { isScenarioId, type ScenarioId } from "./scenarios.ts";
+import { isScenarioId, type ScenarioId, SCENARIOS } from "./scenarios.ts";
 import { generateBroadcastId, generateUsername } from "./user/user_name.ts";
 
 // Read ?scenario= and ?path= from the URL (shareable deep links). Falls back to
@@ -31,6 +31,8 @@ function defaultPathFor(scenario: ScenarioId): string {
 			return `/rtmp/${broadcastId}`;
 		case "rtsp":
 			return `/rtsp/${broadcastId}`;
+		case "camera":
+			return `/live/camera`;
 	}
 }
 
@@ -60,6 +62,8 @@ export function Dashboard() {
 				<ScenarioPicker scenario={scenario()} onPick={selectScenario} />
 				<PathControl scenario={scenario()} path={path} setPath={setPath} />
 			</div>
+
+			<p class="scenario-desc">{SCENARIOS[scenario()].description}</p>
 
 			{
 				/* Keyed remount: each scenario is a different WebTransport origin, so the

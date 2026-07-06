@@ -5,10 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"io/fs"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/qumo-dev/qumo/internal/cors"
+	"github.com/qumo-dev/qumo/internal/ingest"
 )
 
 // Server serves the embedded playground web UI and the /config endpoint over
@@ -16,15 +21,47 @@ import (
 // dials the relay over WebTransport cross-origin (pinned by cert hash), so no
 // CORS handling is needed here.
 type Server struct {
-	// relayPort is the port the in-process relay listens on. The /config
-	// relayUrl is built per-request from the browser's own Host (the host the UI
-	// was opened at) plus this port, so it always matches whatever address the
-	// user — or their reverse proxy — is serving the UI under.
 	relayPort string
 	certHash  string
+	certFile  string
+	keyFile   string
 	assets    fs.FS
 	addr      string
 	httpSrv   *http.Server
+
+	// RTSP pull state (playground-only, in-process).
+	pullMu     sync.Mutex
+	pullHandle *ingest.PullHandle
+	pullCtx    context.Context
+	pullCancel context.CancelFunc
+}
+
+// NewServerWithCerts is like NewServer but also passes the cert/key file paths
+// needed for the /api/pull endpoint (which starts an in-process RTSP pull
+// client that serves MoQT on :4543 with the same cert).
+func NewServerWithCerts(addr, relayPort, certHash, certFile, keyFile string, assets fs.FS) *Server {
+	s := &Server{
+		relayPort: relayPort,
+		certHash:  certHash,
+		certFile:  certFile,
+		keyFile:   keyFile,
+		assets:    assets,
+		addr:      addr,
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/config", s.handleConfig)
+	mux.HandleFunc("/api/pull", s.handlePullStart)
+	mux.HandleFunc("/api/pull/stop", s.handlePullStop)
+	mux.HandleFunc("/api/pull/status", s.handlePullStatus)
+	mux.HandleFunc("/", s.handleAssets)
+
+	s.httpSrv = &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	return s
 }
 
 // NewServer constructs a UI server ready to ListenAndServe. relayPort is the
@@ -94,6 +131,125 @@ func requestHost(r *http.Request) string {
 		return h // no port present
 	}
 	return host
+}
+
+// --- RTSP pull API (playground-only) ---
+
+type pullRequest struct {
+	URL  string `json:"url"`
+	Path string `json:"path"`
+}
+
+type pullStatusResponse struct {
+	Active bool   `json:"active"`
+	URL    string `json:"url"`
+	Path   string `json:"path"`
+	Error  string `json:"error,omitempty"`
+}
+
+func (s *Server) handlePullStart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	s.pullMu.Lock()
+	if s.pullHandle != nil {
+		s.pullMu.Unlock()
+		http.Error(w, "pull already active — stop it first", http.StatusConflict)
+		return
+	}
+	s.pullMu.Unlock()
+
+	var req pullRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.URL == "" {
+		http.Error(w, "url is required", http.StatusBadRequest)
+		return
+	}
+	path := req.Path
+	if path == "" {
+		path = "/live/camera"
+	}
+
+	ctx, cancel := context.WithCancel(r.Context())
+	handle, err := ingest.PullAndServe(ctx, ingest.PullConfig{
+		SourceURL:      req.URL,
+		BroadcastPath:  path,
+		ServeAddr:      ":4543",
+		CertFile:       s.certFile,
+		KeyFile:        s.keyFile,
+		AllowedOrigins: cors.LoadAllowed(),
+	})
+	if err != nil {
+		cancel()
+		slog.Error("RTSP pull start failed", "error", err)
+		http.Error(w, "pull start failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	s.pullMu.Lock()
+	s.pullHandle = handle
+	s.pullCtx = ctx
+	s.pullCancel = cancel
+	s.pullMu.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(pullStatusResponse{
+		Active: true,
+		URL:    handle.SourceURL(),
+		Path:   handle.Path(),
+	})
+}
+
+func (s *Server) handlePullStop(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	s.pullMu.Lock()
+	handle := s.pullHandle
+	cancel := s.pullCancel
+	s.pullHandle = nil
+	s.pullCancel = nil
+	s.pullCtx = nil
+	s.pullMu.Unlock()
+
+	if handle == nil {
+		http.Error(w, "no active pull", http.StatusNotFound)
+		return
+	}
+
+	handle.Close()
+	if cancel != nil {
+		cancel()
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(pullStatusResponse{Active: false})
+}
+
+func (s *Server) handlePullStatus(w http.ResponseWriter, r *http.Request) {
+	s.pullMu.Lock()
+	handle := s.pullHandle
+	s.pullMu.Unlock()
+
+	resp := pullStatusResponse{Active: false}
+	if handle != nil {
+		resp.Active = true
+		resp.URL = handle.SourceURL()
+		resp.Path = handle.Path()
+		resp.Error = handle.LastErr()
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 // handleAssets serves embedded static files, falling back to index.html for any
