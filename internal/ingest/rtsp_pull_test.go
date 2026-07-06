@@ -55,7 +55,7 @@ func TestSameOrigin(t *testing.T) {
 	assert.False(t, sameOrigin("rtsp://camera:555/stream", session))          // different port
 }
 
-// --- Default-case integration test: fake RTSP server + pull client → Session ---
+// --- Integration tests: fake RTSP server + pull client → Session ---
 
 // buildRTPHeader constructs a minimal 12-byte RTP header.
 func buildRTPHeader(pt uint8, marker bool, seq uint16, ts, ssrc uint32) []byte {
@@ -71,10 +71,48 @@ func buildRTPHeader(pt uint8, marker bool, seq uint16, ts, ssrc uint32) []byte {
 	return h
 }
 
+// buildTestSDP constructs an SDP with H.264 video (and optionally AAC audio).
+func buildTestSDP(includeAudio bool) string {
+	sps := []byte{0x67, 0x64, 0x00, 0x1F, 0xAC, 0xD9} // NAL type 7
+	pps := []byte{0x68, 0xEB, 0xE3, 0xCB}             // NAL type 8
+	sprop := base64.StdEncoding.EncodeToString(sps) + "," + base64.StdEncoding.EncodeToString(pps)
+	lines := []string{
+		"v=0",
+		"m=video 0 RTP/AVP 96",
+		"a=rtpmap:96 H264/90000",
+		"a=fmtp:96 packetization-mode=1; sprop-parameter-sets=" + sprop + "; profile-level-id=64001f",
+		"a=control:trackID=0",
+	}
+	if includeAudio {
+		lines = append(lines,
+			"m=audio 0 RTP/AVP 97",
+			"a=rtpmap:97 mpeg4-generic/48000/2",
+			"a=fmtp:97 streamtype=5; profile-level-id=1; mode=AAC-hbr; sizelength=13; indexlength=3; indexdeltalength=3; config=1190",
+			"a=control:trackID=1",
+		)
+	}
+	return strings.Join(append(lines, ""), "\r\n")
+}
+
+// buildTestVideoRTP returns a single-NAL IDR H.264 RTP packet (PT=96, marker=1).
+func buildTestVideoRTP() []byte {
+	return append(buildRTPHeader(96, true, 1, 0, 0x12345678),
+		0x65, 0xAA, 0xBB, 0xCC, 0xDD, // IDR NAL (NRI=3, type=5)
+	)
+}
+
+// buildTestAudioRTP returns a mpeg4-generic AAC RTP packet (PT=97, marker=1).
+func buildTestAudioRTP() []byte {
+	aacAU := []byte{0xDE, 0xAD, 0xBE, 0xEF}
+	payload := buildMpeg4Generic([][]byte{aacAU}, 13, 3)
+	return append(buildRTPHeader(97, true, 1, 0, 0x87654321), payload...)
+}
+
 // startFakeRTSPServer starts a minimal RTSP server that responds to
-// OPTIONS/DESCRIBE/SETUP/PLAY and then streams the supplied interleaved RTP
-// frames before closing. It returns the listener address.
-func startFakeRTSPServer(t *testing.T, sdpBody string, frames map[uint8][]byte) string {
+// OPTIONS/DESCRIBE/SETUP/PLAY and streams interleaved RTP before closing.
+// If authScheme is non-empty ("basic" or "digest"), DESCRIBE returns 401 on
+// the first attempt (without Authorization) and 200 on the retry (with it).
+func startFakeRTSPServer(t *testing.T, sdpBody string, frames map[uint8][]byte, authScheme string) string {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -100,10 +138,22 @@ func startFakeRTSPServer(t *testing.T, sdpBody string, frames map[uint8][]byte) 
 			case rtsp.MethodOptions:
 				resp.Header.Set("Public", "DESCRIBE, SETUP, PLAY, TEARDOWN")
 			case rtsp.MethodDescribe:
-				body := []byte(sdpBody)
-				resp.Header.Set("Content-Type", "application/sdp")
-				resp.Header.Set("Content-Length", strconv.Itoa(len(body)))
-				resp.Body = io.NopCloser(bytes.NewReader(body))
+				if authScheme != "" && req.Header.Get("Authorization") == "" {
+					// Challenge the first unauthenticated DESCRIBE.
+					resp.StatusCode = rtsp.StatusUnauthorized
+					switch authScheme {
+					case "basic":
+						resp.Header.Set("WWW-Authenticate", `Basic realm="test"`)
+					case "digest":
+						resp.Header.Set("WWW-Authenticate",
+							`Digest realm="test", nonce="abc123", qop="auth", algorithm=MD5`)
+					}
+				} else {
+					body := []byte(sdpBody)
+					resp.Header.Set("Content-Type", "application/sdp")
+					resp.Header.Set("Content-Length", strconv.Itoa(len(body)))
+					resp.Body = io.NopCloser(bytes.NewReader(body))
+				}
 			case rtsp.MethodSetup:
 				resp.Header.Set("Transport", req.Header.Get("Transport"))
 				resp.Header.Set("Session", "fake-session")
@@ -114,7 +164,7 @@ func startFakeRTSPServer(t *testing.T, sdpBody string, frames map[uint8][]byte) 
 						Channel: ch, Payload: payload,
 					})
 				}
-				return // done streaming — close connection
+				return
 			}
 			_ = rc.WriteResponse(resp)
 		}
@@ -123,66 +173,143 @@ func startFakeRTSPServer(t *testing.T, sdpBody string, frames map[uint8][]byte) 
 	return ln.Addr().String()
 }
 
+// runPullAndVerify runs pullStream against addr and asserts both expected
+// buffers received data. videoExpected/audioExpected control which to check.
+func runPullAndVerify(t *testing.T, addr, url string, sess *Session, videoExpected, audioExpected bool) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- pullStream(ctx, url, sess) }()
+
+	require.Eventually(t, func() bool {
+		ok := true
+		if videoExpected {
+			ok = ok && sess.handler.video.buf.head() > 0
+		}
+		if audioExpected {
+			ok = ok && sess.handler.audio.buf.head() > 0
+		}
+		return ok
+	}, 3*time.Second, 50*time.Millisecond, "expected frames did not arrive in Session")
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("pullStream did not return after cancel")
+	}
+}
+
 // TestPullStream_DefaultCase exercises the full pull pipeline: a fake RTSP
 // server with H.264 video + AAC audio → the pull client (DESCRIBE/SETUP/PLAY)
 // → interleaved RTP → depacketize → Session buffers receive frames.
 func TestPullStream_DefaultCase(t *testing.T) {
-	// SDP with H.264 video (sprop-parameter-sets) and AAC audio (mpeg4-generic).
-	sps := []byte{0x67, 0x64, 0x00, 0x1F, 0xAC, 0xD9} // NAL type 7
-	pps := []byte{0x68, 0xEB, 0xE3, 0xCB}             // NAL type 8
-	sprop := base64.StdEncoding.EncodeToString(sps) + "," + base64.StdEncoding.EncodeToString(pps)
-	sdpBody := strings.Join([]string{
-		"v=0",
-		"m=video 0 RTP/AVP 96",
-		"a=rtpmap:96 H264/90000",
-		"a=fmtp:96 packetization-mode=1; sprop-parameter-sets=" + sprop + "; profile-level-id=64001f",
-		"a=control:trackID=0",
-		"m=audio 0 RTP/AVP 97",
-		"a=rtpmap:97 mpeg4-generic/48000/2",
-		"a=fmtp:97 streamtype=5; profile-level-id=1; mode=AAC-hbr; sizelength=13; indexlength=3; indexdeltalength=3; config=1190",
-		"a=control:trackID=1",
-		"",
-	}, "\r\n")
-
-	// Video RTP: single NAL IDR (type 5), marker bit set (end of access unit).
-	videoRTP := append(buildRTPHeader(96, true, 1, 0, 0x12345678),
-		0x65, 0xAA, 0xBB, 0xCC, 0xDD, // IDR NAL (NRI=3, type=5)
-	)
-
-	// Audio RTP: mpeg4-generic payload wrapping one AAC AU.
-	aacAU := []byte{0xDE, 0xAD, 0xBE, 0xEF}
-	aacPayload := buildMpeg4Generic([][]byte{aacAU}, 13, 3)
-	audioRTP := append(buildRTPHeader(97, true, 1, 0, 0x87654321), aacPayload...)
-
+	sdpBody := buildTestSDP(true) // video + audio
 	addr := startFakeRTSPServer(t, sdpBody, map[uint8][]byte{
-		0: videoRTP, // video channel
-		2: audioRTP, // audio channel
-	})
+		0: buildTestVideoRTP(), // video channel
+		2: buildTestAudioRTP(), // audio channel
+	}, "")
 
-	// Create a Session (the pull client feeds it).
 	trackMux := moqt.NewTrackMux(0)
 	sess, err := NewSession(trackMux, "/live/camera")
 	require.NoError(t, err)
 	defer sess.Close()
 
-	// Run pullStream with a timeout.
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	runPullAndVerify(t, addr, "rtsp://"+addr+"/test", sess, true, true)
+}
 
-	done := make(chan error, 1)
-	go func() { done <- pullStream(ctx, "rtsp://"+addr+"/test", sess) }()
+// TestPullStream_WithBasicAuth tests the 401→retry auth path: the fake server
+// challenges the first DESCRIBE with Basic, and the client retries with an
+// Authorization header built from the URL credentials.
+func TestPullStream_WithBasicAuth(t *testing.T) {
+	addr := startFakeRTSPServer(t, buildTestSDP(false), map[uint8][]byte{
+		0: buildTestVideoRTP(),
+	}, "basic")
 
-	// Wait for both video and audio frames to arrive in the Session buffers.
-	require.Eventually(t, func() bool {
-		return sess.handler.video.buf.head() > 0 && sess.handler.audio.buf.head() > 0
-	}, 3*time.Second, 50*time.Millisecond,
-		"both video and audio frames should arrive in the Session")
+	trackMux := moqt.NewTrackMux(0)
+	sess, err := NewSession(trackMux, "/live/cam")
+	require.NoError(t, err)
+	defer sess.Close()
 
-	// Cancel context (pullStream will return on next ReadInterleaved error).
-	cancel()
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("pullStream did not return after context cancel")
-	}
+	runPullAndVerify(t, addr, "rtsp://admin:secret@"+addr+"/test", sess, true, false)
+}
+
+// TestPullStream_WithDigestAuth tests the Digest 401→retry path.
+func TestPullStream_WithDigestAuth(t *testing.T) {
+	addr := startFakeRTSPServer(t, buildTestSDP(false), map[uint8][]byte{
+		0: buildTestVideoRTP(),
+	}, "digest")
+
+	trackMux := moqt.NewTrackMux(0)
+	sess, err := NewSession(trackMux, "/live/cam")
+	require.NoError(t, err)
+	defer sess.Close()
+
+	runPullAndVerify(t, addr, "rtsp://admin:secret@"+addr+"/test", sess, true, false)
+}
+
+// TestPullStream_VideoOnly tests pulling a video-only stream (no audio track).
+func TestPullStream_VideoOnly(t *testing.T) {
+	addr := startFakeRTSPServer(t, buildTestSDP(false), map[uint8][]byte{
+		0: buildTestVideoRTP(),
+	}, "")
+
+	trackMux := moqt.NewTrackMux(0)
+	sess, err := NewSession(trackMux, "/live/cam")
+	require.NoError(t, err)
+	defer sess.Close()
+
+	runPullAndVerify(t, addr, "rtsp://"+addr+"/test", sess, true, false)
+}
+
+// TestNewRTSPTrackFromMedia verifies the shared SDP→track helper used by both
+// push and pull: H.264 video, AAC audio, and unsupported codecs.
+func TestNewRTSPTrackFromMedia(t *testing.T) {
+	trackMux := moqt.NewTrackMux(0)
+	sess, err := NewSession(trackMux, "/live/test")
+	require.NoError(t, err)
+	defer sess.Close()
+
+	t.Run("H.264 video with sprop", func(t *testing.T) {
+		sps := []byte{0x67, 0x64, 0x00, 0x1F, 0xAC, 0xD9}
+		pps := []byte{0x68, 0xEB, 0xE3, 0xCB}
+		sprop := base64.StdEncoding.EncodeToString(sps) + "," + base64.StdEncoding.EncodeToString(pps)
+		media := &rtsp.SDPMedia{
+			Type:   "video",
+			RtpMap: "96 H264/90000",
+			Fmtp:   "packetization-mode=1; sprop-parameter-sets=" + sprop + "; profile-level-id=64001f",
+		}
+		track := newRTSPTrackFromMedia(sess, media)
+		assert.Equal(t, trackKindVideo, track.kind)
+		require.NotNil(t, track.avcCfg)
+		assert.NotEmpty(t, track.avcCfg.SPS)
+	})
+
+	t.Run("AAC audio with config", func(t *testing.T) {
+		media := &rtsp.SDPMedia{
+			Type:   "audio",
+			RtpMap: "97 mpeg4-generic/48000/2",
+			Fmtp:   "streamtype=5; mode=AAC-hbr; sizelength=13; indexlength=3; indexdeltalength=3; config=1190",
+		}
+		track := newRTSPTrackFromMedia(sess, media)
+		assert.Equal(t, trackKindAudio, track.kind)
+		require.NotNil(t, track.aacDepack)
+	})
+
+	t.Run("unsupported codec (H.265)", func(t *testing.T) {
+		media := &rtsp.SDPMedia{
+			Type:   "video",
+			RtpMap: "96 H265/90000",
+		}
+		track := newRTSPTrackFromMedia(sess, media)
+		assert.Equal(t, trackKind(0), track.kind, "unsupported codec should produce uninitialized track")
+		assert.Nil(t, track.avcCfg)
+		assert.Nil(t, track.aacDepack)
+	})
+
+	t.Run("nil media", func(t *testing.T) {
+		track := newRTSPTrackFromMedia(sess, nil)
+		assert.Equal(t, trackKind(0), track.kind)
+	})
 }
