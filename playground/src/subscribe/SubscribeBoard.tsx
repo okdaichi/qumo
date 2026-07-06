@@ -203,10 +203,24 @@ export function SubscribeBoard(props: { session: Promise<Session>; path: Accesso
 							}
 							const audioTrack = catalog.tracks?.find((t) => t.role === "audio");
 							if (audioTrack?.codec && audioDecodeNode) {
+								// Decode Base64 initData → AudioSpecificConfig (ASC) description.
+								// Raw AAC frames (no ADTS, as RTSP/RTMP ingest emits) need the ASC
+								// as `description` for WebCodecs AudioDecoder to parse them — the
+								// catalog carries it as initData, same shape as video's AVCC blob.
+								let audioDescription: ArrayBuffer | undefined;
+								if (audioTrack.initData) {
+									const binary = atob(audioTrack.initData);
+									const bytes = new Uint8Array(binary.length);
+									for (let i = 0; i < binary.length; i++) {
+										bytes[i] = binary.charCodeAt(i);
+									}
+									audioDescription = bytes.buffer;
+								}
 								audioDecodeNode.configure({
 									codec: audioTrack.codec,
 									sampleRate: audioTrack.samplerate ?? 48000,
 									numberOfChannels: parseInt(audioTrack.channelConfig ?? "2", 10),
+									...(audioDescription ? { description: audioDescription } : {}),
 								});
 								audioLog.info("audio decoder configured", {
 									codec: audioTrack.codec,
