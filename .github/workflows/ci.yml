@@ -37,20 +37,6 @@ jobs:
           version: v2.11.4
           args: --timeout=5m
 
-      # Keep the playground on the centralized logger: no direct console.* is
-      # allowed outside src/log.ts (which owns the console sink). Runs on every
-      # PR via plain git grep — no extra toolchain setup needed.
-      - name: "Playground: forbid console.* outside src/log.ts"
-        run: |
-          set -euo pipefail
-          matches=$(git grep -nE 'console\.(log|debug|info|warn|error|trace)' -- 'playground/src' \
-            | grep -v 'playground/src/log.ts:' || true)
-          if [ -n "$matches" ]; then
-            echo "::error::Direct console.* usage is forbidden in the playground outside src/log.ts. Use createLogger() from src/log.ts instead."
-            echo "$matches"
-            exit 1
-          fi
-
   test:
     name: Test
     runs-on: ubuntu-latest

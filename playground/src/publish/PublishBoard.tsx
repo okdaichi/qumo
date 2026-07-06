@@ -13,7 +13,6 @@ import { getMediaStream, type MediaSourceType } from "./media.ts";
 import { background, type CancelFunc, type Context, withCancel } from "@okdaichi/golikejs/context";
 import { MediaFrame } from "./media_frame.ts";
 import { friendlyMessage } from "../errors.ts";
-import { createLogger } from "../log.ts";
 import { createStatsTicker } from "../stats.ts";
 import { Camera, Monitor } from "lucide-solid";
 import type { Component } from "solid-js";
@@ -29,8 +28,6 @@ function encodeBase64(buf: ArrayBufferLike | ArrayBufferView): string {
 }
 
 const GOP_DURATION = 1000; // 1 second
-
-const log = createLogger("publish");
 
 // Encode-quality presets (#135). Resolution maps to getUserMedia `ideal`
 // constraints (the camera picks the nearest mode); the encoder then encodes at
@@ -134,7 +131,7 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 			// Pass the source type so a denied screen-share reads as screen-share,
 			// not "Camera or microphone".
 			setError(friendlyMessage(err, sourceType()));
-			log.error("failed to start streaming", { err });
+			console.error("Failed to start streaming:", err);
 			return;
 		}
 
@@ -156,7 +153,7 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 				actualHeight = bitmap.height;
 				bitmap.close();
 			} catch (err) {
-				log.warn("grabFrame failed, falling back to getSettings()", { err });
+				console.warn("[Publish] grabFrame failed, falling back to getSettings():", err);
 				const s = videoTrack.getSettings();
 				actualWidth = s.width ?? canvasWidth();
 				actualHeight = s.height ?? canvasHeight();
@@ -187,7 +184,7 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 			// Codec/encoder unsupported — release the camera we just acquired.
 			stream.getTracks().forEach((t) => t.stop());
 			setError(friendlyMessage(err));
-			log.error("failed to configure video encoder", { err });
+			console.error("Failed to configure video encoder:", err);
 			return;
 		}
 		// Size the preview canvas to the actual stream dimensions.
@@ -213,7 +210,7 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 					channelConfig: String(audioCfg.numberOfChannels),
 				};
 			} catch (err) {
-				log.warn("audio setup failed, continuing without audio", { err });
+				console.warn("[Publish] audio setup failed, continuing without audio:", err);
 			}
 		}
 
@@ -261,9 +258,7 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 							const tracks: Track[] = audioTrackDef
 								? [updatedTrack, audioTrackDef]
 								: [updatedTrack];
-							broadcast.setCatalog({ version: 1, tracks }).catch((err: unknown) =>
-								log.error("setCatalog failed", { err })
-							);
+							broadcast.setCatalog({ version: 1, tracks }).catch(console.error);
 						}
 
 						if (chunk.type === "key") {
@@ -326,13 +321,13 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 				const audioSource = audioContext.createMediaStreamSource(stream);
 				audioSource.connect(audioEncodeNode);
 			} catch (err) {
-				log.warn("failed to connect audio source", { err });
+				console.warn("[Publish] failed to connect audio source:", err);
 			}
 		}
 
 		setIsStreaming(true);
 		videoStats.start();
-		log.info("started streaming", { source: sourceType() });
+		console.log(`Started streaming from ${sourceType()}`);
 	};
 
 	const stopStreaming = () => {

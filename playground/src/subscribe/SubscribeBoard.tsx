@@ -5,16 +5,8 @@ import { parseCatalog } from "@qumo/moq/msf";
 import { deserializeMediaFrame } from "../publish/media_frame.ts";
 import { background, withCancel } from "@okdaichi/golikejs/context";
 import { friendlyMessage } from "../errors.ts";
-import { createLogger } from "../log.ts";
 import { createStatsTicker } from "../stats.ts";
 import type { BroadcastPath } from "@qumo/moq";
-
-// subscribe = catalog/general; the dotted children separate the audio and video
-// tracks so each can be level-tuned independently (e.g. quiet the noisy video
-// decode loop without losing catalog events).
-const log = createLogger("subscribe");
-const videoLog = createLogger("subscribe.video");
-const audioLog = createLogger("subscribe.audio");
 
 export function SubscribeBoard(props: { session: Promise<Session>; path: Accessor<string> }) {
 	const [isSubscribed, setIsSubscribed] = createSignal(false);
@@ -137,7 +129,7 @@ export function SubscribeBoard(props: { session: Promise<Session>; path: Accesso
 						// Catalog TrackNotFound is the common "nobody is publishing to
 						// this path yet" case — friendlyMessage maps it to actionable text.
 						setError(friendlyMessage(catalogErr));
-						log.warn("catalog subscribe failed", { err: catalogErr });
+						console.warn("[Subscribe] catalog subscribe failed:", catalogErr);
 						// No catalog => no stream to recover; drop back to Start so the
 						// user can retry without clicking Stop first.
 						setIsSubscribed(false);
@@ -148,7 +140,7 @@ export function SubscribeBoard(props: { session: Promise<Session>; path: Accesso
 						const [group, groupErr] = await catalogTrack.acceptGroup(ctx.done());
 						if (groupErr) {
 							if (!isSubscribed()) break;
-							log.warn("catalog acceptGroup failed", { err: groupErr });
+							console.warn("[Subscribe] catalog acceptGroup:", groupErr);
 							break;
 						}
 
@@ -175,12 +167,15 @@ export function SubscribeBoard(props: { session: Promise<Session>; path: Accesso
 									...(description ? { description } : {}),
 								};
 								videoDecodeNode!.configure(cfg);
-								log.info("video decoder configured", { codec: cfg.codec });
+								console.log("[Subscribe] VideoDecoder configured:", cfg.codec);
 								// Update canvas bitmap dimensions to match the actual video so portrait
 								// (or any non-default-aspect) streams are not stretched.
 								if (videoTrack.width) setCanvasWidth(videoTrack.width);
 								if (videoTrack.height) setCanvasHeight(videoTrack.height);
-								log.info("catalog received", { videoCodec: videoTrack.codec });
+								console.log(
+									"[Subscribe] catalog received, video codec:",
+									videoTrack.codec,
+								);
 								if (!firstConfigReceived) {
 									firstConfigReceived = true;
 									resolveFirstConfig();
@@ -193,9 +188,10 @@ export function SubscribeBoard(props: { session: Promise<Session>; path: Accesso
 									sampleRate: audioTrack.samplerate ?? 48000,
 									numberOfChannels: parseInt(audioTrack.channelConfig ?? "2", 10),
 								});
-								audioLog.info("audio decoder configured", {
-									codec: audioTrack.codec,
-								});
+								console.log(
+									"[Subscribe] audio decoder configured:",
+									audioTrack.codec,
+								);
 							}
 						}
 					}
@@ -207,7 +203,7 @@ export function SubscribeBoard(props: { session: Promise<Session>; path: Accesso
 					if (videoErr) {
 						if (!isSubscribed()) return;
 						setError(friendlyMessage(videoErr));
-						videoLog.warn("subscribe failed", { err: videoErr });
+						console.warn("[Subscribe] video subscribe failed:", videoErr);
 						setIsSubscribed(false);
 						return;
 					}
@@ -217,7 +213,9 @@ export function SubscribeBoard(props: { session: Promise<Session>; path: Accesso
 							try {
 								// Wait for the first catalog before feeding any frames.
 								await firstConfigReady;
-								videoLog.info("catalog ready, starting decode loop");
+								console.log(
+									"[Subscribe] video: catalog ready, starting decode loop",
+								);
 
 								while (isSubscribed()) {
 									const [group, groupErr] = await videoTrack.acceptGroup(
@@ -225,7 +223,10 @@ export function SubscribeBoard(props: { session: Promise<Session>; path: Accesso
 									);
 									if (groupErr) {
 										if (!isSubscribed()) break;
-										videoLog.error("acceptGroup failed", { err: groupErr });
+										console.error(
+											"[Subscribe] video acceptGroup error:",
+											groupErr,
+										);
 										break;
 									}
 
@@ -249,7 +250,7 @@ export function SubscribeBoard(props: { session: Promise<Session>; path: Accesso
 								controller.close();
 							} catch (err) {
 								if (isSubscribed()) {
-									videoLog.error("video track error", { err });
+									console.error("[Subscribe] video track error:", err);
 									controller.error(err);
 								} else {
 									controller.close();
@@ -269,7 +270,7 @@ export function SubscribeBoard(props: { session: Promise<Session>; path: Accesso
 				async ([audioMoqTrack, audioMoqErr]) => {
 					if (audioMoqErr) {
 						if (!isSubscribed()) return;
-						audioLog.warn("subscribe failed", { err: audioMoqErr });
+						console.warn("[Subscribe] audio subscribe failed:", audioMoqErr);
 						return;
 					}
 					if (!audioDecodeNode || !audioContext) return;
@@ -287,7 +288,10 @@ export function SubscribeBoard(props: { session: Promise<Session>; path: Accesso
 									);
 									if (groupErr) {
 										if (!isSubscribed()) break;
-										audioLog.error("acceptGroup failed", { err: groupErr });
+										console.error(
+											"moq: Error accepting audio group:",
+											groupErr,
+										);
 										break;
 									}
 									for await (const frame of group.frames()) {
@@ -305,7 +309,7 @@ export function SubscribeBoard(props: { session: Promise<Session>; path: Accesso
 								controller.close();
 							} catch (err) {
 								if (isSubscribed()) {
-									audioLog.error("audio track error", { err });
+									console.error("Audio track error:", err);
 									controller.error(err);
 								} else {
 									controller.close();
@@ -324,7 +328,7 @@ export function SubscribeBoard(props: { session: Promise<Session>; path: Accesso
 			videoStats.start();
 		} catch (err) {
 			setError(friendlyMessage(err));
-			log.error("failed to start subscribing", { err });
+			console.error("Failed to start subscribing:", err);
 			setIsSubscribed(false);
 		}
 	};

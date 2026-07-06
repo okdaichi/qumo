@@ -1,0 +1,17 @@
+{
+	"name": "@okdaichi/log",
+	"version": "0.1.0",
+	"exports": "./mod.ts",
+	"fmt": {
+		"useTabs": true,
+		"lineWidth": 100,
+		"indentWidth": 4,
+		"singleQuote": false,
+		"semiColons": true
+	},
+	"lint": {
+		"rules": {
+			"tags": ["recommended"]
+		}
+	}
+}
