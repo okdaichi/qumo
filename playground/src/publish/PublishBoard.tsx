@@ -81,6 +81,13 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 	let audioEncodeNode: AudioEncodeNode | undefined;
 	// Audio track catalog entry — set in startStreaming if audio is available.
 	let audioTrackDef: Track | undefined;
+	// Set true by teardown() (unmount). startStreaming is async with several
+	// awaits; if the user switches scenario mid-Start, teardown nulls the
+	// contexts/nodes while startStreaming is suspended. The resumed coroutine
+	// checks this after the awaits and bails (stopping the tracks it still
+	// holds) before reaching the unguarded media-node wiring, which would
+	// otherwise throw on the nulled videoContext and leak the MediaStream.
+	let disposed = false;
 
 	onMount(() => {
 		if (canvasEle) {
@@ -105,8 +112,8 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 		}
 	});
 
-	let publishCtx: Context;
-	let cancelPublish: CancelFunc;
+	let publishCtx: Context | undefined;
+	let cancelPublish: CancelFunc | undefined;
 
 	const startStreaming = async () => {
 		[publishCtx, cancelPublish] = withCancel(background());
@@ -302,9 +309,19 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 			});
 		}
 
+		// Scenario switch (or unmount) during the awaits above runs teardown(),
+		// which nulls videoContext/videoEncodeNode and disposes the nodes. If
+		// that happened, bail before the unguarded media-node wiring below —
+		// new MediaStreamVideoSourceNode(undefined, …) would throw and the
+		// camera/screen-share tracks we're still holding would leak.
+		if (disposed) {
+			stream.getTracks().forEach((t) => t.stop());
+			return;
+		}
+
 		// Announce to relay — Broadcast routes "catalog" and "video" internally.
 		mux.publish(
-			publishCtx.done(),
+			publishCtx!.done(),
 			props.path() as BroadcastPath,
 			broadcast,
 		);
@@ -315,8 +332,12 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 		sourceNode.connect(videoEncodeNode);
 		sourceNode.start();
 
-		// Route audio from the media stream into AudioEncodeNode.
-		if (audioContext && audioEncodeNode) {
+		// Route audio from the media stream into AudioEncodeNode. Only do this
+		// when the encoder was actually configured above — feeding an
+		// unconfigured encoder makes its worklet loop throw forever. Read the
+		// encoder's own state (single source of truth) rather than mirroring it
+		// in a parallel flag.
+		if (audioEncodeNode && audioEncodeNode.encoderState === "configured" && audioContext) {
 			try {
 				const audioSource = audioContext.createMediaStreamSource(stream);
 				audioSource.connect(audioEncodeNode);
@@ -331,7 +352,9 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 	};
 
 	const stopStreaming = () => {
-		cancelPublish();
+		// cancelPublish is only assigned inside startStreaming, but teardown()
+		// calls this on unmount too — which can run before Start was ever clicked.
+		cancelPublish?.();
 		audioTrackDef = undefined;
 		audioContext?.suspend().catch(() => {});
 		if (sourceNode) {
@@ -342,6 +365,29 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 		videoStats.stop();
 		setIsStreaming(false);
 	};
+
+	// Full teardown on unmount. Scenario switches remount <ScenarioView>, so
+	// without this every echo visit would leak an AudioContext, a VideoContext,
+	// and both encode nodes (their internal worklet→encoder loops keep running).
+	// After a few switches the leaked AudioContexts push the browser into a
+	// degraded state where audio setup fails — which is how we end up routing
+	// audio into an unconfigured encoder. Disposing here stops that at the source.
+	const teardown = () => {
+		// Signal in-flight startStreaming coroutines to bail at their next
+		// post-await checkpoint (see the `disposed` check before mux.publish).
+		disposed = true;
+		stopStreaming();
+		// Fire-and-forget: dispose/close are async but we're unmounting.
+		videoEncodeNode?.dispose().catch(() => {});
+		videoEncodeNode = undefined;
+		audioEncodeNode?.dispose().catch(() => {});
+		audioEncodeNode = undefined;
+		videoContext?.close().catch(() => {});
+		videoContext = undefined;
+		audioContext?.close().catch(() => {});
+		audioContext = undefined;
+	};
+	onCleanup(() => teardown());
 
 	return (
 		<div class="publish-board">
