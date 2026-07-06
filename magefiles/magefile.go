@@ -837,6 +837,14 @@ func signWithMkcert(mkcertPath, certFile, keyFile string) error {
 		return fmt.Errorf("mkcert sign: %w", err)
 	}
 
+	// mkcert creates the key with the process umask's default (often 0644),
+	// not the 0600 the self-sign path enforces. Tighten it so the private key
+	// is owner-only regardless of which path produced it. Best-effort: on
+	// Windows the mode is advisory (ACLs govern), so ignore the error there.
+	if err := os.Chmod(keyFile, 0o600); err != nil {
+		fmt.Printf("⚠️  Warning: could not tighten %s to 0600: %v\n", keyFile, err)
+	}
+
 	// mkcert certs chain to a trusted local CA, so the browser needs no pinned
 	// hash. A stale VITE_CERT_HASH from a prior self-signed run would force
 	// pinning to the wrong cert, so clear it (and its comment) too.
