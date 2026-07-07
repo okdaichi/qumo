@@ -315,6 +315,8 @@ func TestNewLocalResolver_Defaults(t *testing.T) {
 	assert.Equal(t, "http://localhost:4646", r.addr)
 	assert.Equal(t, "qumo-relay", r.serviceName)
 	assert.Equal(t, 15*time.Second, r.interval)
+	require.NotNil(t, r.httpClient)
+	assert.Equal(t, 10*time.Second, r.httpClient.Timeout)
 }
 
 func TestNewLocalResolver_CustomEnv(t *testing.T) {
@@ -327,6 +329,8 @@ func TestNewLocalResolver_CustomEnv(t *testing.T) {
 	assert.Equal(t, "http://nomad.internal:4646", r.addr)
 	assert.Equal(t, "my-relay", r.serviceName)
 	assert.Equal(t, 30*time.Second, r.interval)
+	require.NotNil(t, r.httpClient)
+	assert.Equal(t, 10*time.Second, r.httpClient.Timeout)
 }
 
 func TestNewLocalResolver_NOMADAddrFallback(t *testing.T) {
@@ -339,6 +343,8 @@ func TestNewLocalResolver_NOMADAddrFallback(t *testing.T) {
 	require.NotNil(t, r)
 	assert.Equal(t, "http://nomad.service.consul:4646", r.addr,
 		"should fall back to NOMAD_ADDR when LOCAL_RESOLVER_ADDR is unset")
+	require.NotNil(t, r.httpClient)
+	assert.Equal(t, 10*time.Second, r.httpClient.Timeout)
 }
 
 func TestNewLocalResolver_LocalResolverOverridesNOMADAddr(t *testing.T) {
@@ -349,9 +355,21 @@ func TestNewLocalResolver_LocalResolverOverridesNOMADAddr(t *testing.T) {
 	require.NotNil(t, r)
 	assert.Equal(t, "http://custom:4646", r.addr,
 		"LOCAL_RESOLVER_ADDR should take precedence over NOMAD_ADDR")
+	require.NotNil(t, r.httpClient)
+	assert.Equal(t, 10*time.Second, r.httpClient.Timeout)
 }
 
 func TestLocalResolver_Interval(t *testing.T) {
 	r := &LocalResolver{interval: 10 * time.Second}
 	assert.Equal(t, 10*time.Second, r.Interval())
+}
+
+func TestNewLocalResolver_InvalidInterval(t *testing.T) {
+	t.Setenv("LOCAL_RESOLVER_INTERVAL", "invalid_duration")
+
+	r := NewLocalResolver()
+	require.NotNil(t, r)
+	assert.Equal(t, 15*time.Second, r.interval, "should fall back to 15s default when duration is invalid")
+	require.NotNil(t, r.httpClient)
+	assert.Equal(t, 10*time.Second, r.httpClient.Timeout)
 }
