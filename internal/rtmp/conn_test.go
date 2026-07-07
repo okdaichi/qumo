@@ -418,3 +418,138 @@ func BenchmarkMessageRoundTrip(b *testing.B) {
 
 // devNull satisfies io.Reader for handshake short-circuit scenarios.
 var _ io.Reader = (*countingReader)(nil)
+
+// TestMessageReader_Close verifies sending stream EOF and closing connection.
+func TestMessageReader_Close(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	readerConn := newConn(client)
+	reader := &MessageReader{conn: readerConn, streamID: 1, app: "live", streamKey: "key"}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- reader.Close()
+	}()
+
+	// The reader will send a user control message StreamEOF.
+	serverConn := newConn(server)
+	msg, err := serverConn.readMessage()
+	if err != nil {
+		t.Fatalf("expected message, got %v", err)
+	}
+	if msg.typeID != messageTypeUserControl {
+		t.Fatalf("expected messageTypeUserControl, got %v", msg.typeID)
+	}
+
+	var uc messageUserControl
+	if err := uc.decode(bytes.NewReader(msg.payload)); err != nil {
+		t.Fatalf("decode user control: %v", err)
+	}
+	if uc.EventType != userControlStreamEOF {
+		t.Fatalf("expected EventType streamEOF, got %v", uc.EventType)
+	}
+
+	// Since we close the underlying connection, reading again should give an error.
+	_, err = serverConn.readMessage()
+	if err == nil {
+		t.Fatalf("expected error reading after close, got nil")
+	}
+
+	if err := <-errCh; err != nil {
+		t.Fatalf("Close returned err: %v", err)
+	}
+}
+
+// TestMessageWriter_Close verifies sending deleteStream and closing connection.
+func TestMessageWriter_Close(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	writerConn := newConn(client)
+	writer := &MessageWriter{conn: writerConn, streamID: 1, app: "live", streamKey: "key"}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- writer.Close()
+	}()
+
+	// The writer will send an AMF0 command deleteStream.
+	serverConn := newConn(server)
+	msg, err := serverConn.readMessage()
+	if err != nil {
+		t.Fatalf("expected message, got %v", err)
+	}
+	if msg.typeID != messageTypeAMF0Command {
+		t.Fatalf("expected messageTypeAMF0Command, got %v", msg.typeID)
+	}
+
+	name, _, _, err := serverConn.readCommand(msg)
+	if err != nil {
+		t.Fatalf("readCommand: %v", err)
+	}
+	if name != commandMessageNameDeleteStream {
+		t.Fatalf("expected deleteStream, got %v", name)
+	}
+
+	// Since we close the underlying connection, reading again should give an error.
+	_, err = serverConn.readMessage()
+	if err == nil {
+		t.Fatalf("expected error reading after close, got nil")
+	}
+
+	if err := <-errCh; err != nil {
+		t.Fatalf("Close returned err: %v", err)
+	}
+}
+
+func TestConn_AcceptStream_Errors(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	conn := newConn(server)
+	client.Close() // Cause readMessage to fail
+	_, err := conn.AcceptStream()
+	if err == nil {
+		t.Fatalf("expected error from AcceptStream on closed connection")
+	}
+}
+
+func TestConn_OpenStream_Errors(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	conn := newConn(server)
+	client.Close() // Cause read/write to fail
+	_, err := conn.OpenStream("live", "test")
+	if err == nil {
+		t.Fatalf("expected error from OpenStream on closed connection")
+	}
+}
+
+// TestConn_LocalRemoteAddr using a real tcp connection to ensure non-nil values
+func TestConn_LocalRemoteAddrReal(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen failed: %v", err)
+	}
+	defer l.Close()
+
+	client, err := net.Dial("tcp", l.Addr().String())
+	if err != nil {
+		t.Fatalf("dial failed: %v", err)
+	}
+	defer client.Close()
+
+	conn := newConn(client)
+	if conn.LocalAddr() == nil {
+		t.Fatalf("expected non-nil LocalAddr")
+	}
+	if conn.RemoteAddr() == nil {
+		t.Fatalf("expected non-nil RemoteAddr")
+	}
+}
