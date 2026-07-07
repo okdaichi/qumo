@@ -99,6 +99,36 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 	onMount(() => {
 		if (canvasEle) {
 			videoContext = new VideoContext({ canvas: canvasEle });
+
+			// Set canvas dimensions based on the actual canvas size.
+			setCanvasWidth(videoContext.destination.canvas.width);
+			setCanvasHeight(videoContext.destination.canvas.height);
+
+			audioContext = new AudioContext({ sampleRate: 48000 });
+		}
+	});
+
+	let publishCtx: Context | undefined;
+	let cancelPublish: CancelFunc | undefined;
+
+	const startStreaming = async () => {
+		[publishCtx, cancelPublish] = withCancel(background());
+
+		if (!videoContext) {
+			setError("Video context not initialized");
+			return;
+		}
+
+		// Create the encode nodes lazily on first Start, not in onMount. An encode
+		// node registers with its context on construction, and av-nodes'
+		// context.close() disposes every registered node — whose dispose() flushes.
+		// An unconfigured encoder throws InvalidStateError on flush, so a node that
+		// was created but never configured (the common case in subscribe-only
+		// scenarios, where Start is never clicked) logs a flush error on teardown.
+		// Creating on demand means no encode node exists until the user actually
+		// publishes, so teardown's context.close() has nothing unconfigured to
+		// flush. Create-on-first-use so retries reuse the same node rather than leak.
+		if (!videoEncodeNode) {
 			videoEncodeNode = new VideoEncodeNode(videoContext, {
 				isKey: (timestamp, _) => {
 					// timestamp is in microseconds, so convert GOP_DURATION to microseconds
@@ -109,25 +139,9 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 					return false;
 				},
 			});
-
-			// Set canvas dimensions based on the actual canvas size.
-			setCanvasWidth(videoContext.destination.canvas.width);
-			setCanvasHeight(videoContext.destination.canvas.height);
-
-			audioContext = new AudioContext({ sampleRate: 48000 });
-			audioEncodeNode = new AudioEncodeNode(audioContext);
 		}
-	});
-
-	let publishCtx: Context | undefined;
-	let cancelPublish: CancelFunc | undefined;
-
-	const startStreaming = async () => {
-		[publishCtx, cancelPublish] = withCancel(background());
-
-		if (!videoContext || !videoEncodeNode) {
-			setError("Video context not initialized");
-			return;
+		if (audioContext && !audioEncodeNode) {
+			audioEncodeNode = new AudioEncodeNode(audioContext);
 		}
 
 		// Acquire media first — we need the actual track dimensions before configuring the encoder.
