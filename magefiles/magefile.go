@@ -35,13 +35,17 @@ const versionPkg = "github.com/qumo-dev/qumo/internal/version"
 // Default target to run when none is specified
 var Default = Help
 
-// versionLDFlags returns ldflags that embed version info into the binary.
-func versionLDFlags() string {
-	v := gitTag()
-	c := gitCommit()
-	d := time.Now().UTC().Format(time.RFC3339)
+// ldflagsString formats the -ldflags value that embeds the given version
+// metadata into the binary via the version package.
+func ldflagsString(v, c, d string) string {
 	return fmt.Sprintf("-s -w -X %s.version=%s -X %s.commit=%s -X %s.date=%s",
 		versionPkg, v, versionPkg, c, versionPkg, d)
+}
+
+// versionLDFlags returns ldflags that embed version info into the binary,
+// capturing the git-derived version and commit at call time.
+func versionLDFlags() string {
+	return ldflagsString(gitTag(), gitCommit(), time.Now().UTC().Format(time.RFC3339))
 }
 
 func gitTag() string {
@@ -130,6 +134,15 @@ func Help() error {
 // is built first (WebBuild) so the binary ships with the real UI; without it
 // `go:embed` would embed only the placeholder index.html.
 func Build() error {
+	// Capture the git-derived version BEFORE WebBuild. WebBuild overwrites the
+	// committed playground/dist/index.html placeholder, so reading it after would
+	// make `git describe --dirty` (used by gitTag) append "-dirty" to the version
+	// embedded into the binary. Reading first keeps release builds clean
+	// (e.g. "v0.4.0", not "v0.4.0-dirty") when built from a clean tag checkout.
+	version := gitTag()
+	commit := gitCommit()
+	date := time.Now().UTC().Format(time.RFC3339)
+
 	if err := WebBuild(); err != nil {
 		return fmt.Errorf("web build: %w", err)
 	}
@@ -146,8 +159,8 @@ func Build() error {
 		return err
 	}
 
-	ldflags := versionLDFlags()
-	fmt.Printf("   version: %s\n", gitTag())
+	ldflags := ldflagsString(version, commit, date)
+	fmt.Printf("   version: %s\n", version)
 
 	cmd := exec.Command("go", "build", "-ldflags", ldflags, "-o", "./bin/"+binaryName, ".")
 	cmd.Stdout = os.Stdout
