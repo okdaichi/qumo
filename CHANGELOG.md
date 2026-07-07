@@ -22,7 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Dependency updates (`go.mod`, `playground`):** Bundled demo/frontend and Go module dependency refresh. Frontend (`@qumo/moq` 0.16.1 → 0.16.2, `solid-js` 1.9.12 → 1.9.14, `@types/node` 25 → 26, `typescript` 5.9 → 6.0, `vite` 7.3 → 8.1) and Go indirects (`prometheus/common`, `prometheus/procfs`, `golang.org/x/net`, `golang.org/x/text`, `google.golang.org/protobuf`, et al.) to latest. `go mod tidy` dropped the unused `go.yaml.in/yaml/v2`. Build, type-check (`deno check`), and the full test suite pass with the new versions.
+- **Dependency updates — minor/patch (`go.mod`, `playground`):** Bundled demo/frontend and Go module dependency refresh, in-range minor/patch only. Frontend (`@qumo/moq` 0.16.1 → 0.16.2, `solid-js` 1.9.12 → 1.9.14, `@types/node` 25.6 → 25.9, `vite` 7.3.2 → 7.3.6) and Go indirects (`prometheus/common`, `prometheus/procfs`, `golang.org/x/net`, `golang.org/x/text`, `google.golang.org/protobuf`, et al.). `go mod tidy` dropped the unused `go.yaml.in/yaml/v2`. Build, type-check (`deno check`), and the full test suite pass. Major-version bumps (`typescript` 6, `vite` 8, `@types/node` 26) are tracked separately.
 
 ### Fixed
 
