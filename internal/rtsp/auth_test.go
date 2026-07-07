@@ -136,3 +136,20 @@ func TestBuildAuthorization_Digest_MissingRealmNonce(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "realm or nonce")
 }
+
+func BenchmarkSelectQop(b *testing.B) {
+	cases := []string{
+		"",
+		"auth",
+		"auth-int,auth",
+		"auth-int, auth ,other",
+		"unsupported, another",
+	}
+	for _, c := range cases {
+		b.Run(c, func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				selectQop(c)
+			}
+		})
+	}
+}

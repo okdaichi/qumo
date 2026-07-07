@@ -166,8 +166,18 @@ func selectQop(advertised string) string {
 	if advertised == "" {
 		return ""
 	}
-	for _, q := range strings.Split(advertised, ",") {
-		if strings.TrimSpace(q) == "auth" {
+	s := advertised
+	for len(s) > 0 {
+		var part string
+		i := strings.IndexByte(s, ',')
+		if i >= 0 {
+			part = s[:i]
+			s = s[i+1:]
+		} else {
+			part = s
+			s = ""
+		}
+		if strings.TrimSpace(part) == "auth" {
 			return "auth"
 		}
 	}
