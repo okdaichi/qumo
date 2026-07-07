@@ -7,17 +7,56 @@ import (
 	"time"
 )
 
-func TestListener_Listen(t *testing.T) {
-	// Let OS pick a free port.
-	l, err := Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("Listen failed: %v", err)
-	}
-	defer l.Close()
+func TestListen(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		l, err := Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("Listen failed: %v", err)
+		}
+		defer l.Close()
 
-	if l.Addr() == nil {
-		t.Fatal("expected non-nil Addr()")
-	}
+		if l.Addr() == nil {
+			t.Fatal("expected non-nil Addr()")
+		}
+
+		errCh := make(chan error, 1)
+		connCh := make(chan *Conn, 1)
+
+		go func() {
+			conn, err := l.Accept()
+			if err != nil {
+				errCh <- err
+				return
+			}
+			connCh <- conn
+		}()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		clientConn, err := Dial(ctx, l.Addr().String())
+		if err != nil {
+			t.Fatalf("Dial failed: %v", err)
+		}
+		defer clientConn.Close()
+
+		select {
+		case err := <-errCh:
+			t.Fatalf("Accept failed: %v", err)
+		case conn := <-connCh:
+			defer conn.Close()
+		case <-time.After(2 * time.Second):
+			t.Fatal("timeout waiting for Accept")
+		}
+	})
+
+	t.Run("error", func(t *testing.T) {
+		// Trying to listen on an invalid address should fail
+		_, err := Listen("tcp", "invalid-address:-1")
+		if err == nil {
+			t.Fatal("expected error listening on invalid address")
+		}
+	})
 }
 
 func TestListener_Accept(t *testing.T) {
@@ -141,13 +180,6 @@ func TestServerConn_HandshakeError(t *testing.T) {
 	}
 }
 
-func TestListen_Error(t *testing.T) {
-	// Trying to listen on an invalid address should fail
-	_, err := Listen("tcp", "invalid-address:-1")
-	if err == nil {
-		t.Fatal("expected error listening on invalid address")
-	}
-}
 
 // TestListener_Accept_StalledHandshakeDoesNotBlock verifies the handshake
 // read deadline: a client that connects and then never sends handshake bytes
