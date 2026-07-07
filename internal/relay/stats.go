@@ -47,10 +47,16 @@ func pollConnStats(ctx context.Context, provider connStatsProvider, addr string)
 	}
 }
 
+// sessionStatsProvider is satisfied by *moqt.Session.
+type sessionStatsProvider interface {
+	Stats() moqt.SessionStats
+	Context() context.Context
+}
+
 // pollSessionStats periodically samples MoQT-level session statistics (RTT and
 // estimated bitrate) and updates Prometheus gauges. It exits when the session
 // context is cancelled.
-func pollSessionStats(sess *moqt.Session, addr string) {
+func pollSessionStats(sess sessionStatsProvider, addr string) {
 	defer func() {
 		metricSessionRTTMilliseconds.DeleteLabelValues(addr)
 		metricSessionEstimatedBitrate.DeleteLabelValues(addr)
