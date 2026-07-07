@@ -87,7 +87,6 @@ docker run -d \
   -e CERT_FILE=certs/server.crt \
   -e KEY_FILE=certs/server.key \
   -e RELAY_NAME=relay-1 \
-  -e REGION=asia \
   -e ROLE=hub \
   ghcr.io/qumo-dev/qumo:latest relay
 ```

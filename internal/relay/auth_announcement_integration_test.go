@@ -144,7 +144,6 @@ func startAuthRelay(t *testing.T, stub *stubCredentialBackend) (addr string, shu
 		MOQDialer: &moqt.Dialer{TLSConfig: dialerTLS, QUICConfig: quicCfg},
 		Config: &Config{
 			NodeID:        "relay-auth-test",
-			Region:        "test",
 			Role:          "relay",
 			AdvertiseAddr: addr,
 		},

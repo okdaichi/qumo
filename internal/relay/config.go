@@ -4,11 +4,11 @@ import "time"
 
 // Config holds the relay server configuration.
 type Config struct {
-	// NodeID is the unique identifier for this relay node.
+	// NodeID is a human-readable identifier for this relay node, used as a
+	// prefix in routing/metric labels (e.g. "[node]/path/track"). It is the
+	// ops-facing label, not the MoQT protocol hop identity (that is the
+	// TrackMux's random HopID — see moqt.NewHopID).
 	NodeID string
-
-	// Region is the geographic region this node belongs to.
-	Region string
 
 	// Role is this node's role in the topology ("edge" or "hub").
 	// If empty, a simple flat peer discovery is used.
@@ -18,10 +18,13 @@ type Config struct {
 	// It should be the address that other nodes can use to connect to this relay.
 	AdvertiseAddr string
 
-	// GroupCacheSize is the maximum number of group caches to keep.
+	// GroupCacheSize is the number of completed groups each track's ring
+	// retains for late/backfill subscribers. ≤0 falls back to
+	// DefaultGroupCacheSize.
 	GroupCacheSize int
 
-	// FrameCapacity is the frame buffer size in bytes.
+	// FrameCapacity is the capacity (bytes) of recycled frame buffers. ≤0
+	// falls back to DefaultFramePool (DefaultNewFrameCapacity).
 	FrameCapacity int
 
 	// Peers is the list of upstream relay peers to connect to.

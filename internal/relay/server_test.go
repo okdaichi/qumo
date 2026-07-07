@@ -68,7 +68,6 @@ func TestServer_Init(t *testing.T) {
 		server := newTestServer("localhost:4433")
 		server.Config = &Config{
 			NodeID:         "node-1",
-			Region:         "us-west",
 			FrameCapacity:  2000,
 			GroupCacheSize: 200,
 		}
@@ -148,7 +147,6 @@ func TestServer_Muxes_SeparateInstances(t *testing.T) {
 func TestServer_Config_Persistence(t *testing.T) {
 	customConfig := &Config{
 		NodeID:         "node-1",
-		Region:         "us-west",
 		FrameCapacity:  5000,
 		GroupCacheSize: 500,
 	}
@@ -159,7 +157,6 @@ func TestServer_Config_Persistence(t *testing.T) {
 
 	assert.Same(t, customConfig, server.Config, "Server should preserve custom config")
 	assert.Equal(t, "node-1", server.Config.NodeID)
-	assert.Equal(t, "us-west", server.Config.Region)
 	assert.Equal(t, 5000, server.Config.FrameCapacity)
 	assert.Equal(t, 500, server.Config.GroupCacheSize)
 }
@@ -207,7 +204,6 @@ func TestServer_Shutdown_Idempotent(t *testing.T) {
 func TestServer_Config_CustomValues(t *testing.T) {
 	customConfig := &Config{
 		NodeID:         "node-1",
-		Region:         "us-west",
 		GroupCacheSize: 500,
 		FrameCapacity:  4096,
 	}
