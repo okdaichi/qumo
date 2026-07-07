@@ -3,60 +3,50 @@ package version
 import (
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
-func TestVersion(t *testing.T) {
-	v := Version()
-	if v == "" {
-		t.Error("Version() returned empty string")
-	}
-	if v != "dev" {
-		t.Errorf("expected 'dev', got '%s'", v)
-	}
-}
+func TestVersionFunctions(t *testing.T) {
+	// Save original values to restore them later
+	origVersion := version
+	origCommit := commit
+	origDate := date
 
-func TestCommit(t *testing.T) {
-	c := Commit()
-	if c == "" {
-		t.Error("Commit() returned empty string")
-	}
-	if c != "none" {
-		t.Errorf("expected 'none', got '%s'", c)
-	}
-}
+	defer func() {
+		version = origVersion
+		commit = origCommit
+		date = origDate
+	}()
 
-func TestDate(t *testing.T) {
-	d := Date()
-	if d == "" {
-		t.Error("Date() returned empty string")
-	}
-	if d != "unknown" {
-		t.Errorf("expected 'unknown', got '%s'", d)
-	}
-}
+	t.Run("DefaultValues", func(t *testing.T) {
+		assert.Equal(t, "dev", Version())
+		assert.Equal(t, "none", Commit())
+		assert.Equal(t, "unknown", Date())
 
-func TestFull(t *testing.T) {
-	f := Full()
-	if f == "" {
-		t.Error("Full() returned empty string")
-	}
-	if !strings.Contains(f, "qumo dev") {
-		t.Errorf("Full() should contain 'qumo dev', got: %s", f)
-	}
-	if !strings.Contains(f, "commit: none") {
-		t.Errorf("Full() should contain 'commit: none', got: %s", f)
-	}
-	if !strings.Contains(f, "built:  unknown") {
-		t.Errorf("Full() should contain 'built:  unknown', got: %s", f)
-	}
-}
+		full := Full()
+		assert.True(t, strings.Contains(full, "qumo dev"))
+		assert.True(t, strings.Contains(full, "commit: none"))
+		assert.True(t, strings.Contains(full, "built:  unknown"))
 
-func TestShort(t *testing.T) {
-	s := Short()
-	if s == "" {
-		t.Error("Short() returned empty string")
-	}
-	if s != "qumo dev" {
-		t.Errorf("expected 'qumo dev', got '%s'", s)
-	}
+		assert.Equal(t, "qumo dev", Short())
+	})
+
+	t.Run("ModifiedValues", func(t *testing.T) {
+		// Modify values to simulate ldflags injection
+		version = "v1.2.3"
+		commit = "abcdef1"
+		date = "2023-01-01T00:00:00Z"
+
+		assert.Equal(t, "v1.2.3", Version())
+		assert.Equal(t, "abcdef1", Commit())
+		assert.Equal(t, "2023-01-01T00:00:00Z", Date())
+
+		full := Full()
+		assert.True(t, strings.Contains(full, "qumo v1.2.3"))
+		assert.True(t, strings.Contains(full, "commit: abcdef1"))
+		assert.True(t, strings.Contains(full, "built:  2023-01-01T00:00:00Z"))
+
+		assert.Equal(t, "qumo v1.2.3", Short())
+	})
 }
