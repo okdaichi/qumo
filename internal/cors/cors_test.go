@@ -48,9 +48,26 @@ func TestLoadAllowed(t *testing.T) {
 		want []string
 	}{
 		"empty returns nil (secure default)": {"", nil},
+		"whitespace only returns nil":        {"   ", nil},
 		"parses, trims, keeps wildcard": {
 			" http://localhost:5178 , https://demo.qumo.dev ,* ",
 			[]string{"http://localhost:5178", "https://demo.qumo.dev", "*"},
+		},
+		"ignores empty items between commas": {
+			"a,,b",
+			[]string{"a", "b"},
+		},
+		"ignores trailing commas": {
+			"a,b,",
+			[]string{"a", "b"},
+		},
+		"ignores leading commas": {
+			",a,b",
+			[]string{"a", "b"},
+		},
+		"ignores whitespace items": {
+			"a, ,b",
+			[]string{"a", "b"},
 		},
 	}
 	for name, tt := range tests {
