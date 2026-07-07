@@ -1,7 +1,8 @@
 {
   "version": "5",
   "specifiers": {
-    "jsr:@okdaichi/av-nodes@0.10.3": "0.10.3",
+    "jsr:@okdaichi/av-nodes@0.10.4": "0.10.4",
+    "jsr:@okdaichi/golikejs@0.10.0": "0.10.0",
     "jsr:@okdaichi/golikejs@0.9.0": "0.9.0",
     "jsr:@okdaichi/media-log@0.1": "0.1.0",
     "jsr:@qumo/moq@~0.16.1": "0.16.1",
@@ -15,14 +16,14 @@
     "npm:zod@^3.24.2": "3.25.76"
   },
   "jsr": {
-    "@okdaichi/av-nodes@0.10.3": {
-      "integrity": "c0c14578baa9992c3e2a11cea91ce34684f47aa5c71263e04e7403ce6601564d",
-      "dependencies": [
-        "jsr:@okdaichi/golikejs"
-      ]
+    "@okdaichi/av-nodes@0.10.4": {
+      "integrity": "0a0952393baf4118792aff9bc823c80d6096a88c4301f2a575dc02642dac1d23"
     },
     "@okdaichi/golikejs@0.9.0": {
       "integrity": "9e99fab2a4a96c6b04143b37ecd5d18e9783fce4b5cdb716a3cabdb44fc5c00e"
+    },
+    "@okdaichi/golikejs@0.10.0": {
+      "integrity": "761440b50ff8bc21df1061e3361c6542208e0f4f434da4b1494a9b1bb5ab73d3"
     },
     "@okdaichi/media-log@0.1.0": {
       "integrity": "c8ed4fdaac82cf8a2ecb7aa1a5a114d136f9886548ceae2c64b2322485a3c034"
@@ -30,7 +31,7 @@
     "@qumo/moq@0.16.1": {
       "integrity": "1c42e3bcd8630bb8f18bb6eaf0b3f4d20b17c7814eb1f03a71f718a36cdc018d",
       "dependencies": [
-        "jsr:@okdaichi/golikejs",
+        "jsr:@okdaichi/golikejs@0.9.0",
         "npm:zod"
       ]
     }
@@ -846,8 +847,8 @@
   },
   "workspace": {
     "dependencies": [
-      "jsr:@okdaichi/av-nodes@0.10.3",
-      "jsr:@okdaichi/golikejs@0.9.0",
+      "jsr:@okdaichi/av-nodes@0.10.4",
+      "jsr:@okdaichi/golikejs@0.10.0",
       "jsr:@okdaichi/media-log@0.1",
       "jsr:@qumo/moq@~0.16.1"
     ],
