@@ -118,10 +118,10 @@ func BuildAVCDecoderConfigurationRecord(cfg *AVCConfig) ([]byte, error) {
 
 	buf := make([]byte, 0, 6+1+sinkParamLen(cfg.SPS)+sinkParamLen(cfg.PPS))
 	buf = append(buf,
-		0x01,                  // configurationVersion
-		cfg.ProfileIDC,        // AVCProfileIndication
-		cfg.ProfileCompat,     // profile_compatibility
-		cfg.LevelIDC,          // AVCLevelIndication
+		0x01,                         // configurationVersion
+		cfg.ProfileIDC,               // AVCProfileIndication
+		cfg.ProfileCompat,            // profile_compatibility
+		cfg.LevelIDC,                 // AVCLevelIndication
 		0xFC|byte(cfg.NALULenSize-1), // reserved | lengthSizeMinusOne
 		0xE0|byte(len(cfg.SPS)),      // reserved | numOfSequenceParameterSets
 	)

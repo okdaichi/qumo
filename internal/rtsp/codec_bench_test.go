@@ -64,7 +64,7 @@ func BenchmarkRequest_Write(b *testing.B) {
 		URL:    u,
 		Proto:  "RTSP/1.0",
 		Header: http.Header{
-			"CSeq":      {"2"},
+			"CSeq":       {"2"},
 			"User-Agent": {"qumo-bench"},
 			"Session":    {"12345678"},
 		},

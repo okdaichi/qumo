@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"github.com/qumo-dev/gomoqt/moqt"
-	"github.com/stretchr/testify/require"
 	"github.com/qumo-dev/qumo/internal/ffpub"
 	"github.com/qumo-dev/qumo/internal/ingest"
+	"github.com/stretchr/testify/require"
 )
 
 // TestRTSPInterop_Matrix is the RTSP analogue of TestRTMPInterop_Matrix: it
@@ -139,7 +139,7 @@ func setupRTSPPipeline(t *testing.T, mux *moqt.TrackMux) (rtspAddr, serveURL str
 	// TrackMux (same shape as the RTMP pipeline / ingest.RunRTMP).
 	certFile, keyFile := createTempCert(t)
 	wtHandler := &moqt.WebTransportHandler{
-		TrackMux: mux,
+		TrackMux:    mux,
 		CheckOrigin: func(*http.Request) bool { return true }, // test-only permissive
 		Handler: moqt.HandleFunc(func(sess *moqt.Session) {
 			defer sess.CloseWithError(moqt.NoError, moqt.NoError.String())

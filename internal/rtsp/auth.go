@@ -124,38 +124,38 @@ func digestHeader(method, uri string, cred Credentials, p map[string]string) (st
 		return "", fmt.Errorf("digest algorithm %q not supported (only MD5)", algo)
 	}
 
-	ha1 := md5hex(fmt.Sprintf("%s:%s:%s", cred.Username, realm, cred.Password))
-	ha2 := md5hex(fmt.Sprintf("%s:%s", method, uri))
+	ha1 := md5hex(cred.Username + ":" + realm + ":" + cred.Password)
+	ha2 := md5hex(method + ":" + uri)
 
 	cnonce := randomHex(8)
 	nc := "00000001"
 
 	var response string
 	parts := []string{
-		fmt.Sprintf(`username="%s"`, cred.Username),
-		fmt.Sprintf(`realm="%s"`, realm),
-		fmt.Sprintf(`nonce="%s"`, nonce),
-		fmt.Sprintf(`uri="%s"`, uri),
+		`username="` + cred.Username + `"`,
+		`realm="` + realm + `"`,
+		`nonce="` + nonce + `"`,
+		`uri="` + uri + `"`,
 	}
 
 	// qop may be absent (RFC 2069 legacy) or a list like "auth,auth-int".
 	qop := selectQop(p["qop"])
 	if qop != "" {
-		response = md5hex(fmt.Sprintf("%s:%s:%s:%s:%s:%s", ha1, nonce, nc, cnonce, qop, ha2))
+		response = md5hex(ha1 + ":" + nonce + ":" + nc + ":" + cnonce + ":" + qop + ":" + ha2)
 		parts = append(parts,
-			fmt.Sprintf(`qop=%s`, qop),
-			fmt.Sprintf(`nc=%s`, nc),
-			fmt.Sprintf(`cnonce="%s"`, cnonce),
+			`qop=`+qop,
+			`nc=`+nc,
+			`cnonce="`+cnonce+`"`,
 		)
 	} else {
-		response = md5hex(fmt.Sprintf("%s:%s:%s", ha1, nonce, ha2))
+		response = md5hex(ha1 + ":" + nonce + ":" + ha2)
 	}
 	parts = append(parts,
-		fmt.Sprintf(`response="%s"`, response),
-		fmt.Sprintf(`algorithm=%s`, algo),
+		`response="`+response+`"`,
+		`algorithm=`+algo,
 	)
 	if opaque := p["opaque"]; opaque != "" {
-		parts = append(parts, fmt.Sprintf(`opaque="%s"`, opaque))
+		parts = append(parts, `opaque="`+opaque+`"`)
 	}
 
 	return "Digest " + strings.Join(parts, ", "), nil
