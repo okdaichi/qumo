@@ -68,7 +68,7 @@ func Run(_ []string) error {
 	hostname, _ := os.Hostname()
 	nodeID := envOr("RELAY_NAME", "relay-"+hostname)
 
-	groupCacheSize, err := envInt("GROUP_CACHE_SIZE", 100)
+	groupCacheSize, err := envInt("GROUP_CACHE_SIZE", DefaultGroupCacheSize)
 	if err != nil {
 		return fmt.Errorf("invalid GROUP_CACHE_SIZE: %w", err)
 	}
@@ -147,7 +147,6 @@ func Run(_ []string) error {
 
 	relayCfg := Config{
 		NodeID:                nodeID,
-		Region:                os.Getenv("REGION"),
 		Role:                  os.Getenv("ROLE"),
 		AdvertiseAddr:         advertiseAddr,
 		GroupCacheSize:        groupCacheSize,
@@ -226,7 +225,6 @@ func Run(_ []string) error {
 	log.Printf("\t%-8s: %s\n", "Host", sanitizeLog(addr))
 	log.Printf("\t%-8s: %s\n", "Advertise", sanitizeLog(relayCfg.AdvertiseAddr))
 	log.Printf("\t%-8s: %s\n", "Node ID", sanitizeLog(relayCfg.NodeID))
-	log.Printf("\t%-8s: %s\n", "Region", sanitizeLog(relayCfg.Region))
 	log.Printf("\t%-8s: WebTransport endpoint\n", "/")
 	log.Printf("\t%-8s: health probe\n", "/health")
 	log.Printf("\t%-8s: Prometheus metrics\n", "/metrics")

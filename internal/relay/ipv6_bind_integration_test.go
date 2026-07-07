@@ -51,7 +51,7 @@ func TestServer_DualStackBind_ReachableOverIPv6(t *testing.T) {
 		MOQServer: &moqt.Server{Addr: addr, TLSConfig: serverTLS, QUICConfig: quicCfg},
 		MOQDialer: &moqt.Dialer{TLSConfig: dialerTLS, QUICConfig: quicCfg},
 		Config: &Config{
-			NodeID: "v6-relay", Region: "test", Role: "hub",
+			NodeID: "v6-relay", Role: "hub",
 			AdvertiseAddr: fmt.Sprintf("localhost:%d", port),
 		},
 	}

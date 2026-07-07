@@ -77,7 +77,7 @@ func TestPeerDiscovery_EdgeConnectsToHubViaLocalResolver(t *testing.T) {
 	hub := &Server{
 		MOQServer: &moqt.Server{Addr: hubAddr, TLSConfig: serverTLS, QUICConfig: quicCfg},
 		MOQDialer: &moqt.Dialer{TLSConfig: dialerTLS, QUICConfig: quicCfg},
-		Config:    &Config{NodeID: "hub-1", Region: "test", Role: "hub", AdvertiseAddr: hubAddr},
+		Config:    &Config{NodeID: "hub-1", Role: "hub", AdvertiseAddr: hubAddr},
 	}
 	go func() { _ = hub.ListenAndServe() }()
 	t.Cleanup(func() {
@@ -125,7 +125,7 @@ func TestPeerDiscovery_EdgeConnectsToHubViaLocalResolver(t *testing.T) {
 		MOQServer: &moqt.Server{Addr: "127.0.0.1:0", TLSConfig: serverTLS, QUICConfig: quicCfg},
 		MOQDialer: &moqt.Dialer{TLSConfig: dialerTLS, QUICConfig: quicCfg},
 		Config: &Config{
-			NodeID: "edge-1", Region: "test", Role: "edge",
+			NodeID: "edge-1", Role: "edge",
 			AdvertiseAddr:         "127.0.0.1:1",
 			LocalResolverInterval: 200 * time.Millisecond,
 		},

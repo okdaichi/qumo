@@ -166,7 +166,7 @@ func isBetterRoute(candidate, current RouteStats) (bool, rejectionReason) {
 	return false, rejectionInferiorRTT
 }
 
-func newRelayHandler(ann *moqt.Announcement, sess *moqt.Session, nodeID string, broadSess *broadcastSession) *relayHandler {
+func newRelayHandler(ann *moqt.Announcement, sess *moqt.Session, nodeID string, broadSess *broadcastSession, cacheSize int, pool *FramePool) *relayHandler {
 	if sess == nil {
 		panic("relay: session must not be nil")
 	}
@@ -178,7 +178,7 @@ func newRelayHandler(ann *moqt.Announcement, sess *moqt.Session, nodeID string, 
 	h := &relayHandler{
 		announcement: ann,
 		session:      sess,
-		tracks:       newTrackManager(),
+		tracks:       newTrackManager(cacheSize, pool),
 		nodeID:       nodeID,
 		broadSession: broadSess,
 		ctx:          ctx,
@@ -296,10 +296,22 @@ func (h *relayHandler) subscribe(name moqt.TrackName) *trackDistributor {
 // trackManager manages the set of active track distributors.
 type trackManager struct {
 	m sync.Map // trackID string → *trackDistributor
+
+	// cacheSize is the per-track group ring capacity; pool recycles frame
+	// buffers. Both come from the relay Config; ≤0 / nil fall back to the
+	// package defaults so a minimally-constructed Server (e.g. tests) works.
+	cacheSize int
+	pool      *FramePool
 }
 
-func newTrackManager() *trackManager {
-	return &trackManager{}
+func newTrackManager(cacheSize int, pool *FramePool) *trackManager {
+	if cacheSize <= 0 {
+		cacheSize = DefaultGroupCacheSize
+	}
+	if pool == nil {
+		pool = DefaultFramePool
+	}
+	return &trackManager{cacheSize: cacheSize, pool: pool}
 }
 
 func (tm *trackManager) load(trackID string) (*trackDistributor, bool) {
@@ -345,14 +357,14 @@ type trackDistributor struct {
 func newTrackDistributor(manager *trackManager, trackID string, broadSess *broadcastSession) *trackDistributor {
 	d := &trackDistributor{
 		trackID:           trackID,
-		ring:              newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
+		ring:              newGroupRing(manager.cacheSize, manager.pool),
 		manager:           manager,
 		ingressCounter:    metricRelayIngressBytesTotal.WithLabelValues(trackID),
 		egressCounter:     metricRelayEgressBytesTotal.WithLabelValues(trackID),
 		deliveryHistogram: metricGroupDeliveryHistogram.WithLabelValues(trackID),
 		session:           broadSess,
-		fillSem: make(chan struct{}, maxGroupFillsInFlightOrPanic()),
-		done:    make(chan struct{}),
+		fillSem:           make(chan struct{}, maxGroupFillsInFlightOrPanic()),
+		done:              make(chan struct{}),
 	}
 	go d.pollCacheDepth()
 	return d

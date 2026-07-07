@@ -42,6 +42,11 @@ type Server struct {
 	// It is non-nil exactly when credentialClient is non-nil.
 	meter *Meter
 
+	// framePool recycles frame buffers for track distributors and the auth
+	// track read; sized from Config.FrameCapacity in init() (falling back to
+	// DefaultFramePool when unset, so a minimally-constructed Server still works).
+	framePool *FramePool
+
 	webtransportHandler *moqt.WebTransportHandler
 	statusHandler       *statusHandler
 	initOnce            sync.Once
@@ -124,10 +129,27 @@ func (s *Server) init() {
 			panic("relay.Server: meter must be non-nil when credentialClient is set")
 		}
 
+		// Resolve the per-node frame pool from Config.FrameCapacity. A caller
+		// that leaves it unset (≤0) reuses the package DefaultFramePool; an
+		// explicit value mints a right-sized pool shared across tracks.
+		if s.framePool == nil {
+			s.framePool = resolveFramePool(s.Config)
+		}
+
 		if s.connected == nil {
 			s.connected = make(map[string]struct{})
 		}
 	})
+}
+
+// resolveFramePool selects the per-node frame pool: a dedicated pool sized by
+// cfg.FrameCapacity when set (>0), otherwise the shared DefaultFramePool. nil
+// cfg is treated as unset so a minimally-constructed Server still works.
+func resolveFramePool(cfg *Config) *FramePool {
+	if cfg != nil && cfg.FrameCapacity > 0 {
+		return NewFramePool(cfg.FrameCapacity)
+	}
+	return DefaultFramePool
 }
 
 // ListenAndServe starts the relay server.
@@ -409,7 +431,8 @@ func (s *Server) serveSession(sess *moqt.Session, requireAuth bool) {
 			}
 		}
 
-		handler := newRelayHandler(ann, sess, s.Config.NodeID, broadSess)
+		handler := newRelayHandler(ann, sess, s.Config.NodeID, broadSess,
+			s.Config.GroupCacheSize, s.framePool)
 
 		// Route selection: only replace an existing active handler if the new
 		// route is strictly better. This is evaluated once per new candidate to
@@ -479,8 +502,8 @@ func (s *Server) authenticateAnnouncement(ctx context.Context, sess *moqt.Sessio
 		return nil, fmt.Errorf("accept auth group: %w", err)
 	}
 
-	buf := DefaultFramePool.Get()
-	defer DefaultFramePool.Put(buf)
+	buf := s.framePool.Get()
+	defer s.framePool.Put(buf)
 
 	var jwtBuf bytes.Buffer
 	for frame := range gr.Frames(buf) {
