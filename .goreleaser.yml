@@ -8,11 +8,10 @@ before:
     # Build the playground web UI so the Go binary embeds the real UI via
     # //go:embed all:playground/dist (otherwise it embeds only the placeholder).
     # Needs deno (jsr deps + `deno check`) and node (Vite) on the runner.
-    # Use dir: (not "cd ... &&") because goreleaser exec's hooks without a shell.
-    - cmd: deno install
-      dir: playground
-    - cmd: deno task build
-      dir: playground
+    # Wrapped in sh -c because goreleaser exec's hooks without a shell (cd is
+    # a shell builtin, so "cd playground && ..." fails with "cd not found").
+    - sh -c "cd playground && deno install"
+    - sh -c "cd playground && deno task build"
 
 builds:
   - id: qumo
