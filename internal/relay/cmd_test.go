@@ -2,6 +2,7 @@ package relay
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"testing"
 	"time"
@@ -160,4 +161,39 @@ func TestRun_InvalidGroupCacheSize(t *testing.T) {
 	err := Run(nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "GROUP_CACHE_SIZE")
+}
+
+// TestParseRelayArgs covers the --role flag: it is the only execution-mode
+// flag (secrets/deployment config stay env), and it is flag-only — there is no
+// ROLE env fallback to misconfigure against.
+func TestParseRelayArgs(t *testing.T) {
+	cases := map[string]struct {
+		args     []string
+		wantRole string
+		wantErr  string // non-empty → expect an error containing this substring
+		wantHelp bool
+	}{
+		"no flags → flat":       {args: nil, wantRole: ""},
+		"--role hub":            {args: []string{"--role", "hub"}, wantRole: "hub"},
+		"--role=edge":           {args: []string{"--role=edge"}, wantRole: "edge"},
+		"positional rejected":   {args: []string{"hub"}, wantErr: "unexpected argument"},
+		"unknown flag rejected": {args: []string{"--bogus"}, wantErr: "not defined"},
+		"-h renders help":       {args: []string{"-h"}, wantHelp: true},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			flags, err := parseRelayArgs(tc.args)
+			if tc.wantHelp {
+				require.ErrorIs(t, err, flag.ErrHelp)
+				return
+			}
+			if tc.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantRole, flags.Role)
+		})
+	}
 }

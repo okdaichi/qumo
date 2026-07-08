@@ -5,7 +5,9 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	"flag"
 	"fmt"
+	"io"
 	"log"
 	"log/slog"
 	"net/http"
@@ -60,7 +62,18 @@ func sanitizeLog(s string) string {
 //	                           "same-host" allows any port on the request's host).
 //	                           Set this when serving the UI from a different
 //	                           origin than the relay (e.g. a Vite dev server).
-func Run(_ []string) error {
+func Run(args []string) error {
+	// Execution modes are flags (discoverable, self-documenting); secrets and
+	// deployment configuration stay env vars (see relay-config.example.env).
+	flags, err := parseRelayArgs(args)
+	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			relayUsage(os.Stdout)
+			return nil
+		}
+		return err
+	}
+
 	addr := envOr("RELAY_ADDR", ":4433")
 	certFile := envOr("CERT_FILE", "certs/server.crt")
 	keyFile := envOr("KEY_FILE", "certs/server.key")
@@ -147,7 +160,7 @@ func Run(_ []string) error {
 
 	relayCfg := Config{
 		NodeID:                nodeID,
-		Role:                  os.Getenv("ROLE"),
+		Role:                  flags.Role,
 		AdvertiseAddr:         advertiseAddr,
 		GroupCacheSize:        groupCacheSize,
 		FrameCapacity:         frameCapacity,
@@ -409,4 +422,50 @@ func setupTLS(certFile, keyFile string) (*tls.Config, error) {
 		Certificates: []tls.Certificate{cert},
 		NextProtos:   []string{"h3", moqt.NextProtoMOQ}, // HTTP/3 for WebTransport, MOQ native QUIC
 	}, nil
+}
+
+// relayUsage writes the `qumo relay` flag summary to w. Flags cover execution
+// modes only; everything else is configured via environment variables (see
+// relay-config.example.env) to keep secrets out of argv and stay 12-factor
+// friendly for container deployment.
+func relayUsage(w io.Writer) {
+	const help = `Usage: qumo relay [flags]
+
+Start the MoQT relay server.
+
+Flags:
+  --role <hub|edge>  node topology role (default: flat / single-node)
+
+All other configuration is via environment variables;
+see relay-config.example.env for the full list.
+`
+	_, _ = io.WriteString(w, help)
+}
+
+// relayFlags holds parsed `qumo relay` execution-mode flags. Execution modes
+// are flags; secrets and deployment configuration stay env (see
+// relay-config.example.env). Add future runtime knobs (e.g. --log-level) here.
+type relayFlags struct {
+	// Role is the node's topology role: "hub" (inter-region), "edge"
+	// (client-facing), or empty for a flat / single-node relay. Flag-only (no
+	// env equivalent) to avoid two sources of truth.
+	Role string
+}
+
+// parseRelayArgs parses `qumo relay` flags into a relayFlags. flag.ErrHelp is
+// returned as-is so Run can render usage and exit 0.
+func parseRelayArgs(args []string) (relayFlags, error) {
+	var f relayFlags
+	fs := flag.NewFlagSet("qumo relay", flag.ContinueOnError)
+	fs.SetOutput(io.Discard) // Run owns help/usage rendering
+	fs.StringVar(&f.Role, "role", "",
+		`node topology role: "hub" (inter-region) or "edge" (client-facing); `+
+			`empty (default) is a flat / single-node relay.`)
+	if err := fs.Parse(args); err != nil {
+		return relayFlags{}, err
+	}
+	if fs.NArg() > 0 {
+		return relayFlags{}, fmt.Errorf("unexpected argument: %s", fs.Arg(0))
+	}
+	return f, nil
 }

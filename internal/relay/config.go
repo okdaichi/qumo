@@ -10,8 +10,9 @@ type Config struct {
 	// TrackMux's random HopID — see moqt.NewHopID).
 	NodeID string
 
-	// Role is this node's role in the topology ("edge" or "hub").
-	// If empty, a simple flat peer discovery is used.
+	// Role is this node's topology role: "hub" (inter-region), "edge"
+	// (client-facing), or empty for a flat / single-node relay. Set via the
+	// `qumo relay --role` flag (execution mode); there is no env equivalent.
 	Role string
 
 	// AdvertiseAddr is the address this relay advertises to peers.
