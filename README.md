@@ -4,12 +4,12 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/qumo-dev/qumo)](https://goreportcard.com/report/github.com/qumo-dev/qumo)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
-**qumo** is a high-performance Media over QUIC (MoQ) relay server with intelligent topology management, enabling distributed media streaming over the QUIC transport protocol.
+**qumo** is a high-performance Media over QUIC (MoQ) relay server with peer-based content discovery, enabling distributed media streaming over the QUIC transport protocol.
 
 ## Features
 
 - 🚀 **High-Performance Relay**: Built on QUIC for low-latency media streaming
-- 📡 **MoQT Protocol**: Full Media over QUIC Transport support (moq-lite draft-03)
+- 📡 **MoQT Protocol**: Full Media over QUIC Transport support (moq-lite draft-04)
 - 🔗 **Peer-Based Topology**: Relays connect to each other via ANNOUNCE_PLEASE for decentralized content discovery
 - 📊 **Observability**: Prometheus metrics, health probes, and status APIs
 - 🔒 **TLS Security**: Built-in TLS 1.3 support for encrypted connections
@@ -25,17 +25,18 @@ go install github.com/qumo-dev/qumo@latest
 
 #### Option 2: Download Binary
 
-Download the latest binary from [GitHub Releases](https://github.com/qumo-dev/qumo/releases):
+Download the latest archive from [GitHub Releases](https://github.com/qumo-dev/qumo/releases):
 
 ```bash
 # Linux/macOS
-curl -L https://github.com/qumo-dev/qumo/releases/latest/download/qumo-linux-amd64 -o qumo
-chmod +x qumo
-export ADVERTISE_ADDR=localhost:4433
-export INSECURE=true
-./qumo relay
+curl -L https://github.com/qumo-dev/qumo/releases/latest/download/qumo_0.4.0_linux_amd64.tar.gz | tar xz
+./qumo playground      # one-command demo: relay + web UI at http://127.0.0.1:8080
 
-# Windows: download qumo-windows-amd64.exe from the releases page
+# Or for a standalone relay:
+mage cert              # generate a dev cert (mkcert or self-signed)
+./qumo relay           # start the relay (certs/server.crt + .key)
+
+# Windows: download qumo_0.4.0_windows_amd64.zip from the releases page
 ```
 
 #### Option 3: Docker
@@ -102,7 +103,7 @@ graph TD
 
     Resolve -->|"returned peer list"| ALPN
 
-    ALPN["QUIC dial (ALPN: moqt)"] --> Announce["ANNOUNCE_PLEASE / ANNOUNCE"]
+    ALPN["QUIC dial (ALPN: moq-lite-04)"] --> Announce["ANNOUNCE_PLEASE / ANNOUNCE"]
     Announce --> TrackMux["Register tracks on local TrackMux"]
     TrackMux --> Serve["Serve subscribers"]
 
@@ -116,7 +117,7 @@ graph TD
 ### Requirements
 
 - **Go 1.26+** — [Download](https://golang.org/dl/) or use your package manager
-- **Deno** (optional, for web demo) — [Download](https://deno.land/) — see [playground/README.md](playground/README.md) for setup
+- **Deno** (required for `mage build`; the Go binary embeds the web UI built by Deno + Vite) — [Download](https://deno.land/)
 - **Mage** — Build automation tool
   ```bash
   go install github.com/magefile/mage@latest
@@ -139,10 +140,12 @@ qumo/
 │   └── README.md               # Docker usage guide
 │
 ├── internal/                   # Core implementation
-│   ├── relay/                  # Relay server (handlers, peer resolvers, caching)
-│   ├── ingest/                 # RTMP & RTSP ingest, FLV parsing
-│   ├── rtmp/                   # RTMP utilities
+│   ├── relay/                  # Relay server (handlers, peer resolvers, caching, credential auth)
+│   ├── ingest/                 # RTMP & RTSP ingest (push + pull), codec init-data builders
+│   ├── rtmp/                   # RTMP protocol stack
 │   ├── rtsp/                   # RTSP protocol stack & RTP de-packetization
+│   ├── playground/             # One-command demo server (relay + embedded web UI + /api/pull)
+│   ├── cors/                   # WebTransport origin validation (CSWT mitigation)
 │   ├── smoketest/              # Cross-region streaming smoke test harness
 │   └── version/                # Version info
 │
