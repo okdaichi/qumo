@@ -180,7 +180,6 @@ func TestServerConn_HandshakeError(t *testing.T) {
 	}
 }
 
-
 // TestListener_Accept_StalledHandshakeDoesNotBlock verifies the handshake
 // read deadline: a client that connects and then never sends handshake bytes
 // cannot hold Accept forever. After the stalled handshake times out, Accept
@@ -235,5 +234,73 @@ func TestListener_Accept_StalledHandshakeDoesNotBlock(t *testing.T) {
 		t.Fatalf("Accept returned error after stalled handshake: %v", err)
 	case <-time.After(2 * time.Second):
 		t.Fatal("Accept never recovered: stalled handshake blocked the listener")
+	}
+}
+
+// TestListener_Accept_RepeatedStallsDoNotBlock verifies the Accept loop
+// recovers from a burst of consecutive bad clients, not just one. Each must be
+// skipped independently; a loop that only recovered once (e.g. drained a
+// one-slot error path) would pass the single-stall test above but fail here.
+func TestListener_Accept_RepeatedStallsDoNotBlock(t *testing.T) {
+	old := handshakeTimeout
+	handshakeTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { handshakeTimeout = old })
+
+	l, err := Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen failed: %v", err)
+	}
+	defer l.Close()
+
+	connCh := make(chan *Conn, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		c, aerr := l.Accept()
+		if aerr != nil {
+			errCh <- aerr
+			return
+		}
+		connCh <- c
+	}()
+
+	// A burst of clients that each connect, send malformed handshake bytes,
+	// and close — every one must fail the handshake and be skipped.
+	const badBurst = 5
+	for i := 0; i < badBurst; i++ {
+		c, derr := net.Dial("tcp", l.Addr().String())
+		if derr != nil {
+			t.Fatalf("dial bad client %d failed: %v", i, derr)
+		}
+		_, _ = c.Write([]byte("not an rtmp handshake"))
+		_ = c.Close()
+	}
+	// Plus a staller that connects and sends nothing — exercising both the
+	// immediate-failure and the timeout-failure paths back-to-back.
+	stalled, serr := net.Dial("tcp", l.Addr().String())
+	if serr != nil {
+		t.Fatalf("dial stalled client failed: %v", serr)
+	}
+	defer stalled.Close()
+
+	// Give the loop time to process the burst + the stall timeout.
+	time.Sleep(handshakeTimeout + 250*time.Millisecond)
+
+	// A well-behaved client must still be served, proving none of the bad
+	// clients fatally wedged the listener.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	real, derr := Dial(ctx, l.Addr().String())
+	if derr != nil {
+		t.Fatalf("Dial real client failed: %v", derr)
+	}
+	defer real.Close()
+
+	select {
+	case c := <-connCh:
+		_ = c.Close()
+	case err := <-errCh:
+		t.Fatalf("Accept returned error after bad-client burst: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("Accept never recovered: a bad client in the burst fatally blocked the listener")
 	}
 }
