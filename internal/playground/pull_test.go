@@ -67,6 +67,8 @@ func TestHandlePullStart_Validation(t *testing.T) {
 		"GET not allowed":     {method: http.MethodGet, body: "", want: http.StatusMethodNotAllowed},
 		"invalid JSON":        {method: http.MethodPost, body: "{not json", want: http.StatusBadRequest},
 		"missing url":         {method: http.MethodPost, body: `{"path":"/x"}`, want: http.StatusBadRequest},
+		"non-rtsp scheme":     {method: http.MethodPost, body: `{"url":"http://127.0.0.1:8080/"}`, want: http.StatusBadRequest},
+		"bad path":            {method: http.MethodPost, body: `{"url":"rtsp://x","path":"/a b"}`, want: http.StatusBadRequest},
 		"pull already active": {method: http.MethodPost, body: `{"url":"rtsp://x"}`, active: true, want: http.StatusConflict},
 	}
 	for name, tc := range cases {
@@ -187,4 +189,64 @@ func TestHandlePullStatus(t *testing.T) {
 		assert.Equal(t, "/live/camera", st.Path)
 		assert.Equal(t, "dial: refused", st.Error)
 	})
+}
+
+// TestValidPullURL covers the SSRF scheme/host guard directly. Private/LAN
+// hosts are intentionally allowed (IP-camera use case); only the scheme and a
+// non-empty host are enforced.
+func TestValidPullURL(t *testing.T) {
+	cases := map[string]struct {
+		url  string
+		want bool
+	}{
+		"rtsp":             {url: "rtsp://camera.example.com/stream", want: true},
+		"rtspd (TLS)":      {url: "rtspd://camera.example.com/stream", want: true},
+		"LAN host allowed": {url: "rtsp://192.168.1.100/stream", want: true},
+		"host with port":   {url: "rtsp://192.168.1.100:8554/stream", want: true},
+		"http rejected":    {url: "http://127.0.0.1:8080/", want: false},
+		"file rejected":    {url: "file:///etc/passwd", want: false},
+		"gopher rejected":  {url: "gopher://x", want: false},
+		"missing host":     {url: "rtsp://", want: false},
+		"empty":            {url: "", want: false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			err := validPullURL(tc.url)
+			if tc.want {
+				assert.NoError(t, err)
+			} else {
+				assert.Error(t, err)
+			}
+		})
+	}
+}
+
+// TestValidPullPath covers the broadcast-path charset/length guard. moqt only
+// requires a leading '/', so the guard exists to block log-injection (control
+// chars) and routing confusion from arbitrary metacharacters.
+func TestValidPullPath(t *testing.T) {
+	cases := map[string]struct {
+		path string
+		want bool
+	}{
+		"default":           {path: "/live/camera", want: true},
+		"segments":          {path: "/live/cam-1_2.3~4", want: true},
+		"root":              {path: "/", want: true},
+		"missing slash":     {path: "live/camera", want: false},
+		"empty":             {path: "", want: false},
+		"space":             {path: "/a b", want: false},
+		"newline (log inj)": {path: "/a\nb", want: false},
+		"shell meta":        {path: "/a;rm", want: false},
+		"too long":          {path: "/" + strings.Repeat("a", 128), want: false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			err := validPullPath(tc.path)
+			if tc.want {
+				assert.NoError(t, err)
+			} else {
+				assert.Error(t, err)
+			}
+		})
+	}
 }
