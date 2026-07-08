@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -162,6 +163,58 @@ type pullStatusResponse struct {
 	Error  string `json:"error,omitempty"`
 }
 
+// validPullURL validates a user-supplied RTSP source URL before the server
+// dials it. It requires an rtsp:// or rtspd:// scheme with a non-empty host —
+// defense-in-depth against SSRF (the RTSP dialer only speaks RTSP, but reject
+// non-RTSP schemes early and explicitly). It deliberately does NOT block
+// private/LAN hosts: pulling from an IP camera on the local network is the
+// feature's primary use case; the playground is a local dev tool and must not
+// be publicly exposed with /api/pull reachable (see the public-hosting note in
+// the README).
+func validPullURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return err
+	}
+	if u.Scheme != "rtsp" && u.Scheme != "rtspd" {
+		return errors.New("url must be rtsp:// or rtspd://")
+	}
+	if u.Host == "" {
+		return errors.New("url must include a host")
+	}
+	return nil
+}
+
+// validPullPath validates the user-supplied broadcast path. moqt only requires
+// it start with '/', so a path containing spaces, control characters, or shell
+// metacharacters would be accepted as a routing key and written verbatim into
+// logs — a log-injection / routing-confusion surface. Restrict to a URL-safe
+// charset and a sane length bound.
+func validPullPath(path string) error {
+	if path == "" || path[0] != '/' {
+		return errors.New("path must start with '/'")
+	}
+	if len(path) > 128 {
+		return errors.New("path too long (max 128 characters)")
+	}
+	for _, r := range path {
+		if !isPathSafeRune(r) {
+			return errors.New("path may only contain letters, digits, '/', '-', '_', '.', '~'")
+		}
+	}
+	return nil
+}
+
+// isPathSafeRune reports whether r is an unreserved URL-path character: ASCII
+// letters, digits, and "/-_.~".
+func isPathSafeRune(r rune) bool {
+	switch r {
+	case '/', '-', '_', '.', '~':
+		return true
+	}
+	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
+}
+
 func (s *Server) handlePullStart(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -185,9 +238,17 @@ func (s *Server) handlePullStart(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "url is required", http.StatusBadRequest)
 		return
 	}
+	if err := validPullURL(req.URL); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	path := req.Path
 	if path == "" {
 		path = "/live/camera"
+	}
+	if err := validPullPath(path); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
