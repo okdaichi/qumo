@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"strings"
 	"sync"
 
@@ -74,6 +75,18 @@ func (s *RTSPServer) ListenAndServe(ctx context.Context) error {
 			s.handleConn(connCtx, conn)
 		}()
 	}
+}
+
+// Addr returns the address the server is listening on, or nil before
+// ListenAndServe has bound the listener. Lets a caller that configured
+// Addr ":0" learn the actual bound address.
+func (s *RTSPServer) Addr() net.Addr {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.listener == nil {
+		return nil
+	}
+	return s.listener.Addr()
 }
 
 // Shutdown gracefully stops the RTSP listener.
