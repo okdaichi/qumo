@@ -87,8 +87,7 @@ docker run -d \
   -e CERT_FILE=certs/server.crt \
   -e KEY_FILE=certs/server.key \
   -e RELAY_NAME=relay-1 \
-  -e ROLE=hub \
-  ghcr.io/qumo-dev/qumo:latest relay
+  ghcr.io/qumo-dev/qumo:latest relay --role hub
 ```
 
 Environment variables (relay)

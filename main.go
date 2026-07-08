@@ -100,7 +100,7 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "Usage: qumo <command>  (%s)\n", version.Short())
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Commands:")
-	fmt.Fprintln(os.Stderr, "  relay      Start the MoQ relay server")
+	fmt.Fprintln(os.Stderr, "  relay      Start the MoQ relay server (--role hub|edge; default flat)")
 	fmt.Fprintln(os.Stderr, "  rtmp       Start the RTMP ingest server")
 	fmt.Fprintln(os.Stderr, "  rtsp       Pull from an RTSP source (e.g. IP camera) and republish as MoQT")
 	fmt.Fprintln(os.Stderr, "  rtsp-push  Start the RTSP push ingest server (ANNOUNCE/RECORD)")
