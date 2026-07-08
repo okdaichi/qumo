@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+_No changes yet._
+
+## [v0.4.0] - 2026-07-08
+
+### Breaking Changes
+
+- **Relay `ROLE` env var removed -> `--role` flag:** the node topology role is now `qumo relay --role hub|edge` (flag-only, no env fallback). Deployments setting `ROLE=...` must switch to the flag. Secrets and deployment config remain env vars.
+- **SDN controller removed:** `qumo sdn` subcommand and all SDN-related packages (`internal/sdn`,
+  `internal/topology`) have been removed. Cross-relay content discovery is now handled natively
+  by moq-lite draft-03's ANNOUNCE_PLEASE mechanism.
+- **config.sdn.yaml removed:** No longer needed. Relay-to-relay connectivity is configured via
+  `peers` in `config.relay.yaml`.
+- **ALPN changed from `moq-00` to `moq-lite-03`:** Peers must be upgraded together; mixed
+  deployments with older versions are not supported.
+
+
 ### Added
 
 - **`RTSPServer.Addr()` (`internal/ingest`):** exposes the bound listener address (nil before `ListenAndServe` binds), so callers and tests that configure `Addr: ":0"` can learn the actual port without reaching into unexported state.
@@ -331,17 +347,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **G115 excluded globally:** Integer overflow conversions in RTMP/AMF3/QUIC protocol
   encoding are intentional truncations mandated by the respective wire formats.
 
-## [v0.4.0]
-
-### Breaking Changes
-
-- **SDN controller removed:** `qumo sdn` subcommand and all SDN-related packages (`internal/sdn`,
-  `internal/topology`) have been removed. Cross-relay content discovery is now handled natively
-  by moq-lite draft-03's ANNOUNCE_PLEASE mechanism.
-- **config.sdn.yaml removed:** No longer needed. Relay-to-relay connectivity is configured via
-  `peers` in `config.relay.yaml`.
-- **ALPN changed from `moq-00` to `moq-lite-03`:** Peers must be upgraded together; mixed
-  deployments with older versions are not supported.
 
 ### Added
 
