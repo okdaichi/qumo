@@ -30,9 +30,25 @@ type Server struct {
 
 	// RTSP pull state (playground-only, in-process).
 	pullMu     sync.Mutex
-	pullHandle *ingest.PullHandle
+	pullHandle pullHandle
 	pullCtx    context.Context
 	pullCancel context.CancelFunc
+
+	// pullStarter starts an RTSP pull ingest. Defaults to ingest.PullAndServe;
+	// overridable in tests so the HTTP handlers can be exercised without binding
+	// a real QUIC listener or presenting a certificate.
+	pullStarter func(ctx context.Context, cfg ingest.PullConfig) (pullHandle, error)
+}
+
+// pullHandle is the subset of *ingest.PullHandle the playground server uses. It
+// exists as an interface so tests can substitute a fake without standing up a
+// real RTSP pull + MoQT server.
+type pullHandle interface {
+	SourceURL() string
+	Path() string
+	LastErr() string
+	Close()
+	Wait()
 }
 
 // NewServerWithCerts is like NewServer but also passes the cert/key file paths
@@ -175,12 +191,20 @@ func (s *Server) handlePullStart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	handle, err := ingest.PullAndServe(ctx, ingest.PullConfig{
-		SourceURL:      req.URL,
-		BroadcastPath:  path,
-		ServeAddr:      ":4543",
-		CertFile:       s.certFile,
-		KeyFile:        s.keyFile,
+	starter := s.pullStarter
+	if starter == nil {
+		// Production default. Pulled into a closure so a test can substitute
+		// s.pullStarter without standing up a real QUIC listener + cert.
+		starter = func(ctx context.Context, cfg ingest.PullConfig) (pullHandle, error) {
+			return ingest.PullAndServe(ctx, cfg)
+		}
+	}
+	handle, err := starter(ctx, ingest.PullConfig{
+		SourceURL:     req.URL,
+		BroadcastPath: path,
+		ServeAddr:     ":4543",
+		CertFile:      s.certFile,
+		KeyFile:       s.keyFile,
 		// The pull's MoQT server is a localhost dev tool started on-demand from
 		// the UI. Permissive CORS avoids same-host mismatches (127.0.0.1 vs
 		// localhost) that would block the browser's WebTransport handshake.
