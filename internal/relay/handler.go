@@ -184,6 +184,14 @@ func newRelayHandler(ann *moqt.Announcement, sess *moqt.Session, nodeID string, 
 		ctx:          ctx,
 		cancel:       cancel,
 	}
+
+	// Release this handler's child context from the session's children list when
+	// the session ends. The ctx is already derived from the session ctx (so it
+	// is cancelled on session end regardless); this is a cleanup optimization,
+	// not correctness. Registered here, where sess is guaranteed non-nil, so
+	// installRoute need not handle a nil session context.
+	context.AfterFunc(sess.Context(), cancel)
+
 	return h
 }
 
