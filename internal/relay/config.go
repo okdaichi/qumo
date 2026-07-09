@@ -40,6 +40,12 @@ type Config struct {
 	// RemoteResolverInterval is the polling interval for the remote
 	// traffic resolver. If zero, remote discovery is disabled.
 	RemoteResolverInterval time.Duration
+
+	// NextSessionURI is the redirect URI sent to clients/peers in a GOAWAY
+	// message during graceful shutdown (gomoqt Server.NextSessionURI). Empty
+	// means no redirect is advertised. GOAWAY is an escape-hatch primitive;
+	// route/subscription migration is the primary mobility mechanism (#280).
+	NextSessionURI string
 }
 
 // Peer represents a remote relay to connect to for announce discovery.

@@ -59,6 +59,12 @@ type Server struct {
 	// or connected to prevent duplicate maintainPeer goroutines.
 	connectedMu sync.Mutex
 	connected   map[string]struct{}
+
+	// routeMu guards alternates: per-BroadcastPath route-election losers that
+	// are retained (not cancelled) so they can be promoted if the active route's
+	// announcement ends. See retainRoute / promoteAlternates.
+	routeMu    sync.Mutex
+	alternates map[moqt.BroadcastPath]*relayHandler
 }
 
 func (s *Server) ServeHealth(w http.ResponseWriter, r *http.Request) {
@@ -138,6 +144,10 @@ func (s *Server) init() {
 
 		if s.connected == nil {
 			s.connected = make(map[string]struct{})
+		}
+
+		if s.alternates == nil {
+			s.alternates = make(map[moqt.BroadcastPath]*relayHandler)
 		}
 	})
 }
@@ -442,7 +452,12 @@ func (s *Server) serveSession(sess *moqt.Session, requireAuth bool) {
 				better, reason := isBetterRoute(handler.RouteStats(), rr.RouteStats())
 				if !better {
 					metricRouteRejections.WithLabelValues(string(reason)).Inc()
-					handler.cancel()
+					// Retain as an alternate instead of discarding: if the active
+					// route's announcement later ends (e.g. the publisher moved and
+					// the incumbent publication is retracted shortly after this one
+					// was rejected), it is promoted so subscribers are not left
+					// stranded. See retainRoute / promoteAlternates.
+					s.retainRoute(handler)
 					continue
 				}
 				metricRouteReplacements.Inc()
@@ -453,28 +468,136 @@ func (s *Server) serveSession(sess *moqt.Session, requireAuth bool) {
 			}
 		}
 
-		// Track the broadcast route and release it when the handler's context
-		// is cancelled (covers both normal session end and drain expiry).
-		metricBroadcastsActive.Inc()
-		context.AfterFunc(handler.ctx, func() { metricBroadcastsActive.Dec() })
-
-		// Ensure handler.cancel is called when the session ends to release
-		// the child context from the parent's internal children list.
-		context.AfterFunc(sess.Context(), handler.cancel)
-
-		// Register the broadcast session with the meter so usage is reported
-		// periodically and on session close.
-		if broadSess != nil {
-			s.meter.Register(broadSess)
-			context.AfterFunc(handler.ctx, func() {
-				shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-				s.meter.Deregister(shutdownCtx, broadSess)
-			})
-		}
-
-		s.TrackMux.Announce(ann, handler)
+		s.installRoute(handler)
 	}
+}
+
+// installRoute wires a winning relayHandler as the active route for its
+// broadcast path: metric accounting, session-end cancellation, optional meter
+// registration, and registration in the TrackMux. It also schedules recovery —
+// when this route's announcement ends, any retained alternate is promoted.
+func (s *Server) installRoute(h *relayHandler) {
+	// Track the broadcast route and release it when the handler's context is
+	// cancelled (covers both normal session end and drain expiry).
+	metricBroadcastsActive.Inc()
+	context.AfterFunc(h.ctx, func() { metricBroadcastsActive.Dec() })
+
+	// Ensure handler.cancel is called when the session ends to release the
+	// child context from the parent's internal children list. The handler's ctx
+	// is already derived from the session ctx, so this is a cleanup optimization
+	// (not correctness); guard against a nil session context (e.g. test helpers).
+	if sessCtx := h.session.Context(); sessCtx != nil {
+		context.AfterFunc(sessCtx, h.cancel)
+	}
+
+	// Register the broadcast session with the meter so usage is reported
+	// periodically and on session close.
+	if h.broadSession != nil {
+		s.meter.Register(h.broadSession)
+		context.AfterFunc(h.ctx, func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			s.meter.Deregister(shutdownCtx, h.broadSession)
+		})
+	}
+
+	// Recovery on incumbent-end: promote a retained alternate for this path
+	// when this route's announcement ends, so the path is not left stranded.
+	// Run asynchronously because Announcement.end() invokes AfterFunc callbacks
+	// inline; promotion re-enters the TrackMux and must run only after end()
+	// (and TrackMux's own removal handler) has fully completed.
+	h.announcement.AfterFunc(func() {
+		go s.promoteAlternates(h.announcement.BroadcastPath())
+	})
+
+	s.TrackMux.Announce(h.announcement, h)
+}
+
+// retainRoute keeps a route-election loser alive as the alternate for its
+// broadcast path instead of cancelling it. At most one alternate per path is
+// retained (the latest replaces the previous). Promotion only ever fires on a
+// definitive announcement-end (promoteAlternates), so this introduces no route
+// oscillation — it only recovers paths that would otherwise be stranded.
+func (s *Server) retainRoute(h *relayHandler) {
+	// Never retain an already-dead handler.
+	if !h.announcement.IsActive() || h.ctx.Err() != nil {
+		h.cancel()
+		return
+	}
+	path := h.announcement.BroadcastPath()
+
+	// Drop and cancel this alternate if its own announcement ends while retained.
+	h.announcement.AfterFunc(func() {
+		s.discardAlternate(path, h)
+	})
+
+	s.routeMu.Lock()
+	prev := s.alternates[path]
+	s.alternates[path] = h
+	s.routeMu.Unlock()
+	metricRelayRoutesRetained.Inc()
+
+	if prev != nil {
+		prev.cancel()
+		metricRelayRoutesRetained.Dec()
+	}
+}
+
+// discardAlternate removes h from the retained alternates for path if it is
+// still the retained entry, then cancels it. Idempotent; a no-op if h has
+// already been replaced or promoted.
+func (s *Server) discardAlternate(path moqt.BroadcastPath, h *relayHandler) {
+	s.routeMu.Lock()
+	cur := s.alternates[path]
+	if cur == h {
+		delete(s.alternates, path)
+	}
+	s.routeMu.Unlock()
+	if cur == h {
+		metricRelayRoutesRetained.Dec()
+		h.cancel()
+	}
+}
+
+// promoteAlternates is invoked when the active route for a path ends. If a
+// retained alternate is still live, it is installed as the new active route;
+// otherwise the path is left unoccupied until a new announcement arrives.
+func (s *Server) promoteAlternates(path moqt.BroadcastPath) {
+	s.routeMu.Lock()
+	h := s.alternates[path]
+	if h != nil {
+		delete(s.alternates, path)
+	}
+	s.routeMu.Unlock()
+	if h == nil {
+		return
+	}
+	metricRelayRoutesRetained.Dec()
+
+	if !h.announcement.IsActive() || h.ctx.Err() != nil {
+		// The alternate died while retained; just release it.
+		h.cancel()
+		return
+	}
+
+	metricRelayRoutePromotions.Inc()
+	slog.Info("relay: promoting retained route after incumbent ended",
+		"broadcast_path", path)
+	s.installRoute(h)
+}
+
+// handlePeerGoaway is the Dialer.OnGoaway callback: an upstream peer relay sent
+// GOAWAY (a migration/drain hint). Route/subscription migration is the primary
+// mobility mechanism; GOAWAY is observed and surfaced to qumo-deploy via metrics.
+// Automatic re-dial to the new URI is future work (gomoqt delivers OnGoaway
+// without identifying which peer session originated it).
+func handlePeerGoaway(newSessionURI string) {
+	redirect := "absent"
+	if newSessionURI != "" {
+		redirect = "present"
+	}
+	metricPeerGoawayReceived.WithLabelValues(redirect).Inc()
+	slog.Info("relay: upstream peer sent GOAWAY", "new_session_uri", newSessionURI)
 }
 
 // authenticateAnnouncement subscribes to the "auth" track on the announced
