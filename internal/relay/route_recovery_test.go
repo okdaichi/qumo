@@ -31,7 +31,7 @@ func newRecoveryHandler(t *testing.T, ctx context.Context, path string) (*relayH
 
 func newRecoveryServer() *Server {
 	s := &Server{Config: &Config{}, TrackMux: moqt.NewTrackMux(0)}
-	s.alternates = make(map[moqt.BroadcastPath]*relayHandler)
+	s.alternates = make(map[moqt.BroadcastPath]*altEntry)
 	return s
 }
 
@@ -91,7 +91,7 @@ func TestRouteRecovery_RetainReplacesPrevious(t *testing.T) {
 	s.routeMu.Lock()
 	got := s.alternates[h1.announcement.BroadcastPath()]
 	s.routeMu.Unlock()
-	assert.Same(t, h2, got, "latest retained alternate wins the slot")
+	assert.Same(t, h2, got.handler, "latest retained alternate wins the slot")
 	assert.False(t, h1.ctx.Err() == nil, "previous alternate was cancelled")
 }
 

@@ -64,7 +64,7 @@ type Server struct {
 	// are retained (not cancelled) so they can be promoted if the active route's
 	// announcement ends. See retainRoute / promoteAlternates.
 	routeMu    sync.Mutex
-	alternates map[moqt.BroadcastPath]*relayHandler
+	alternates map[moqt.BroadcastPath]*altEntry
 }
 
 func (s *Server) ServeHealth(w http.ResponseWriter, r *http.Request) {
@@ -147,7 +147,7 @@ func (s *Server) init() {
 		}
 
 		if s.alternates == nil {
-			s.alternates = make(map[moqt.BroadcastPath]*relayHandler)
+			s.alternates = make(map[moqt.BroadcastPath]*altEntry)
 		}
 	})
 }
@@ -513,6 +513,15 @@ func (s *Server) installRoute(h *relayHandler) {
 	s.TrackMux.Announce(h.announcement, h)
 }
 
+// altEntry pairs a retained alternate handler with the stop function that
+// deregisters its discardAlternate callback on the announcement. Storing stop
+// lets promotion/replacement deregister the callback (rather than leaving it
+// registered to fire as a no-op when the announcement later ends).
+type altEntry struct {
+	handler *relayHandler
+	stop    func() bool
+}
+
 // retainRoute keeps a route-election loser alive as the alternate for its
 // broadcast path instead of cancelling it. At most one alternate per path is
 // retained (the latest replaces the previous). Promotion only ever fires on a
@@ -526,26 +535,30 @@ func (s *Server) retainRoute(h *relayHandler) {
 	}
 	path := h.announcement.BroadcastPath()
 
+	stop := h.announcement.AfterFunc(func() {
+		s.discardAlternate(path, h)
+	})
+
 	s.routeMu.Lock()
 	prev := s.alternates[path]
-	s.alternates[path] = h
+	s.alternates[path] = &altEntry{handler: h, stop: stop}
 	s.routeMu.Unlock()
 	metricRelayRoutesRetained.Inc()
 
 	if prev != nil {
-		prev.cancel()
+		// Deregister the previous alternate's discardAlternate callback before
+		// cancelling it, so it doesn't fire later as a stale no-op.
+		prev.stop()
+		prev.handler.cancel()
 		metricRelayRoutesRetained.Dec()
 	}
 
-	// Register the cleanup AFTER storing: if the announcement ends between the
-	// store and this registration, AfterFunc still fires f asynchronously (it
-	// runs on an already-ended announcement) and discardAlternate finds h in the
-	// map and removes it. Registering before the store could strand a dead h —
-	// the callback would fire with h not yet stored and no-op, leaving h in the
-	// map with no further cleanup.
-	h.announcement.AfterFunc(func() {
+	// If the announcement ended between the liveness pre-check and the store,
+	// the discardAlternate callback may already have fired as a no-op (before h
+	// was in the map). Re-check and clean up so a dead handler is not stranded.
+	if !h.announcement.IsActive() {
 		s.discardAlternate(path, h)
-	})
+	}
 }
 
 // discardAlternate removes h from the retained alternates for path if it is
@@ -553,12 +566,14 @@ func (s *Server) retainRoute(h *relayHandler) {
 // already been replaced or promoted.
 func (s *Server) discardAlternate(path moqt.BroadcastPath, h *relayHandler) {
 	s.routeMu.Lock()
-	cur := s.alternates[path]
-	if cur == h {
+	entry := s.alternates[path]
+	if entry != nil && entry.handler == h {
 		delete(s.alternates, path)
+	} else {
+		entry = nil
 	}
 	s.routeMu.Unlock()
-	if cur == h {
+	if entry != nil {
 		metricRelayRoutesRetained.Dec()
 		h.cancel()
 	}
@@ -569,15 +584,20 @@ func (s *Server) discardAlternate(path moqt.BroadcastPath, h *relayHandler) {
 // otherwise the path is left unoccupied until a new announcement arrives.
 func (s *Server) promoteAlternates(path moqt.BroadcastPath) {
 	s.routeMu.Lock()
-	h := s.alternates[path]
-	if h != nil {
+	entry := s.alternates[path]
+	if entry != nil {
 		delete(s.alternates, path)
 	}
 	s.routeMu.Unlock()
-	if h == nil {
+	if entry == nil {
 		return
 	}
 	metricRelayRoutesRetained.Dec()
+	h := entry.handler
+
+	// Deregister the discardAlternate callback (no-op if the announcement
+	// already ended and it has fired).
+	entry.stop()
 
 	if !h.announcement.IsActive() || h.ctx.Err() != nil {
 		// The alternate died while retained; just release it.
