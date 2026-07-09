@@ -445,8 +445,12 @@ func (s *Server) serveSession(sess *moqt.Session, requireAuth bool) {
 			s.Config.GroupCacheSize, s.framePool)
 
 		// Route selection: only replace an existing active handler if the new
-		// route is strictly better. This is evaluated once per new candidate to
-		// preserve group-cache hit rates and playback continuity.
+		// route is strictly better. The decision and the TrackMux install are
+		// performed under routeMu so they are atomic w.r.t. promoteAlternates
+		// (and w.r.t. a concurrent election on another session): a promotion can
+		// never clobber a freshly-elected route, nor vice versa.
+		s.routeMu.Lock()
+		rejected := false
 		if _, existing := s.TrackMux.TrackHandler(ann.BroadcastPath()); existing != nil {
 			if rr, ok := existing.(RouteReporter); ok {
 				better, reason := isBetterRoute(handler.RouteStats(), rr.RouteStats())
@@ -457,18 +461,24 @@ func (s *Server) serveSession(sess *moqt.Session, requireAuth bool) {
 					// the incumbent publication is retracted shortly after this one
 					// was rejected), it is promoted so subscribers are not left
 					// stranded. See retainRoute / promoteAlternates.
-					s.retainRoute(handler)
-					continue
-				}
-				metricRouteReplacements.Inc()
-				// Gracefully drain the displaced handler.
-				if dr, ok := existing.(Drainable); ok {
-					dr.Drain(DrainTimeout)
+					s.retainRouteLocked(handler)
+					rejected = true
+				} else {
+					metricRouteReplacements.Inc()
+					// Gracefully drain the displaced handler.
+					if dr, ok := existing.(Drainable); ok {
+						dr.Drain(DrainTimeout)
+					}
 				}
 			}
 		}
-
-		s.installRoute(handler)
+		if !rejected {
+			s.installRoute(handler)
+		}
+		s.routeMu.Unlock()
+		if rejected {
+			continue
+		}
 	}
 }
 
@@ -524,10 +534,22 @@ type altEntry struct {
 
 // retainRoute keeps a route-election loser alive as the alternate for its
 // broadcast path instead of cancelling it. At most one alternate per path is
-// retained (the latest replaces the previous). Promotion only ever fires on a
-// definitive announcement-end (promoteAlternates), so this introduces no route
-// oscillation — it only recovers paths that would otherwise be stranded.
+// retained, and it is the BEST seen (by isBetterRoute), not merely the latest.
+// Promotion only ever fires on a definitive announcement-end, so this
+// introduces no route oscillation. Public wrapper; callers already holding
+// routeMu (serveSession's election) use retainRouteLocked.
 func (s *Server) retainRoute(h *relayHandler) {
+	s.routeMu.Lock()
+	defer s.routeMu.Unlock()
+	s.retainRouteLocked(h)
+}
+
+// retainRouteLocked is retainRoute assuming routeMu is held. Because the whole
+// body runs under routeMu, discardAlternate (which needs routeMu) cannot fire
+// mid-body — so the alternate can be stored before its cleanup AfterFunc is
+// registered without risk of stranding, and entry.stop can be assigned without
+// a second critical section.
+func (s *Server) retainRouteLocked(h *relayHandler) {
 	// Never retain an already-dead handler.
 	if !h.announcement.IsActive() || h.ctx.Err() != nil {
 		h.cancel()
@@ -535,30 +557,33 @@ func (s *Server) retainRoute(h *relayHandler) {
 	}
 	path := h.announcement.BroadcastPath()
 
-	stop := h.announcement.AfterFunc(func() {
-		s.discardAlternate(path, h)
-	})
-
-	s.routeMu.Lock()
-	prev := s.alternates[path]
-	s.alternates[path] = &altEntry{handler: h, stop: stop}
-	s.routeMu.Unlock()
-	metricRelayRoutesRetained.Inc()
-
-	if prev != nil {
-		// Deregister the previous alternate's discardAlternate callback before
-		// cancelling it, so it doesn't fire later as a stale no-op.
-		prev.stop()
+	// Keep the best alternate per path: if the existing alternate is at least
+	// as good as the new one, keep it and drop the new one. Otherwise the new
+	// one replaces the old — so promotion can never install a strictly worse
+	// route than one the relay had already accepted and discarded.
+	if prev := s.alternates[path]; prev != nil {
+		if better, _ := isBetterRoute(h.RouteStats(), prev.handler.RouteStats()); !better {
+			h.cancel()
+			return
+		}
+		if prev.stop != nil {
+			prev.stop()
+		}
 		prev.handler.cancel()
 		metricRelayRoutesRetained.Dec()
 	}
 
-	// If the announcement ended between the liveness pre-check and the store,
-	// the discardAlternate callback may already have fired as a no-op (before h
-	// was in the map). Re-check and clean up so a dead handler is not stranded.
-	if !h.announcement.IsActive() {
+	// Store first, then register the cleanup AfterFunc. If the announcement
+	// ended between the liveness check above and here, AfterFunc fires
+	// discardAlternate asynchronously; that goroutine blocks on routeMu (held
+	// here) and, once released, finds h in the map and removes it. No IsActive
+	// re-check is needed.
+	entry := &altEntry{handler: h}
+	s.alternates[path] = entry
+	metricRelayRoutesRetained.Inc()
+	entry.stop = h.announcement.AfterFunc(func() {
 		s.discardAlternate(path, h)
-	}
+	})
 }
 
 // discardAlternate removes h from the retained alternates for path if it is
@@ -582,22 +607,27 @@ func (s *Server) discardAlternate(path moqt.BroadcastPath, h *relayHandler) {
 // promoteAlternates is invoked when the active route for a path ends. If a
 // retained alternate is still live, it is installed as the new active route;
 // otherwise the path is left unoccupied until a new announcement arrives.
+//
+// The whole pop + clobber-guard + install runs under routeMu, so it is atomic
+// w.r.t. serveSession's election+install: the guard's read of TrackMux and the
+// subsequent Announce cannot be interleaved by a concurrent election.
 func (s *Server) promoteAlternates(path moqt.BroadcastPath) {
 	s.routeMu.Lock()
+	defer s.routeMu.Unlock()
+
 	entry := s.alternates[path]
-	if entry != nil {
-		delete(s.alternates, path)
-	}
-	s.routeMu.Unlock()
 	if entry == nil {
 		return
 	}
+	delete(s.alternates, path)
 	metricRelayRoutesRetained.Dec()
 	h := entry.handler
 
 	// Deregister the discardAlternate callback (no-op if the announcement
 	// already ended and it has fired).
-	entry.stop()
+	if entry.stop != nil {
+		entry.stop()
+	}
 
 	if !h.announcement.IsActive() || h.ctx.Err() != nil {
 		// The alternate died while retained; just release it.
@@ -605,11 +635,11 @@ func (s *Server) promoteAlternates(path moqt.BroadcastPath) {
 		return
 	}
 
-	// Don't clobber a route that was (re)occupied after the incumbent ended.
-	// Displacing the incumbent ends its Announcement, which is what fires this
-	// promotion — so the slot now holds the displacer (the route that just won
-	// election). Promoting the alternate over it would subvert route selection.
-	// Only promote into an empty or dead slot.
+	// Clobber guard: only promote into an empty or dead slot. Displacing the
+	// incumbent ends its Announcement, which is what fires this promotion — so
+	// the slot now holds the displacer (the route that just won election).
+	// Promoting the alternate over it would subvert route selection. This check
+	// is atomic with the install below because routeMu is held throughout.
 	if ann, existing := s.TrackMux.TrackHandler(path); ann != nil {
 		if rr, ok := existing.(RouteReporter); ok {
 			if st := rr.RouteStats(); st.Alive {

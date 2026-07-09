@@ -79,24 +79,50 @@ func TestRouteRecovery_PromotesRetainedAlternate(t *testing.T) {
 	})
 }
 
-// TestRouteRecovery_RetainReplacesPrevious verifies only the latest rejected
-// candidate is retained per path.
-func TestRouteRecovery_RetainReplacesPrevious(t *testing.T) {
-	s := newRecoveryServer()
-	ctx := context.Background()
-	path := "/live/recovery-replace"
+// TestRouteRecovery_RetainsBestAlternate verifies that retention keeps the
+// BEST alternate per path (by isBetterRoute), not merely the latest rejected
+// candidate — so promotion can never install a strictly worse route than one
+// the relay had already accepted and then discarded.
+func TestRouteRecovery_RetainsBestAlternate(t *testing.T) {
+	t.Run("tie keeps the previous alternate", func(t *testing.T) {
+		// Two handlers with identical RouteStats (same Hops/bitrate/RTT) —
+		// isBetterRoute returns false on a tie, so the previous is kept.
+		s := newRecoveryServer()
+		ctx := context.Background()
+		path := "/live/recovery-tie"
 
-	h1, _ := newRecoveryHandler(t, ctx, path)
-	h2, _ := newRecoveryHandler(t, ctx, path)
+		h1, _ := newRecoveryHandler(t, ctx, path)
+		h2, _ := newRecoveryHandler(t, ctx, path)
 
-	s.retainRoute(h1)
-	s.retainRoute(h2)
+		s.retainRoute(h1)
+		s.retainRoute(h2)
 
-	s.routeMu.Lock()
-	got := s.alternates[h1.announcement.BroadcastPath()]
-	s.routeMu.Unlock()
-	assert.Same(t, h2, got.handler, "latest retained alternate wins the slot")
-	assert.False(t, h1.ctx.Err() == nil, "previous alternate was cancelled")
+		s.routeMu.Lock()
+		got := s.alternates[h1.announcement.BroadcastPath()]
+		s.routeMu.Unlock()
+		assert.Same(t, h1, got.handler, "on a tie the previous alternate is kept")
+		assert.False(t, h2.ctx.Err() == nil, "the new (not-better) alternate was cancelled")
+	})
+
+	t.Run("a live alternate replaces a dead one", func(t *testing.T) {
+		// isBetterRoute(live, dead) is true, so a live alternate displaces a
+		// dead retained one.
+		s := newRecoveryServer()
+		ctx := context.Background()
+		path := "/live/recovery-live-replaces-dead"
+
+		dead, _ := newRecoveryHandler(t, ctx, path)
+		s.retainRoute(dead)
+		dead.cancel() // kill the retained alternate's ctx (announcement still active)
+
+		live, _ := newRecoveryHandler(t, ctx, path)
+		s.retainRoute(live)
+
+		s.routeMu.Lock()
+		got := s.alternates[live.announcement.BroadcastPath()]
+		s.routeMu.Unlock()
+		assert.Same(t, live, got.handler, "live alternate displaces the dead retained one")
+	})
 }
 
 // TestRouteRecovery_DeadAlternateNotPromoted: an alternate whose ctx is dead is
