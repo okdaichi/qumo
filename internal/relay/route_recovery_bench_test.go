@@ -55,14 +55,29 @@ func electAndInstall(s *Server, h *relayHandler) {
 // but does NOT touch routeMu), so ns/op is alloc-bound — read the
 // -mutexprofile, not the absolute numbers, to judge routeMu.
 //
-// Finding (2026-07, 16-core win/amd64): under max churn, routeMu IS the top
-// mutex-contention source (~100% of blocked time under electAndInstall; mux.mu
-// inside TrackMux.Announce does not register). Combined with
-// BenchmarkRouteInstall_Sequential (hold time H ≈ 1.5µs), routeMu saturates at
-// ~1/H ≈ 670k installs/sec. Realistic relay install rates (publisher
-// join/move, transitive announce) are ~10³–10⁴× lower, so routeMu is NOT a
-// bottleneck under representative load — keep the simple global lock; revisit
-// only if a production mutex profile shows routeMu.
+// Findings (2026-07, 16-core win/amd64; SINGLE MACHINE, dev box — absolute
+// numbers are not production-portable, only the relative contention ranking is):
+//
+//   - Under this SYNTHETIC max-churn harness (not a production workload), routeMu
+//     is the top mutex-contention source (~100% of blocked time under
+//     electAndInstall; mux.mu inside TrackMux.Announce does not register). This
+//     shows routeMu is the lock that WOULD serialize; it does not characterize
+//     production contention levels.
+//   - Serialized ceiling ≈ 1/H. In the no-subscriber, no-displacement case
+//     (BenchmarkRouteInstall_Sequential) H ≈ 1.5µs → ~670k installs/sec. This is
+//     a LOWER BOUND on contention: production H is higher with peer fan-out
+//     (BenchmarkRouteInstall_Fanout: H ≈ 1.4µs + ~15ns/subscriber, so ~2.4µs at
+//     64 subscribers → ceiling ~420k installs/sec) and with displacement-driven
+//     promotes (not measured).
+//
+// Conclusion (CONDITIONAL): routeMu was NOT DEMONSTRATED to be a bottleneck.
+// The measured ceiling (~10⁵–10⁶ installs/sec, depending on fan-out) is far
+// above any install rate ASSUMED here, but that rate was not measured and must
+// be validated in production (qumo_relay_route_replacements_total, announce
+// arrival rate) before relying on the headroom. This is "no evidence of a
+// bottleneck under the assumed workload," not "provably safe at scale."
+// Tripwire: revisit if the production route-install rate approaches ~10⁵/sec
+// or a production mutex profile shows routeMu as a top contender.
 //
 // Run: go test -run=^$ -bench=BenchmarkRouteElection_Parallel \
 //          -mutexprofile=mu.out -mutexprofilefraction=1 -cpu=1,8,16 -count=5
@@ -84,8 +99,10 @@ func BenchmarkRouteElection_Parallel(b *testing.B) {
 // BenchmarkRouteInstall_Sequential measures the routeMu critical-section cost
 // per install (TrackHandler + installRoute→Announce) with the per-op
 // Announcement allocation moved to untimed setup, so ns/op ≈ the hold time H.
-// Combined with the parallel benchmark's saturation point, this bounds the
-// install rate at which routeMu would become a bottleneck (≈ 1/H serialized).
+// This is the NO-SUBSCRIBER, NO-DISPLACEMENT case (empty slot, zero peer
+// AnnouncementWriters), so it is a LOWER BOUND on hold time, not a production
+// figure: real hold time grows with peer fan-out (see BenchmarkRouteInstall_Fanout)
+// and with displacement-driven promotes.
 func BenchmarkRouteInstall_Sequential(b *testing.B) {
 	s := &Server{Config: &Config{}, TrackMux: moqt.NewTrackMux(0)}
 	s.alternates = make(map[moqt.BroadcastPath]*alternate)
@@ -97,5 +114,68 @@ func BenchmarkRouteInstall_Sequential(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		electAndInstall(s, hs[i])
+	}
+}
+
+// electAndInstallFanout mirrors electAndInstall and additionally performs N
+// non-blocking channel sends UNDER routeMu, standing in for the per-subscriber
+// fan-out that TrackMux.Announce performs for each attached AnnouncementWriter.
+// gomoqt does not expose AnnouncementWriter registration to external packages
+// (writers are constructed per-session via unexported newAnnouncementWriter and
+// registered via the unexported serveAnnouncements), so the real fan-out is not
+// reachable from this package. This proxy therefore characterizes the SCALING
+// SHAPE of hold time with subscriber count (each subscriber ≈ one non-blocking
+// send under the lock), not an absolute production number.
+func electAndInstallFanout(s *Server, h *relayHandler, subs []chan struct{}) {
+	s.routeMu.Lock()
+	defer s.routeMu.Unlock()
+	if _, existing := s.TrackMux.TrackHandler(h.announcement.BroadcastPath()); existing != nil {
+		if rr, ok := existing.(RouteReporter); ok {
+			better, _ := isBetterRoute(h.RouteStats(), rr.RouteStats())
+			if !better {
+				s.retainRouteLocked(h)
+				return
+			}
+			if dr, ok := existing.(Drainable); ok {
+				dr.Drain(DrainTimeout)
+			}
+		}
+	}
+	s.installRoute(h)
+	for _, ch := range subs {
+		select {
+		case ch <- struct{}{}:
+		default:
+		}
+	}
+}
+
+// BenchmarkRouteInstall_Fanout measures how the routeMu critical-section hold
+// time scales with peer announcement fan-out. Sub-runs at N = 0, 8, 64
+// subscribers. Each subscriber channel is buffered to b.N+1 (never fills), so
+// every send succeeds — modeling the common case where peer subscribers keep
+// up. PROXY: see electAndInstallFanout — real AnnouncementWriters cannot be
+// attached from this package, so N is a subscriber count stand-in via synthetic
+// sends. Read the SLOPE across N (marginal hold cost per subscriber), not
+// absolute numbers.
+func BenchmarkRouteInstall_Fanout(b *testing.B) {
+	for _, n := range []int{0, 8, 64} {
+		b.Run(fmt.Sprintf("subscribers=%d", n), func(b *testing.B) {
+			s := &Server{Config: &Config{}, TrackMux: moqt.NewTrackMux(0)}
+			s.alternates = make(map[moqt.BroadcastPath]*alternate)
+			subs := make([]chan struct{}, n)
+			for i := range subs {
+				subs[i] = make(chan struct{}, b.N+1) // never fills → send always succeeds
+			}
+			hs := make([]*relayHandler, b.N)
+			for i := range hs {
+				hs[i] = newBenchHandler(moqt.BroadcastPath(fmt.Sprintf("/fan/%d", i)))
+			}
+
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				electAndInstallFanout(s, hs[i], subs)
+			}
+		})
 	}
 }
