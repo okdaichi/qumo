@@ -179,3 +179,49 @@ func BenchmarkRouteInstall_Fanout(b *testing.B) {
 		})
 	}
 }
+
+// BenchmarkRouteDisplacement_Parallel measures routeMu saturation under
+// displacement churn — the publisher-mobility path BenchmarkRouteElection_Parallel
+// does NOT cover. Each op installs into an OCCUPIED path (bypassing the election
+// decision, which is not the routeMu cost under study), so TrackMux.Announce
+// displaces the incumbent and its end() spawns an async promoteAlternate that
+// also acquires routeMu. Read the saturation (ops/sec) and the -mutexprofile
+// against BenchmarkRouteElection_Parallel (empty-slot, no promote): the delta
+// is the displacement+promote pressure. Drain is intentionally excluded (its
+// time.AfterFunc would create timer-heap churn unrelated to routeMu). ns/op is
+// alloc-bound (fresh Announcement per op) — compare saturation, not absolutes.
+//
+// Run: go test -run=^$ -bench='RouteElection_Parallel|RouteDisplacement_Parallel' \
+//          -benchtime=2s -cpu=16 -count=5
+//
+// Finding (2026-07, 16-core): vs the empty-slot bench, displacement churn costs
+// ~20% throughput (~384k → ~308k installs/s). The -mutexprofile attributes
+// ~65% of routeMu contention to promoteAlternate goroutines (the async promotes
+// spawned by each displacement) and ~35% to the install goroutines themselves.
+// So the "displacement acquires routeMu >1× per install" concern is real and
+// quantified — but the ~308k installs/s ceiling is still ~10²–10⁴× above any
+// realistic rate, so the conclusion (routeMu not a demonstrated bottleneck) is
+// unchanged; the evidence is now complete for both the empty-slot and
+// displacement paths.
+func BenchmarkRouteDisplacement_Parallel(b *testing.B) {
+	s := &Server{Config: &Config{}, TrackMux: moqt.NewTrackMux(0)}
+	s.alternates = make(map[moqt.BroadcastPath]*alternate)
+	const paths = 4096
+	for i := range paths { // pre-install incumbents so every timed op displaces
+		s.routeMu.Lock()
+		s.installRoute(newBenchHandler(moqt.BroadcastPath(fmt.Sprintf("/disp/%d", i))))
+		s.routeMu.Unlock()
+	}
+	var counter atomic.Uint64
+
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			i := counter.Add(1) % paths
+			h := newBenchHandler(moqt.BroadcastPath(fmt.Sprintf("/disp/%d", i)))
+			s.routeMu.Lock()
+			s.installRoute(h) // displaces incumbent → end() → go promoteAlternate (routeMu)
+			s.routeMu.Unlock()
+		}
+	})
+}
