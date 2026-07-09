@@ -526,11 +526,6 @@ func (s *Server) retainRoute(h *relayHandler) {
 	}
 	path := h.announcement.BroadcastPath()
 
-	// Drop and cancel this alternate if its own announcement ends while retained.
-	h.announcement.AfterFunc(func() {
-		s.discardAlternate(path, h)
-	})
-
 	s.routeMu.Lock()
 	prev := s.alternates[path]
 	s.alternates[path] = h
@@ -541,6 +536,16 @@ func (s *Server) retainRoute(h *relayHandler) {
 		prev.cancel()
 		metricRelayRoutesRetained.Dec()
 	}
+
+	// Register the cleanup AFTER storing: if the announcement ends between the
+	// store and this registration, AfterFunc still fires f asynchronously (it
+	// runs on an already-ended announcement) and discardAlternate finds h in the
+	// map and removes it. Registering before the store could strand a dead h —
+	// the callback would fire with h not yet stored and no-op, leaving h in the
+	// map with no further cleanup.
+	h.announcement.AfterFunc(func() {
+		s.discardAlternate(path, h)
+	})
 }
 
 // discardAlternate removes h from the retained alternates for path if it is
@@ -578,6 +583,25 @@ func (s *Server) promoteAlternates(path moqt.BroadcastPath) {
 		// The alternate died while retained; just release it.
 		h.cancel()
 		return
+	}
+
+	// Don't clobber a route that was (re)occupied after the incumbent ended.
+	// Displacing the incumbent ends its Announcement, which is what fires this
+	// promotion — so the slot now holds the displacer (the route that just won
+	// election). Promoting the alternate over it would subvert route selection.
+	// Only promote into an empty or dead slot.
+	if ann, existing := s.TrackMux.TrackHandler(path); ann != nil {
+		if rr, ok := existing.(RouteReporter); ok {
+			if st := rr.RouteStats(); st.Alive {
+				// Slot holds a live route; discard the alternate.
+				h.cancel()
+				return
+			}
+		} else {
+			// Unknown handler type; don't clobber it.
+			h.cancel()
+			return
+		}
 	}
 
 	metricRelayRoutePromotions.Inc()

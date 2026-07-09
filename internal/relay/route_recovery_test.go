@@ -131,6 +131,38 @@ func TestRouteRecovery_PromoteNoAlternate(t *testing.T) {
 	})
 }
 
+// TestRouteRecovery_PromotionDoesNotClobberElectedRoute is the regression test
+// for the clobber bug: displacing an incumbent (which ends its Announcement and
+// fires promoteAlternates) must NOT promote a retained alternate over the route
+// that just won election and displaced it.
+func TestRouteRecovery_PromotionDoesNotClobberElectedRoute(t *testing.T) {
+	s := newRecoveryServer()
+	ctx := context.Background()
+	path := "/live/recovery-no-clobber"
+
+	incumbent, _ := newRecoveryHandler(t, ctx, path)
+	s.installRoute(incumbent)
+
+	alt, _ := newRecoveryHandler(t, ctx, path)
+	s.retainRoute(alt)
+
+	// A better route wins election and displaces the incumbent. Displacement
+	// ends the incumbent's Announcement -> promoteAlternates fires async.
+	winner, _ := newRecoveryHandler(t, ctx, path)
+	s.installRoute(winner)
+
+	require.Eventually(t, func() bool {
+		_, h := s.TrackMux.TrackHandler(winner.announcement.BroadcastPath())
+		return h == winner
+	}, time.Second, time.Millisecond, "elected winner must remain the active route")
+
+	// The retained alternate must have been discarded, not promoted over winner.
+	s.routeMu.Lock()
+	_, present := s.alternates[alt.announcement.BroadcastPath()]
+	s.routeMu.Unlock()
+	assert.False(t, present, "alternate discarded, not promoted over the elected route")
+}
+
 // TestRouteRecovery_DiscardOnSelfEnd: when a retained alternate's own
 // announcement ends, it is dropped from the retained set and cancelled.
 func TestRouteRecovery_DiscardOnSelfEnd(t *testing.T) {
