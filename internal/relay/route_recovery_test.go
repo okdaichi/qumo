@@ -151,16 +151,21 @@ func TestRouteRecovery_PromotionDoesNotClobberElectedRoute(t *testing.T) {
 	winner, _ := newRecoveryHandler(t, ctx, path)
 	s.installRoute(winner)
 
+	// Displacement ends the incumbent's Announcement, which launches the
+	// promoteAlternates goroutine asynchronously. Wait for it to settle: the
+	// winner must remain the active route AND the alternate must be discarded
+	// (promoteAlternates' clobber guard skips because the slot is live).
 	require.Eventually(t, func() bool {
 		_, h := s.TrackMux.TrackHandler(winner.announcement.BroadcastPath())
-		return h == winner
-	}, time.Second, time.Millisecond, "elected winner must remain the active route")
-
-	// The retained alternate must have been discarded, not promoted over winner.
-	s.routeMu.Lock()
-	_, present := s.alternates[alt.announcement.BroadcastPath()]
-	s.routeMu.Unlock()
-	assert.False(t, present, "alternate discarded, not promoted over the elected route")
+		if h != winner {
+			return false
+		}
+		s.routeMu.Lock()
+		_, present := s.alternates[alt.announcement.BroadcastPath()]
+		s.routeMu.Unlock()
+		return !present
+	}, time.Second, time.Millisecond,
+		"elected winner must remain active and the alternate must be discarded")
 }
 
 // TestRouteRecovery_DiscardOnSelfEnd: when a retained alternate's own
