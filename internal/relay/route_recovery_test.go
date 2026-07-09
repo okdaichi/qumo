@@ -3,7 +3,7 @@ package relay
 import (
 	"context"
 	"testing"
-	"time"
+	"testing/synctest"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/qumo-dev/gomoqt/moqt"
@@ -45,34 +45,38 @@ func retainedGauge() float64 {
 // TestRouteRecovery_PromotesRetainedAlternate is the core recovery scenario: a
 // route that lost election is retained; when the incumbent's announcement ends,
 // the retained route is promoted so the path is not stranded.
+//
+// Promotion is asynchronous (Announcement.end() runs AfterFuncs inline, and the
+// recovery callback spawns promoteAlternates in a goroutine), so the test runs
+// inside a synctest bubble and waits deterministically rather than polling.
 func TestRouteRecovery_PromotesRetainedAlternate(t *testing.T) {
-	s := newRecoveryServer()
-	ctx := context.Background()
-	path := "/live/recovery-promote"
-	gaugeBefore := retainedGauge()
-	promoBefore := testutil.ToFloat64(metricRelayRoutePromotions)
+	synctest.Test(t, func(t *testing.T) {
+		s := newRecoveryServer()
+		ctx := context.Background()
+		path := "/live/recovery-promote"
+		gaugeBefore := retainedGauge()
+		promoBefore := testutil.ToFloat64(metricRelayRoutePromotions)
 
-	incumbent, endIncumbent := newRecoveryHandler(t, ctx, path)
-	s.installRoute(incumbent)
-	ann, _ := s.TrackMux.TrackHandler(incumbent.announcement.BroadcastPath())
-	require.NotNil(t, ann, "incumbent must be installed")
+		incumbent, endIncumbent := newRecoveryHandler(t, ctx, path)
+		s.installRoute(incumbent)
+		ann, _ := s.TrackMux.TrackHandler(incumbent.announcement.BroadcastPath())
+		require.NotNil(t, ann, "incumbent must be installed")
 
-	alt, _ := newRecoveryHandler(t, ctx, path)
-	s.retainRoute(alt)
-	assert.Equal(t, gaugeBefore+1, retainedGauge(), "alternate retained")
+		alt, _ := newRecoveryHandler(t, ctx, path)
+		s.retainRoute(alt)
+		assert.Equal(t, gaugeBefore+1, retainedGauge(), "alternate retained")
 
-	// Incumbent publication ends -> promoteAlternates fires (asynchronously).
-	endIncumbent()
-	<-incumbent.announcement.Done()
+		// Incumbent publication ends -> the recovery AfterFunc spawns
+		// promoteAlternates; synctest.Wait waits for it to finish.
+		endIncumbent()
+		synctest.Wait()
 
-	require.Eventually(t, func() bool {
 		_, h := s.TrackMux.TrackHandler(alt.announcement.BroadcastPath())
-		return h == alt
-	}, time.Second, time.Millisecond, "retained alternate should be promoted to active route")
-
-	assert.Equal(t, gaugeBefore, retainedGauge(), "alternate left the retained set on promotion")
-	assert.Equal(t, promoBefore+1, testutil.ToFloat64(metricRelayRoutePromotions),
-		"promotion counter incremented")
+		assert.Same(t, alt, h, "retained alternate promoted to active route")
+		assert.Equal(t, gaugeBefore, retainedGauge(), "alternate left the retained set on promotion")
+		assert.Equal(t, promoBefore+1, testutil.ToFloat64(metricRelayRoutePromotions),
+			"promotion counter incremented")
+	})
 }
 
 // TestRouteRecovery_RetainReplacesPrevious verifies only the latest rejected
@@ -133,43 +137,43 @@ func TestRouteRecovery_PromoteNoAlternate(t *testing.T) {
 
 // TestRouteRecovery_PromotionDoesNotClobberElectedRoute is the regression test
 // for the clobber bug: displacing an incumbent (which ends its Announcement and
-// fires promoteAlternates) must NOT promote a retained alternate over the route
+// spawns promoteAlternates) must NOT promote a retained alternate over the route
 // that just won election and displaced it.
 func TestRouteRecovery_PromotionDoesNotClobberElectedRoute(t *testing.T) {
-	s := newRecoveryServer()
-	ctx := context.Background()
-	path := "/live/recovery-no-clobber"
+	synctest.Test(t, func(t *testing.T) {
+		s := newRecoveryServer()
+		ctx := context.Background()
+		path := "/live/recovery-no-clobber"
 
-	incumbent, _ := newRecoveryHandler(t, ctx, path)
-	s.installRoute(incumbent)
+		incumbent, _ := newRecoveryHandler(t, ctx, path)
+		s.installRoute(incumbent)
 
-	alt, _ := newRecoveryHandler(t, ctx, path)
-	s.retainRoute(alt)
+		alt, _ := newRecoveryHandler(t, ctx, path)
+		s.retainRoute(alt)
 
-	// A better route wins election and displaces the incumbent. Displacement
-	// ends the incumbent's Announcement -> promoteAlternates fires async.
-	winner, _ := newRecoveryHandler(t, ctx, path)
-	s.installRoute(winner)
+		// A better route wins election and displaces the incumbent. Displacement
+		// ends the incumbent's Announcement -> the recovery AfterFunc spawns
+		// promoteAlternates. synctest.Wait lets it run; the clobber guard sees
+		// the winner is live and discards the alternate instead of promoting it.
+		winner, _ := newRecoveryHandler(t, ctx, path)
+		s.installRoute(winner)
+		synctest.Wait()
 
-	// Displacement ends the incumbent's Announcement, which launches the
-	// promoteAlternates goroutine asynchronously. Wait for it to settle: the
-	// winner must remain the active route AND the alternate must be discarded
-	// (promoteAlternates' clobber guard skips because the slot is live).
-	require.Eventually(t, func() bool {
 		_, h := s.TrackMux.TrackHandler(winner.announcement.BroadcastPath())
-		if h != winner {
-			return false
-		}
+		assert.Same(t, winner, h, "elected winner must remain the active route")
+
 		s.routeMu.Lock()
 		_, present := s.alternates[alt.announcement.BroadcastPath()]
 		s.routeMu.Unlock()
-		return !present
-	}, time.Second, time.Millisecond,
-		"elected winner must remain active and the alternate must be discarded")
+		assert.False(t, present, "alternate discarded, not promoted over the elected route")
+	})
 }
 
 // TestRouteRecovery_DiscardOnSelfEnd: when a retained alternate's own
 // announcement ends, it is dropped from the retained set and cancelled.
+//
+// The discardAlternate AfterFunc runs inline from Announcement.end() (the
+// alternate has a single callback), so the update is synchronous — no synctest.
 func TestRouteRecovery_DiscardOnSelfEnd(t *testing.T) {
 	s := newRecoveryServer()
 	ctx := context.Background()
@@ -180,15 +184,11 @@ func TestRouteRecovery_DiscardOnSelfEnd(t *testing.T) {
 	s.retainRoute(alt)
 	require.Equal(t, gaugeBefore+1, retainedGauge(), "alternate retained")
 
-	endAlt()
-	<-alt.announcement.Done()
+	endAlt() // fires discardAlternate inline
 
-	require.Eventually(t, func() bool {
-		s.routeMu.Lock()
-		defer s.routeMu.Unlock()
-		_, ok := s.alternates[alt.announcement.BroadcastPath()]
-		return !ok
-	}, time.Second, time.Millisecond, "alternate removed from retained set on self-end")
-
+	s.routeMu.Lock()
+	_, present := s.alternates[alt.announcement.BroadcastPath()]
+	s.routeMu.Unlock()
+	assert.False(t, present, "alternate removed from retained set on self-end")
 	assert.Equal(t, gaugeBefore, retainedGauge(), "retained gauge decremented on discard")
 }
