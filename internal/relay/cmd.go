@@ -166,6 +166,7 @@ func Run(args []string) error {
 		FrameCapacity:         frameCapacity,
 		Peers:                 peers,
 		LocalResolverInterval: localResolver.Interval(),
+		NextSessionURI:        os.Getenv("GOAWAY_REDIRECT_URI"),
 	}
 	// The remote resolver is optional: NewRemoteResolver returns nil when
 	// REMOTE_RESOLVER_URL is unset (the common single-node/demo case). The
@@ -211,10 +212,12 @@ func Run(args []string) error {
 			TLSConfig:          tlsConfig,
 			QUICConfig:         quicConfig,
 			WebTransportServer: moqt.NewWebTransportServer(httpMux),
+			NextSessionURI:     relayCfg.NextSessionURI,
 		},
 		MOQDialer: &moqt.Dialer{
 			TLSConfig:  dialerTLS,
 			QUICConfig: quicConfig,
+			OnGoaway:   handlePeerGoaway,
 		},
 		Config:           &relayCfg,
 		TrackMux:         trackMux,

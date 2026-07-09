@@ -71,6 +71,20 @@ var (
 		[]string{"peer", "result"},
 	)
 
+	// metricPeerGoawayReceived counts GOAWAY messages received from upstream
+	// peer relays (a migration/drain hint). Labelled by whether a redirect URI
+	// was provided. Route/subscription migration is the primary mechanism;
+	// GOAWAY is an escape hatch (see issue #280).
+	metricPeerGoawayReceived = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "qumo",
+			Subsystem: "relay",
+			Name:      "peer_goaway_received_total",
+			Help:      "GOAWAY messages received from upstream peer relays, by whether a redirect URI was supplied.",
+		},
+		[]string{"redirect"},
+	)
+
 	// metricRelayIngressBytesTotal counts bytes received from upstream publishers.
 	metricRelayIngressBytesTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
@@ -114,6 +128,24 @@ var (
 		},
 		[]string{"reason"},
 	)
+
+	// metricRelayRoutesRetained gauges route-election losers currently held as
+	// alternates, pending promotion when the active route's announcement ends.
+	metricRelayRoutesRetained = promauto.NewGauge(prometheus.GaugeOpts{
+		Namespace: "qumo",
+		Subsystem: "relay",
+		Name:      "routes_retained",
+		Help:      "Current number of route-election losers retained as alternates pending incumbent-end recovery.",
+	})
+
+	// metricRelayRoutePromotions counts retained alternates promoted to the
+	// active route after the incumbent announcement ended.
+	metricRelayRoutePromotions = promauto.NewCounter(prometheus.CounterOpts{
+		Namespace: "qumo",
+		Subsystem: "relay",
+		Name:      "route_promotions_total",
+		Help:      "Retained alternate routes promoted to active after the incumbent announcement ended.",
+	})
 
 	// metricConnSmoothedRTT tracks the QUIC-layer smoothed RTT (ms) for each
 	// inbound native-QUIC connection, labelled by remote address.
