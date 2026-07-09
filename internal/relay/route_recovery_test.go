@@ -31,7 +31,7 @@ func newRecoveryHandler(t *testing.T, ctx context.Context, path string) (*relayH
 
 func newRecoveryServer() *Server {
 	s := &Server{Config: &Config{}, TrackMux: moqt.NewTrackMux(0)}
-	s.alternates = make(map[moqt.BroadcastPath]*altEntry)
+	s.alternates = make(map[moqt.BroadcastPath]*alternate)
 	return s
 }
 
@@ -47,7 +47,7 @@ func retainedGauge() float64 {
 // the retained route is promoted so the path is not stranded.
 //
 // Promotion is asynchronous (Announcement.end() runs AfterFuncs inline, and the
-// recovery callback spawns promoteAlternates in a goroutine), so the test runs
+// recovery callback spawns promoteAlternate in a goroutine), so the test runs
 // inside a synctest bubble and waits deterministically rather than polling.
 func TestRouteRecovery_PromotesRetainedAlternate(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -67,7 +67,7 @@ func TestRouteRecovery_PromotesRetainedAlternate(t *testing.T) {
 		assert.Equal(t, gaugeBefore+1, retainedGauge(), "alternate retained")
 
 		// Incumbent publication ends -> the recovery AfterFunc spawns
-		// promoteAlternates; synctest.Wait waits for it to finish.
+		// promoteAlternate; synctest.Wait waits for it to finish.
 		endIncumbent()
 		synctest.Wait()
 
@@ -138,7 +138,7 @@ func TestRouteRecovery_DeadAlternateNotPromoted(t *testing.T) {
 	require.Equal(t, gaugeBefore+1, retainedGauge(), "alternate retained")
 
 	alt.cancel() // kill the alternate's ctx but keep its announcement active
-	s.promoteAlternates(alt.announcement.BroadcastPath())
+	s.promoteAlternate(alt.announcement.BroadcastPath())
 
 	ann, _ := s.TrackMux.TrackHandler(alt.announcement.BroadcastPath())
 	assert.Nil(t, ann, "dead alternate must not be installed as the active route")
@@ -157,13 +157,13 @@ func TestRouteRecovery_PromoteNoAlternate(t *testing.T) {
 	path := "/live/recovery-empty"
 
 	require.NotPanics(t, func() {
-		s.promoteAlternates(moqt.BroadcastPath(path))
+		s.promoteAlternate(moqt.BroadcastPath(path))
 	})
 }
 
 // TestRouteRecovery_PromotionDoesNotClobberElectedRoute is the regression test
 // for the clobber bug: displacing an incumbent (which ends its Announcement and
-// spawns promoteAlternates) must NOT promote a retained alternate over the route
+// spawns promoteAlternate) must NOT promote a retained alternate over the route
 // that just won election and displaced it.
 func TestRouteRecovery_PromotionDoesNotClobberElectedRoute(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -179,7 +179,7 @@ func TestRouteRecovery_PromotionDoesNotClobberElectedRoute(t *testing.T) {
 
 		// A better route wins election and displaces the incumbent. Displacement
 		// ends the incumbent's Announcement -> the recovery AfterFunc spawns
-		// promoteAlternates. synctest.Wait lets it run; the clobber guard sees
+		// promoteAlternate. synctest.Wait lets it run; the clobber guard sees
 		// the winner is live and discards the alternate instead of promoting it.
 		winner, _ := newRecoveryHandler(t, ctx, path)
 		s.installRoute(winner)

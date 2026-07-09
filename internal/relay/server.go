@@ -62,9 +62,9 @@ type Server struct {
 
 	// routeMu guards alternates: per-BroadcastPath route-election losers that
 	// are retained (not cancelled) so they can be promoted if the active route's
-	// announcement ends. See retainRoute / promoteAlternates.
+	// announcement ends. See retainRoute / promoteAlternate.
 	routeMu    sync.Mutex
-	alternates map[moqt.BroadcastPath]*altEntry
+	alternates map[moqt.BroadcastPath]*alternate
 }
 
 func (s *Server) ServeHealth(w http.ResponseWriter, r *http.Request) {
@@ -147,7 +147,7 @@ func (s *Server) init() {
 		}
 
 		if s.alternates == nil {
-			s.alternates = make(map[moqt.BroadcastPath]*altEntry)
+			s.alternates = make(map[moqt.BroadcastPath]*alternate)
 		}
 	})
 }
@@ -446,7 +446,7 @@ func (s *Server) serveSession(sess *moqt.Session, requireAuth bool) {
 
 		// Route selection: only replace an existing active handler if the new
 		// route is strictly better. The decision and the TrackMux install are
-		// performed under routeMu so they are atomic w.r.t. promoteAlternates
+		// performed under routeMu so they are atomic w.r.t. promoteAlternate
 		// (and w.r.t. a concurrent election on another session): a promotion can
 		// never clobber a freshly-elected route, nor vice versa.
 		s.routeMu.Lock()
@@ -460,7 +460,7 @@ func (s *Server) serveSession(sess *moqt.Session, requireAuth bool) {
 					// route's announcement later ends (e.g. the publisher moved and
 					// the incumbent publication is retracted shortly after this one
 					// was rejected), it is promoted so subscribers are not left
-					// stranded. See retainRoute / promoteAlternates.
+					// stranded. See retainRoute / promoteAlternate.
 					s.retainRouteLocked(handler)
 					rejected = true
 				} else {
@@ -517,17 +517,17 @@ func (s *Server) installRoute(h *relayHandler) {
 	// inline; promotion re-enters the TrackMux and must run only after end()
 	// (and TrackMux's own removal handler) has fully completed.
 	h.announcement.AfterFunc(func() {
-		go s.promoteAlternates(h.announcement.BroadcastPath())
+		go s.promoteAlternate(h.announcement.BroadcastPath())
 	})
 
 	s.TrackMux.Announce(h.announcement, h)
 }
 
-// altEntry pairs a retained alternate handler with the stop function that
-// deregisters its discardAlternate callback on the announcement. Storing stop
-// lets promotion/replacement deregister the callback (rather than leaving it
-// registered to fire as a no-op when the announcement later ends).
-type altEntry struct {
+// alternate is a retained fallback route: a route-election loser kept alive so
+// it can be promoted if the active route's announcement ends. stop deregisters
+// its discardAlternate callback, so promotion/replacement can remove the
+// callback instead of leaving it to fire as a no-op later.
+type alternate struct {
 	handler *relayHandler
 	stop    func() bool
 }
@@ -547,7 +547,7 @@ func (s *Server) retainRoute(h *relayHandler) {
 // retainRouteLocked is retainRoute assuming routeMu is held. Because the whole
 // body runs under routeMu, discardAlternate (which needs routeMu) cannot fire
 // mid-body — so the alternate can be stored before its cleanup AfterFunc is
-// registered without risk of stranding, and entry.stop can be assigned without
+// registered without risk of stranding, and alt.stop can be assigned without
 // a second critical section.
 func (s *Server) retainRouteLocked(h *relayHandler) {
 	// Never retain an already-dead handler.
@@ -578,55 +578,55 @@ func (s *Server) retainRouteLocked(h *relayHandler) {
 	// discardAlternate asynchronously; that goroutine blocks on routeMu (held
 	// here) and, once released, finds h in the map and removes it. No IsActive
 	// re-check is needed.
-	entry := &altEntry{handler: h}
-	s.alternates[path] = entry
+	alt := &alternate{handler: h}
+	s.alternates[path] = alt
 	metricRelayRoutesRetained.Inc()
-	entry.stop = h.announcement.AfterFunc(func() {
+	alt.stop = h.announcement.AfterFunc(func() {
 		s.discardAlternate(path, h)
 	})
 }
 
 // discardAlternate removes h from the retained alternates for path if it is
-// still the retained entry, then cancels it. Idempotent; a no-op if h has
+// still the retained alternate, then cancels it. Idempotent; a no-op if h has
 // already been replaced or promoted.
 func (s *Server) discardAlternate(path moqt.BroadcastPath, h *relayHandler) {
 	s.routeMu.Lock()
-	entry := s.alternates[path]
-	if entry != nil && entry.handler == h {
+	alt := s.alternates[path]
+	if alt != nil && alt.handler == h {
 		delete(s.alternates, path)
 	} else {
-		entry = nil
+		alt = nil
 	}
 	s.routeMu.Unlock()
-	if entry != nil {
+	if alt != nil {
 		metricRelayRoutesRetained.Dec()
 		h.cancel()
 	}
 }
 
-// promoteAlternates is invoked when the active route for a path ends. If a
+// promoteAlternate is invoked when the active route for a path ends. If a
 // retained alternate is still live, it is installed as the new active route;
 // otherwise the path is left unoccupied until a new announcement arrives.
 //
 // The whole pop + clobber-guard + install runs under routeMu, so it is atomic
 // w.r.t. serveSession's election+install: the guard's read of TrackMux and the
 // subsequent Announce cannot be interleaved by a concurrent election.
-func (s *Server) promoteAlternates(path moqt.BroadcastPath) {
+func (s *Server) promoteAlternate(path moqt.BroadcastPath) {
 	s.routeMu.Lock()
 	defer s.routeMu.Unlock()
 
-	entry := s.alternates[path]
-	if entry == nil {
+	alt := s.alternates[path]
+	if alt == nil {
 		return
 	}
 	delete(s.alternates, path)
 	metricRelayRoutesRetained.Dec()
-	h := entry.handler
+	h := alt.handler
 
 	// Deregister the discardAlternate callback (no-op if the announcement
 	// already ended and it has fired).
-	if entry.stop != nil {
-		entry.stop()
+	if alt.stop != nil {
+		alt.stop()
 	}
 
 	if !h.announcement.IsActive() || h.ctx.Err() != nil {
