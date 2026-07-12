@@ -92,12 +92,12 @@ jobs:
       # In-process integration tests (build tag `integration`) stand up real QUIC
       # relays. The relay-chain durability harness (TestRelayChain_*: stress,
       # fan-out stress, soak, slow-subscriber, reconnect-storm) is skipped here
-      # with -skip='RelayChain' — it stands up many in-process QUIC relays and its
-      # per-subscriber egress teardown does not quiesce promptly under fan-out on a
-      # 2-core runner (Server.Shutdown hangs after the measurement). It runs in the
-      # relay-bench workflows (bench-relay-pr.yml / bench-relay.yml), its intended
-      # home. This gate keeps the 180+ correctness integration tests (route
-      # recovery, auth, peer discovery, frame pool, group ring) + ffmpeg/RTSP.
+      # with -skip='RelayChain' — these are heavy multi-relay benchmarks whose
+      # home is the relay-bench workflows (bench-relay-pr.yml / bench-relay.yml),
+      # not the per-PR gate. (They were originally moved out due to a teardown hang
+      # since fixed — #286 — but stay in the bench workflows by design.) This gate
+      # keeps the 180+ correctness integration tests (route recovery, auth, peer
+      # discovery, frame pool, group ring) + ffmpeg/RTSP fast.
       # No -race here: the real-QUIC stack has not been validated under the race
       # detector yet — revisit enabling it once confirmed clean.
       - name: Run integration tests
