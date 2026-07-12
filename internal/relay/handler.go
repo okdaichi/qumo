@@ -431,7 +431,7 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 		if last < latest {
 			last++
 
-			// If the subscriber has fallen behind the ring window, jump toward the
+			// If the subscriber has fallen behind the ring window, jump to the
 			// latest group and let get()/the wait below handle it — don't spin.
 			if earliest := d.ring.earliestAvailable(); last < earliest {
 				slog.Warn("subscriber fell behind; skipping groups",
@@ -440,7 +440,7 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 					"latest_available", latest,
 				)
 				metricSubscriberSkipsTotal.Inc()
-				last = latest - 1
+				last = latest
 			}
 
 			if cache := d.ring.get(last); cache != nil {
