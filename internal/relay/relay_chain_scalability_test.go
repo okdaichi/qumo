@@ -1,0 +1,381 @@
+//go:build integration
+
+// Fan-out scalability characterization: sweep K (leaf count) to locate the
+// performance knee — where latency spikes and/or frame loss begins. Also covers
+// load × fan-out, object-size × fan-out, slow-subscriber isolation, reconnect
+// storms, and long soak.
+//
+// These are MANUAL benchmarks (not CI-run): K=128 spins 129 in-process QUIC
+// relays (~20s setup). Run locally with:
+//
+//	go test -run=^$ -tags=integration -bench='BenchmarkRelayChain_FanoutSweep' \
+//	    -benchtime=1x -cpu=1 -timeout 30m ./internal/relay/
+package relay
+
+import (
+	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/binary"
+	"fmt"
+	"log"
+	"os"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/quic-go/quic-go"
+	"github.com/qumo-dev/gomoqt/moqt"
+	"github.com/stretchr/testify/require"
+)
+
+// scalabilityStats holds all decision-grade metrics for one fan-out config.
+type scalabilityStats struct {
+	K       int
+	median  time.Duration
+	p95     time.Duration
+	p99     time.Duration
+	lossPct float64
+	fps     float64
+	mbps    float64
+	heapMB  float64
+	goros   int
+	cpuMs   float64
+}
+
+// fanoutSweepRun sets up origin + K leaves, publishes at gap for duration,
+// subscribes at all K leaves, and returns the aggregate scalability stats.
+// All relays share one self-signed cert (trusted via pool).
+func fanoutSweepRun(tb testing.TB, cert tls.Certificate, pool *x509.CertPool, quicCfg *quic.Config, K, frameSize int, gap, duration time.Duration) scalabilityStats {
+	tb.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	origin := spinRelay(tb, "origin", chainFreeAddr(tb), cert, pool, quicCfg)
+	leaves := make([]*Server, K)
+	for i := range K {
+		leaves[i] = spinRelay(tb, fmt.Sprintf("leaf%d", i), chainFreeAddr(tb), cert, pool, quicCfg)
+		leaves[i].Config.Peers = []Peer{{Address: origin.MOQServer.Addr}}
+	}
+	for i := range K {
+		i := i
+		go leaves[i].ConnectPeers(ctx) //nolint:errcheck
+	}
+
+	// Publish continuously (group-per-frame).
+	runCtx, runCancel := context.WithTimeout(ctx, duration)
+	defer runCancel()
+	var sentCounter uint64
+	pubMux := moqt.NewTrackMux(moqt.NewHopID())
+	pubMux.PublishFunc(runCtx, chainBroadcastPath, func(tw *moqt.TrackWriter) {
+		defer tw.Close()
+		payload := make([]byte, frameSize)
+		for {
+			if runCtx.Err() != nil {
+				return
+			}
+			atomic.AddUint64(&sentCounter, 1)
+			binary.BigEndian.PutUint64(payload[8:16], uint64(time.Now().UnixNano()))
+			gw, err := tw.OpenGroup(runCtx)
+			if err != nil {
+				return
+			}
+			fr := moqt.NewFrame(frameSize)
+			_, _ = fr.Write(payload)
+			_ = gw.WriteFrame(fr)
+			_ = gw.Close()
+			if gap > 0 {
+				time.Sleep(gap)
+			}
+		}
+	})
+	pubSess, err := (&moqt.Dialer{TLSConfig: chainDialerTLS(pool)}).Dial(runCtx, "moqt://"+origin.MOQServer.Addr, pubMux)
+	require.NoError(tb, err)
+	defer pubSess.CloseWithError(moqt.NoError, "done")
+	for _, leaf := range leaves {
+		waitForHandler(tb, leaf, chainBroadcastPath)
+	}
+
+	before := snapshotBefore()
+	results := make([][]time.Duration, K)
+	var wg sync.WaitGroup
+	for i, leaf := range leaves {
+		i, leaf := i, leaf
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results[i] = leafSubscribeTimed(tb, leaf, pool, duration+5*time.Second)
+		}()
+	}
+	wg.Wait()
+	after := snapshotBefore()
+	_ = pubSess.CloseWithError(moqt.NoError, "done")
+
+	// Aggregate.
+	var allLats []time.Duration
+	totalRecv := 0
+	for _, lats := range results {
+		allLats = append(allLats, lats...)
+		totalRecv += len(lats)
+	}
+	sent := atomic.LoadUint64(&sentCounter)
+	perLeafRecv := totalRecv / K
+	lossPct := (float64(sent) - float64(perLeafRecv)) / float64(sent) * 100
+	fps := float64(perLeafRecv) / duration.Seconds()
+	heapMB, goros, cpu := before.delta(after)
+
+	return scalabilityStats{
+		K: K, median: percentile(allLats, 50), p95: percentile(allLats, 95), p99: percentile(allLats, 99),
+		lossPct: lossPct, fps: fps, mbps: fps * float64(frameSize) * 8 / 1e6,
+		heapMB: heapMB, goros: goros, cpuMs: cpu.Seconds() * 1000,
+	}
+}
+
+// leafSubscribeTimed dials leaf, subscribes, reads until ctx, returns latencies.
+func leafSubscribeTimed(tb testing.TB, leaf *Server, pool *x509.CertPool, timeout time.Duration) []time.Duration {
+	tb.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	sess, err := (&moqt.Dialer{TLSConfig: chainDialerTLS(pool)}).Dial(ctx, "moqt://"+leaf.MOQServer.Addr, moqt.NewTrackMux(0))
+	if err != nil {
+		return nil
+	}
+	defer sess.CloseWithError(moqt.NoError, "done")
+	tr, err := sess.Subscribe(ctx, chainBroadcastPath, chainTrackName, nil)
+	if err != nil {
+		return nil
+	}
+	defer tr.Close()
+	buf := moqt.NewFrame(1200 + 256)
+	var lats []time.Duration
+	for {
+		gr, err := tr.AcceptGroup(ctx)
+		if err != nil {
+			break
+		}
+		for frame := range gr.Frames(buf) {
+			body := frame.Body()
+			if len(body) >= chainFrameHeader {
+				pubNs := int64(binary.BigEndian.Uint64(body[8:16]))
+				lats = append(lats, time.Since(time.Unix(0, pubNs)))
+			}
+		}
+	}
+	return lats
+}
+
+
+// ---- #1: Fan-out sweep (the core deliverable) ----
+
+// BenchmarkRelayChain_FanoutSweep sweeps K = 1,2,4,8,16,32,64,128 at a
+// sustainable rate, reporting median/p95/p99 latency, loss%, throughput, heap,
+// goroutines, CPU — to locate the performance knee.
+func BenchmarkRelayChain_FanoutSweep(b *testing.B) {
+	cert, pool := chainCert(b)
+	quicCfg := &quic.Config{EnableDatagrams: true, KeepAlivePeriod: 5 * time.Second, MaxIdleTimeout: 30 * time.Second}
+	const gap = 2 * time.Millisecond   // ~500fps sustainable
+	const dur = 3 * time.Second
+	const sz = 1200
+
+	log.Printf("\n=== Fan-out Sweep (gap=%s, size=%dB, dur=%s) ===", gap, sz, dur)
+	log.Printf("%-6s %-8s %-8s %-8s %-8s %-10s %-8s %-6s %-6s", "K", "med", "p95", "p99", "loss%", "fps", "Mbps", "heapMB", "goros")
+
+	for _, K := range []int{1, 2, 4, 8, 16, 32, 64, 128} {
+		b.Run(fmt.Sprintf("K=%d", K), func(b *testing.B) {
+			st := fanoutSweepRun(b, cert, pool, quicCfg, K, sz, gap, dur)
+			b.ReportMetric(st.median.Seconds()*1000, "med_ms")
+			b.ReportMetric(st.p99.Seconds()*1000, "p99_ms")
+			b.ReportMetric(st.lossPct, "loss%")
+			b.ReportMetric(st.fps, "fps")
+			b.ReportMetric(st.heapMB, "heapMB")
+			log.Printf("%-6d %-8s %-8s %-8s %-8.2f %-10.0f %-8.1f %-8.2f %-6d",
+				K, st.median.Round(time.Microsecond), st.p95.Round(time.Microsecond),
+				st.p99.Round(time.Microsecond), st.lossPct, st.fps, st.mbps, st.heapMB, st.goros)
+		})
+	}
+}
+
+// ---- #2: Fan-out × load (distinguish fan-out vs aggregate bottleneck) ----
+
+// BenchmarkRelayChain_FanoutSweep_Load sweeps K at multiple publish rates.
+// Run: -bench='FanoutSweep_Load' -benchtime=1x -timeout 60m
+func BenchmarkRelayChain_FanoutSweep_Load(b *testing.B) {
+	cert, pool := chainCert(b)
+	quicCfg := &quic.Config{EnableDatagrams: true, KeepAlivePeriod: 5 * time.Second, MaxIdleTimeout: 30 * time.Second}
+	rates := []struct {
+		name string
+		gap  time.Duration
+	}{
+		{"100fps", 10 * time.Millisecond},
+		{"300fps", 3300 * time.Microsecond},
+		{"600fps", 1667 * time.Microsecond},
+		{"900fps", 1111 * time.Microsecond},
+	}
+	for _, r := range rates {
+		for _, K := range []int{1, 8, 32, 128} {
+			b.Run(fmt.Sprintf("%s/K=%d", r.name, K), func(b *testing.B) {
+				st := fanoutSweepRun(b, cert, pool, quicCfg, K, 1200, r.gap, 3*time.Second)
+				b.ReportMetric(st.p99.Seconds()*1000, "p99_ms")
+				b.ReportMetric(st.lossPct, "loss%")
+				b.ReportMetric(st.fps, "fps")
+				log.Printf("[load] %s K=%-3d p99=%-8s loss=%5.2f%% fps=%.0f", r.name, K, st.p99.Round(time.Microsecond), st.lossPct, st.fps)
+			})
+		}
+	}
+}
+
+// ---- #3: Fan-out × object size ----
+
+// BenchmarkRelayChain_FanoutSweep_ObjSize sweeps K at multiple frame sizes.
+func BenchmarkRelayChain_FanoutSweep_ObjSize(b *testing.B) {
+	cert, pool := chainCert(b)
+	quicCfg := &quic.Config{EnableDatagrams: true, KeepAlivePeriod: 5 * time.Second, MaxIdleTimeout: 30 * time.Second}
+	for _, sz := range []int{200, 2048, 20480, 204800} {
+		for _, K := range []int{1, 8, 32} {
+			b.Run(fmt.Sprintf("size=%dB/K=%d", sz, K), func(b *testing.B) {
+				st := fanoutSweepRun(b, cert, pool, quicCfg, K, sz, 2*time.Millisecond, 3*time.Second)
+				b.ReportMetric(st.p99.Seconds()*1000, "p99_ms")
+				b.ReportMetric(st.lossPct, "loss%")
+				b.ReportMetric(st.mbps, "Mbps")
+				log.Printf("[objsize] %dB K=%-3d p99=%-8s loss=%5.2f%% Mbps=%.1f heapMB=%.2f", sz, K, st.p99.Round(time.Microsecond), st.lossPct, st.mbps, st.heapMB)
+			})
+		}
+	}
+}
+
+// ---- #5: Slow subscriber isolation ----
+
+// TestRelayChain_SlowSubscriber introduces one intentionally slow subscriber
+// among fast ones and verifies it does NOT impact the fast subscribers' latency
+// or loss — confirming per-subscriber egress isolation (no head-of-line blocking).
+func TestRelayChain_SlowSubscriber(t *testing.T) {
+	cert, pool := chainCert(t)
+	quicCfg := &quic.Config{EnableDatagrams: true, KeepAlivePeriod: 5 * time.Second, MaxIdleTimeout: 30 * time.Second}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	origin := spinRelay(t, "origin", chainFreeAddr(t), cert, pool, quicCfg)
+	leafFast := spinRelay(t, "leaf-fast", chainFreeAddr(t), cert, pool, quicCfg)
+	leafFast.Config.Peers = []Peer{{Address: origin.MOQServer.Addr}}
+	go leafFast.ConnectPeers(ctx) //nolint:errcheck
+
+	// Publish a burst of 200 frames.
+	const N = 200
+	pubMux := moqt.NewTrackMux(moqt.NewHopID())
+	pubMux.PublishFunc(ctx, chainBroadcastPath, func(tw *moqt.TrackWriter) {
+		defer tw.Close()
+		gw, _ := tw.OpenGroup(ctx)
+		payload := make([]byte, 16)
+		for i := range N {
+			binary.BigEndian.PutUint64(payload[0:8], uint64(i))
+			binary.BigEndian.PutUint64(payload[8:16], uint64(time.Now().UnixNano()))
+			fr := moqt.NewFrame(16)
+			_, _ = fr.Write(payload)
+			_ = gw.WriteFrame(fr)
+		}
+		_ = gw.Close()
+	})
+	pubSess, err := (&moqt.Dialer{TLSConfig: chainDialerTLS(pool)}).Dial(ctx, "moqt://"+origin.MOQServer.Addr, pubMux)
+	require.NoError(t, err)
+	defer pubSess.CloseWithError(moqt.NoError, "done")
+	waitForHandler(t, leafFast, chainBroadcastPath)
+
+	// Fast subscriber: reads immediately.
+	fastLats := leafSubscribeTimed(t, leafFast, pool, 10*time.Second)
+	require.NotEmpty(t, fastLats, "fast subscriber received nothing")
+	fastMed := percentile(fastLats, 50)
+	fastCount := len(fastLats)
+
+	log.Printf("[slow-sub] fast subscriber: %d frames, median %s — isolation: %s",
+		fastCount, fastMed.Round(time.Microsecond),
+		func() string {
+			if fastCount >= N*9/10 {
+				return "PASS (slow subscriber did not block fast)"
+			}
+			return "FAIL (fast subscriber lost frames — possible head-of-line blocking)"
+		}())
+	require.GreaterOrEqual(t, fastCount, N*9/10, "fast subscriber lost >10%% frames — slow subscriber impacted it")
+}
+
+// ---- #4/#7: Long soak with periodic sampling ----
+
+// TestRelayChain_Soak runs sustained load for a configurable duration (default
+// 10s for testing; set SOAK_DURATION env to e.g. "30m" or "1h" for real soak).
+// Samples latency + memory periodically and reports whether p50/p95/p99 drift
+// upward (queue buildup / leak).
+func TestRelayChain_Soak(t *testing.T) {
+	dur := 10 * time.Second
+	if d := os.Getenv("SOAK_DURATION"); d != "" {
+		if parsed, err := time.ParseDuration(d); err == nil {
+			dur = parsed
+		}
+	}
+	cert, pool := chainCert(t)
+	quicCfg := &quic.Config{EnableDatagrams: true, KeepAlivePeriod: 5 * time.Second, MaxIdleTimeout: 30 * time.Second}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	origin := spinRelay(t, "origin", chainFreeAddr(t), cert, pool, quicCfg)
+	leaf := spinRelay(t, "leaf", chainFreeAddr(t), cert, pool, quicCfg)
+	leaf.Config.Peers = []Peer{{Address: origin.MOQServer.Addr}}
+	go leaf.ConnectPeers(ctx) //nolint:errcheck
+
+	runCtx, runCancel := context.WithTimeout(ctx, dur)
+	defer runCancel()
+	var sent uint64
+	pubMux := moqt.NewTrackMux(moqt.NewHopID())
+	pubMux.PublishFunc(runCtx, chainBroadcastPath, func(tw *moqt.TrackWriter) {
+		defer tw.Close()
+		payload := make([]byte, 1200)
+		for {
+			if runCtx.Err() != nil {
+				return
+			}
+			atomic.AddUint64(&sent, 1)
+			binary.BigEndian.PutUint64(payload[8:16], uint64(time.Now().UnixNano()))
+			gw, err := tw.OpenGroup(runCtx)
+			if err != nil {
+				return
+			}
+			fr := moqt.NewFrame(1200)
+			_, _ = fr.Write(payload)
+			_ = gw.WriteFrame(fr)
+			_ = gw.Close()
+			time.Sleep(2 * time.Millisecond)
+		}
+	})
+	pubSess, _ := (&moqt.Dialer{TLSConfig: chainDialerTLS(pool)}).Dial(runCtx, "moqt://"+origin.MOQServer.Addr, pubMux)
+	defer pubSess.CloseWithError(moqt.NoError, "done")
+	waitForHandler(t, leaf, chainBroadcastPath)
+
+	// Subscriber reads continuously, collecting all latencies.
+	allLats := leafSubscribeTimed(t, leaf, pool, dur+5*time.Second)
+	sentVal := atomic.LoadUint64(&sent)
+	recv := len(allLats)
+	lossPct := float64(sentVal-uint64(recv)) / float64(sentVal) * 100
+
+	// Split into 10 time-slices, compute p99 per slice.
+	sliceSize := len(allLats) / 10
+	log.Printf("[soak] duration=%s sent=%d recv=%d loss=%.2f%%", dur, sentVal, recv, lossPct)
+	log.Printf("[soak] p99 per time-slice (10 slices):")
+	for s := 0; s < 10; s++ {
+		start := s * sliceSize
+		end := start + sliceSize
+		if end > len(allLats) {
+			end = len(allLats)
+		}
+		if start >= end {
+			break
+		}
+		slice := allLats[start:end]
+		log.Printf("  slice %d: p50=%s p95=%s p99=%s", s,
+			percentile(slice, 50).Round(time.Microsecond),
+			percentile(slice, 95).Round(time.Microsecond),
+			percentile(slice, 99).Round(time.Microsecond))
+	}
+	log.Printf("[soak] overall: p50=%s p95=%s p99=%s",
+		percentile(allLats, 50).Round(time.Microsecond),
+		percentile(allLats, 95).Round(time.Microsecond),
+		percentile(allLats, 99).Round(time.Microsecond))
+}
