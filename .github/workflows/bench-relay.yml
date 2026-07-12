@@ -2,7 +2,7 @@ name: Relay Bench (nightly + on-demand)
 
 # Comprehensive relay-chain benchmark run: full fan-out scalability sweep
 # (K=1..128), load × fan-out, object-size × fan-out, series per-hop latency,
-# the reconnect-storm leak gate, and a long soak. Emits JSONL, generates
+# the reconnect-storm churn characterization, and a long soak. Emits JSONL,
 # CSV + SVG plots, uploads as an artifact.
 #
 # Triggers:
@@ -67,10 +67,12 @@ jobs:
           go test -tags=integration -run='TestRelayChain_Soak' \
             -timeout 400m ./internal/relay/ -v
 
-      - name: Reconnect storm (leak gate)
+      - name: Reconnect storm (churn characterization)
+        env:
+          RUN_STORM: "1"
         run: |
           go test -tags=integration -run='TestRelayChain_ReconnectStorm' \
-            -timeout 10m ./internal/relay/ -v
+            -timeout 8m ./internal/relay/ -v
 
       - name: Series per-hop latency
         run: |

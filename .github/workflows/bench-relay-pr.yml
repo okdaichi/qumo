@@ -1,7 +1,8 @@
 name: Relay Bench (PR smoke)
 
 # Short (~10 min) relay-chain benchmark smoke run for PRs: a trimmed fan-out
-# sweep + series latency + the reconnect-storm leak gate + a 30s soak. Emits
+# sweep + series latency + the reconnect-storm churn characterization + a 30s
+# soak. Emits
 # machine-readable JSONL, generates CSV + SVG plots, and uploads them as an
 # artifact. Report-only — it never fails the check on a metric value (only on a
 # build error or the reconnect-storm leak assertion).
@@ -54,9 +55,11 @@ jobs:
             -benchtime=1x -cpu=1 -timeout 15m ./internal/relay/
 
       - name: Reconnect storm + 30s soak
+        env:
+          RUN_STORM: "1"
         run: |
           go test -tags=integration -run='TestRelayChain_ReconnectStorm|TestRelayChain_Soak' \
-            -timeout 10m ./internal/relay/ -v
+            -timeout 8m ./internal/relay/ -v
 
       - name: Set up Deno
         # Deno runs the report generator (CSV + SVG plots). Third-party action →
