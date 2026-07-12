@@ -302,7 +302,7 @@ func measureFanout(tb testing.TB, pool *x509.CertPool, origin *Server, leaves []
 func BenchmarkRelayChain_Series(b *testing.B) {
 	cert, pool := chainCert(b)
 	quicCfg := &quic.Config{EnableDatagrams: true, KeepAlivePeriod: 5 * time.Second, MaxIdleTimeout: 30 * time.Second}
-	for _, depth := range []int{1, 3, 5} {
+	for _, depth := range []int{1, 3, 5, 8} {
 		b.Run(fmt.Sprintf("depth=%d", depth), func(b *testing.B) {
 			cfg := chainConfig{label: fmt.Sprintf("series depth=%d", depth), depth: depth, frameSize: 256, numFrames: 50}
 			ctx, cancel := context.WithCancel(context.Background())

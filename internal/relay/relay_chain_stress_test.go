@@ -26,6 +26,7 @@ import (
 	"math"
 	"runtime"
 	"sort"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -211,4 +212,163 @@ func lastFrac(xs []time.Duration, frac float64) []time.Duration {
 		n = 1
 	}
 	return xs[len(xs)-n:]
+}
+
+// TestRelayChain_FanoutStress drives sustained load through a fan-out topology
+// (publisher → origin → {K leaves}) to test the ORIGIN relay's durability under
+// replication load — one upstream stream fanned to K leaves. The origin's work
+// scales ∝ K (K egresses per frame); this finds the fan-out width at which the
+// origin begins to lose frames or grow latency/memory. Reports per-leaf loss%,
+// per-leaf throughput, p99 latency (across all leaves), and origin heap/goroutine
+// growth. K=1 is asserted loss-free; wider K locates the fan-out durability knee.
+func TestRelayChain_FanoutStress(t *testing.T) {
+	cert, pool := chainCert(t)
+	quicCfg := &quic.Config{EnableDatagrams: true, KeepAlivePeriod: 5 * time.Second, MaxIdleTimeout: 30 * time.Second}
+	const gap = sustainableGap // sustainable single-stream rate; origin load ∝ K
+
+	for _, k := range []int{1, 4, 16} {
+		t.Run(fmt.Sprintf("fanout=%d", k), func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			origin := spinRelay(t, "origin", chainFreeAddr(t), cert, pool, quicCfg)
+			leaves := make([]*Server, k)
+			for i := range k {
+				leaves[i] = spinRelay(t, fmt.Sprintf("leaf%d", i), chainFreeAddr(t), cert, pool, quicCfg)
+				leaves[i].Config.Peers = []Peer{{Address: origin.MOQServer.Addr}}
+			}
+			for i := range k {
+				i := i
+				go leaves[i].ConnectPeers(ctx) //nolint:errcheck
+			}
+
+			sent, recvPerLeaf, lats, heapGrowth := stressFanoutRun(t, ctx, pool, origin, leaves, gap, stressDuration)
+			require.NotZero(t, sent)
+
+			totalRecv := 0
+			maxLossPct := 0.0
+			for _, r := range recvPerLeaf {
+				totalRecv += r
+				lossPct := (float64(sent) - float64(r)) / float64(sent) * 100
+				if lossPct > maxLossPct {
+					maxLossPct = lossPct
+				}
+			}
+			perLeafFPS := float64(totalRecv) / float64(k) / stressDuration.Seconds()
+			p99 := percentile(lats, 99)
+
+			log.Printf("[chain-fanout-stress] K=%-3d sent=%-6d recv/leaf≈%-6d maxLoss=%5.2f%%  perLeaf=%.0ffps  p99=%-7s heapΔ=%5.2fMB goros(origin+leaves)  survived=✓",
+				k, sent, totalRecv/k, maxLossPct, perLeafFPS,
+				p99.Round(time.Microsecond), float64(heapGrowth)/(1024*1024))
+
+			// Durability gate: K=1 (no fan-out load) must be loss-free.
+			if k == 1 {
+				require.Equal(t, uint64(0), sent-uint64(recvPerLeaf[0]), "frame loss with no fan-out load (availability regression)")
+			}
+		})
+	}
+}
+
+// stressFanoutRun publishes one continuous stream to the origin and subscribes
+// at all K leaves concurrently. Returns the producer's sent count, per-leaf
+// received counts, all latencies aggregated, and heap growth.
+func stressFanoutRun(tb testing.TB, parent context.Context, pool *x509.CertPool, origin *Server, leaves []*Server, gap, duration time.Duration) (sent uint64, recvPerLeaf []int, lats []time.Duration, heapGrowth uint64) {
+	tb.Helper()
+	runCtx, runCancel := context.WithTimeout(parent, duration)
+	defer runCancel()
+
+	var sentCounter uint64
+	pubMux := moqt.NewTrackMux(moqt.NewHopID())
+	pubMux.PublishFunc(runCtx, chainBroadcastPath, func(tw *moqt.TrackWriter) {
+		defer tw.Close()
+		payload := make([]byte, stressFrameSize)
+		for {
+			if runCtx.Err() != nil {
+				return
+			}
+			seq := atomic.AddUint64(&sentCounter, 1)
+			binary.BigEndian.PutUint64(payload[0:8], seq)
+			binary.BigEndian.PutUint64(payload[8:16], uint64(time.Now().UnixNano()))
+			gw, err := tw.OpenGroup(runCtx)
+			if err != nil {
+				return
+			}
+			fr := moqt.NewFrame(stressFrameSize)
+			_, _ = fr.Write(payload)
+			if err := gw.WriteFrame(fr); err != nil {
+				_ = gw.Close()
+				return
+			}
+			_ = gw.Close()
+			if gap > 0 {
+				time.Sleep(gap)
+			}
+		}
+	})
+	pubSess, err := (&moqt.Dialer{TLSConfig: chainDialerTLS(pool)}).Dial(runCtx, "moqt://"+origin.MOQServer.Addr, pubMux)
+	require.NoError(tb, err)
+	defer pubSess.CloseWithError(moqt.NoError, "done")
+
+	for _, leaf := range leaves {
+		waitForHandler(tb, leaf, chainBroadcastPath)
+	}
+
+	var memBefore runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&memBefore)
+
+	// K subscribers, one per leaf, reading concurrently.
+	type leafResult struct{ recv int; lats []time.Duration }
+	k := len(leaves)
+	results := make([]leafResult, k)
+	var wg sync.WaitGroup
+	for i, leaf := range leaves {
+		i, leaf := i, leaf
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			res := leafResult{lats: make([]time.Duration, 0, 4096)}
+			readCtx, readCancel := context.WithTimeout(context.Background(), duration+5*time.Second)
+			defer readCancel()
+			sess, err := (&moqt.Dialer{TLSConfig: chainDialerTLS(pool)}).Dial(readCtx, "moqt://"+leaf.MOQServer.Addr, moqt.NewTrackMux(0))
+			if err != nil {
+				results[i] = res
+				return
+			}
+			defer sess.CloseWithError(moqt.NoError, "done")
+			tr, err := sess.Subscribe(readCtx, chainBroadcastPath, chainTrackName, nil)
+			if err != nil {
+				return
+			}
+			defer tr.Close()
+			buf := moqt.NewFrame(stressFrameSize + 256)
+			for {
+				gr, err := tr.AcceptGroup(readCtx)
+				if err != nil {
+					break
+				}
+				for frame := range gr.Frames(buf) {
+					body := frame.Body()
+					if len(body) < chainFrameHeader {
+						continue
+					}
+					pubNs := int64(binary.BigEndian.Uint64(body[8:16]))
+					res.recv++
+					res.lats = append(res.lats, time.Since(time.Unix(0, pubNs)))
+				}
+			}
+			results[i] = res
+		}()
+	}
+	wg.Wait()
+
+	var memAfter runtime.MemStats
+	runtime.ReadMemStats(&memAfter)
+
+	recvPerLeaf = make([]int, k)
+	for i, r := range results {
+		recvPerLeaf[i] = r.recv
+		lats = append(lats, r.lats...)
+	}
+	sent = atomic.LoadUint64(&sentCounter)
+	return sent, recvPerLeaf, lats, memAfter.HeapAlloc - memBefore.HeapAlloc
 }
