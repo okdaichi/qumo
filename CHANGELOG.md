@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Session-end handler cleanup moved to `newRelayHandler` (`internal/relay`):** the `context.AfterFunc(sess.Context(), cancel)` registration moved out of `installRoute` (where it needed a nil-session-context guard for test fixtures) into `newRelayHandler`, where the session is guaranteed non-nil. `installRoute` no longer touches `session.Context()`. No behavior change — every production handler still gets the cleanup exactly once via `newRelayHandler`.
+
 ### Added
 
 - **Route recovery on incumbent-end (`internal/relay`, #279):** A route-election loser is now retained as a per-`BroadcastPath` alternate instead of being cancelled, and is promoted to the active route when the incumbent's announcement ends. This fixes the publisher-mobility failure mode where a candidate rejected during the overlap was permanently discarded, leaving the path stranded once the incumbent was retracted. Promotion fires only on a definitive announcement-end (asynchronously, since `Announcement.end()` runs callbacks inline), so it introduces no route oscillation. At most one alternate is retained per path, kept by route quality (`isBetterRoute`) rather than recency, and promotion is serialized with route election under a single lock so a promotion can never clobber a freshly-elected route. New metrics: `qumo_relay_routes_retained`, `qumo_relay_route_promotions_total`. The robust fix for autonomous split-brain (two live publications coexisting without coordination) remains a future generation/epoch fence.

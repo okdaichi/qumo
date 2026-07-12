@@ -492,13 +492,8 @@ func (s *Server) installRoute(h *relayHandler) {
 	metricBroadcastsActive.Inc()
 	context.AfterFunc(h.ctx, func() { metricBroadcastsActive.Dec() })
 
-	// Ensure handler.cancel is called when the session ends to release the
-	// child context from the parent's internal children list. The handler's ctx
-	// is already derived from the session ctx, so this is a cleanup optimization
-	// (not correctness); guard against a nil session context (e.g. test helpers).
-	if sessCtx := h.session.Context(); sessCtx != nil {
-		context.AfterFunc(sessCtx, h.cancel)
-	}
+	// Session-end cleanup of the handler's child context is registered in
+	// newRelayHandler (where the session is guaranteed non-nil), not here.
 
 	// Register the broadcast session with the meter so usage is reported
 	// periodically and on session close.
