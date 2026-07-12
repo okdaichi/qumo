@@ -75,9 +75,11 @@ jobs:
             -timeout 8m ./internal/relay/ -v
 
       # Availability gates: loss-free at the sustainable rate (Stress) and K=1
-      # (FanoutStress). FanoutStress defaults to K=[1,4] (STRESS_FANOUTS); set
-      # STRESS_FANOUTS=1,4,8,16 on a larger runner for the wider curve.
+      # (FanoutStress). FanoutStress runs K=[1,4,8] (STRESS_FANOUTS) — K=8 is the
+      # teardown-hang regression scenario (#286).
       - name: Stress + fan-out stress (availability gates)
+        env:
+          STRESS_FANOUTS: "1,4,8"
         run: |
           go test -tags=integration -run='TestRelayChain_Stress|TestRelayChain_FanoutStress' \
             -timeout 8m ./internal/relay/ -v

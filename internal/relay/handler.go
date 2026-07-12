@@ -431,91 +431,42 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 		if last < latest {
 			last++
 
-			// Check if we've fallen too far behind
-			earliest := d.ring.earliestAvailable()
-			if last < earliest {
+			// If the subscriber has fallen behind the ring window, jump to the
+			// latest group and let get()/the wait below handle it — don't spin.
+			if earliest := d.ring.earliestAvailable(); last < earliest {
 				slog.Warn("subscriber fell behind; skipping groups",
 					"requested_group", last,
 					"earliest_available", earliest,
 					"latest_available", latest,
 				)
-				// Subscriber fell behind - catchup
 				metricSubscriberSkipsTotal.Inc()
+				last = latest
+			}
 
-				// Skip to latest available
-				last = latest - 1
+			if cache := d.ring.get(last); cache != nil {
+				if d.deliverGroup(tw, twCtx, cache, timer, notify) {
+					return
+				}
+				// Delivered a group; immediately try the next one.
 				continue
 			}
-
-			cache := d.ring.get(last)
-			if cache == nil {
-				last--
-				continue
-			}
-
-			shouldExit := func() bool {
-				gw, err := tw.OpenGroupAt(twCtx, cache.seq)
-				if err != nil {
-					d.ring.decrRef(cache)
-					return true
-				}
-				defer gw.Close()
-				defer d.ring.decrRef(cache)
-
-				start := time.Now()
-				frameIdx := 0
-
-				for {
-					frame := cache.next(frameIdx)
-					if frame != nil {
-						if err := gw.WriteFrame(frame); err != nil {
-							return true
-						}
-						n := frame.Len()
-						d.egressCounter.Add(float64(n))
-						if d.session != nil {
-							d.session.addEgress(int64(n))
-						}
-						frameIdx++
-						continue
-					}
-
-					// No more frames available right now
-					if cache.isComplete() {
-						// Group is complete, move to next group
-						break
-					}
-
-					// Wait for more frames
-					timer.Reset(NotifyTimeout)
-					select {
-					case <-notify:
-						// New frame may be available
-					case <-timer.C:
-						// Poll timeout
-					case <-d.done:
-						return true
-					case <-twCtx.Done():
-						return true
-					}
-				}
-
-				d.deliveryHistogram.Observe(time.Since(start).Seconds())
-				return false
-			}()
-			if shouldExit {
-				return
-			}
-			continue
+			// No deliverable group right now (caught up but not yet cached, or
+			// still behind) — fall through to the wait.
 		}
 
-		// Wait for new data with optimized timeout
+		// Single wait + cancellation point. Every non-delivery path flows through
+		// here, so the egress always observes cancellation: twCtx.Done() (subscriber
+		// disconnect, or relay shutdown via conn close → stream-context cancel) or
+		// d.done (upstream ended). The delivery path is covered by OpenGroupAt/
+		// WriteFrame erroring on the same stream reset. Without converging here, a
+		// fell-behind/cache-miss spin could blind-loop past cancellation and pin
+		// gomoqt's stream-handler WaitGroup, hanging Server.Shutdown/Close (#286).
 		timer.Reset(NotifyTimeout)
 		select {
 		case <-notify:
 			// New group available, retry immediately
 		case <-timer.C:
-			// Timeout fallback (1ms for optimal CPU/latency balance)
+			// Timeout fallback
 		case <-d.done:
 			// Distributor shut down (upstream ended)
 			return
@@ -524,6 +475,61 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 			return
 		}
 	}
+}
+
+// deliverGroup writes one group (cache) to the subscriber's track writer. It
+// returns true if the egress loop should exit — the subscribe stream was closed
+// or cancelled (OpenGroupAt/WriteFrame error, twCtx.Done, or d.done) — or false
+// if the group was delivered completely and the loop should advance to the next.
+func (d *trackDistributor) deliverGroup(tw *moqt.TrackWriter, twCtx context.Context, cache *groupCache, timer *time.Timer, notify <-chan struct{}) bool {
+	gw, err := tw.OpenGroupAt(twCtx, cache.seq)
+	if err != nil {
+		d.ring.decrRef(cache)
+		return true
+	}
+	defer gw.Close()
+	defer d.ring.decrRef(cache)
+
+	start := time.Now()
+	frameIdx := 0
+
+	for {
+		frame := cache.next(frameIdx)
+		if frame != nil {
+			if err := gw.WriteFrame(frame); err != nil {
+				return true
+			}
+			n := frame.Len()
+			d.egressCounter.Add(float64(n))
+			if d.session != nil {
+				d.session.addEgress(int64(n))
+			}
+			frameIdx++
+			continue
+		}
+
+		// No more frames available right now
+		if cache.isComplete() {
+			// Group is complete, move to next group
+			break
+		}
+
+		// Wait for more frames
+		timer.Reset(NotifyTimeout)
+		select {
+		case <-notify:
+			// New frame may be available
+		case <-timer.C:
+			// Poll timeout
+		case <-d.done:
+			return true
+		case <-twCtx.Done():
+			return true
+		}
+	}
+
+	d.deliveryHistogram.Observe(time.Since(start).Seconds())
+	return false
 }
 
 // subscribe registers a new subscriber and returns its notification channel.
