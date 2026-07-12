@@ -20,6 +20,9 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"runtime"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -170,18 +173,20 @@ func leafSubscribeTimed(tb testing.TB, leaf *Server, pool *x509.CertPool, timeou
 
 // BenchmarkRelayChain_FanoutSweep sweeps K = 1,2,4,8,16,32,64,128 at a
 // sustainable rate, reporting median/p95/p99 latency, loss%, throughput, heap,
-// goroutines, CPU — to locate the performance knee.
+// goroutines, CPU — to locate the performance knee. Override the K list with
+// FANOUT_KS (e.g. "1,4,8,16") to trim for CI smoke runs.
 func BenchmarkRelayChain_FanoutSweep(b *testing.B) {
 	cert, pool := chainCert(b)
 	quicCfg := &quic.Config{EnableDatagrams: true, KeepAlivePeriod: 5 * time.Second, MaxIdleTimeout: 30 * time.Second}
-	const gap = 2 * time.Millisecond   // ~500fps sustainable
+	const gap = 2 * time.Millisecond // ~500fps sustainable
 	const dur = 3 * time.Second
 	const sz = 1200
 
-	log.Printf("\n=== Fan-out Sweep (gap=%s, size=%dB, dur=%s) ===", gap, sz, dur)
+	ks := parseIntListEnv("FANOUT_KS", []int{1, 2, 4, 8, 16, 32, 64, 128})
+	log.Printf("\n=== Fan-out Sweep (gap=%s, size=%dB, dur=%s, K=%v) ===", gap, sz, dur, ks)
 	log.Printf("%-6s %-8s %-8s %-8s %-8s %-10s %-8s %-6s %-6s", "K", "med", "p95", "p99", "loss%", "fps", "Mbps", "heapMB", "goros")
 
-	for _, K := range []int{1, 2, 4, 8, 16, 32, 64, 128} {
+	for _, K := range ks {
 		b.Run(fmt.Sprintf("K=%d", K), func(b *testing.B) {
 			st := fanoutSweepRun(b, cert, pool, quicCfg, K, sz, gap, dur)
 			b.ReportMetric(st.median.Seconds()*1000, "med_ms")
@@ -192,6 +197,11 @@ func BenchmarkRelayChain_FanoutSweep(b *testing.B) {
 			log.Printf("%-6d %-8s %-8s %-8s %-8.2f %-10.0f %-8.1f %-8.2f %-6d",
 				K, st.median.Round(time.Microsecond), st.p95.Round(time.Microsecond),
 				st.p99.Round(time.Microsecond), st.lossPct, st.fps, st.mbps, st.heapMB, st.goros)
+			recordBench(b, benchResult{
+				Bench: "FanoutSweep", Group: "fanout", Config: fmt.Sprintf("K=%d", K), K: K,
+				MedianMs: st.median.Seconds() * 1000, P95Ms: st.p95.Seconds() * 1000, P99Ms: st.p99.Seconds() * 1000,
+				LossPct: st.lossPct, Fps: st.fps, Mbps: st.mbps, HeapMB: st.heapMB, Goros: st.goros, CpuMs: st.cpuMs,
+			})
 		})
 	}
 }
@@ -220,6 +230,10 @@ func BenchmarkRelayChain_FanoutSweep_Load(b *testing.B) {
 				b.ReportMetric(st.lossPct, "loss%")
 				b.ReportMetric(st.fps, "fps")
 				log.Printf("[load] %s K=%-3d p99=%-8s loss=%5.2f%% fps=%.0f", r.name, K, st.p99.Round(time.Microsecond), st.lossPct, st.fps)
+				recordBench(b, benchResult{
+					Bench: "FanoutSweep_Load", Group: "load", Rate: r.name, Config: fmt.Sprintf("%s/K=%d", r.name, K), K: K,
+					P99Ms: st.p99.Seconds() * 1000, LossPct: st.lossPct, Fps: st.fps, HeapMB: st.heapMB,
+				})
 			})
 		}
 	}
@@ -239,6 +253,10 @@ func BenchmarkRelayChain_FanoutSweep_ObjSize(b *testing.B) {
 				b.ReportMetric(st.lossPct, "loss%")
 				b.ReportMetric(st.mbps, "Mbps")
 				log.Printf("[objsize] %dB K=%-3d p99=%-8s loss=%5.2f%% Mbps=%.1f heapMB=%.2f", sz, K, st.p99.Round(time.Microsecond), st.lossPct, st.mbps, st.heapMB)
+				recordBench(b, benchResult{
+					Bench: "FanoutSweep_ObjSize", Group: "objsize", SizeB: sz, Config: fmt.Sprintf("size=%dB/K=%d", sz, K), K: K,
+					P99Ms: st.p99.Seconds() * 1000, LossPct: st.lossPct, Mbps: st.mbps, HeapMB: st.heapMB,
+				})
 			})
 		}
 	}
@@ -369,13 +387,183 @@ func TestRelayChain_Soak(t *testing.T) {
 			break
 		}
 		slice := allLats[start:end]
+		s50 := percentile(slice, 50).Seconds() * 1000
+		s95 := percentile(slice, 95).Seconds() * 1000
+		s99 := percentile(slice, 99).Seconds() * 1000
 		log.Printf("  slice %d: p50=%s p95=%s p99=%s", s,
 			percentile(slice, 50).Round(time.Microsecond),
 			percentile(slice, 95).Round(time.Microsecond),
 			percentile(slice, 99).Round(time.Microsecond))
+		recordBench(t, benchResult{
+			Bench: "Soak", Group: "soak", Slice: s, Config: fmt.Sprintf("slice=%d", s),
+			MedianMs: s50, P95Ms: s95, P99Ms: s99, LossPct: lossPct,
+		})
 	}
 	log.Printf("[soak] overall: p50=%s p95=%s p99=%s",
 		percentile(allLats, 50).Round(time.Microsecond),
 		percentile(allLats, 95).Round(time.Microsecond),
 		percentile(allLats, 99).Round(time.Microsecond))
+}
+
+// ---- #6: Reconnect storm (subscriber churn → leak gate) ----
+
+// envInt reads an integer env var, returning def when unset/malformed.
+func envIntDef(name string, def int) int {
+	if v := strings.TrimSpace(os.Getenv(name)); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return def
+}
+
+// churnSubscriber dials leaf, subscribes, reads up to maxGroups groups, then
+// closes the session — one subscriber lifecycle. Returns groups read.
+func churnSubscriber(t *testing.T, leaf *Server, pool *x509.CertPool, maxGroups int) int {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	sess, err := (&moqt.Dialer{TLSConfig: chainDialerTLS(pool)}).Dial(ctx, "moqt://"+leaf.MOQServer.Addr, moqt.NewTrackMux(0))
+	if err != nil {
+		return 0
+	}
+	defer sess.CloseWithError(moqt.NoError, "done")
+	tr, err := sess.Subscribe(ctx, chainBroadcastPath, chainTrackName, nil)
+	if err != nil {
+		return 0
+	}
+	defer tr.Close()
+	buf := moqt.NewFrame(1200 + 256)
+	got := 0
+	for got < maxGroups {
+		gr, err := tr.AcceptGroup(ctx)
+		if err != nil {
+			break
+		}
+		for range gr.Frames(buf) {
+			// drain the group's frames
+		}
+		got++
+	}
+	return got
+}
+
+// TestRelayChain_ReconnectStorm cycles flapping subscribers on one leaf under a
+// live publisher and verifies goroutine + heap counts return to baseline — the
+// real failure mode of a relay handling subscriber churn (clients reconnecting,
+// mobile handoff, tab refresh). Per-session teardown is async under
+// gomoqt/quic-go, so the gate polls for quiescence rather than asserting
+// instantly. Defaults are CI-friendly; override STORM_ROUNDS / STORM_CONCURRENCY
+// / STORM_FRAMES for a heavier run.
+func TestRelayChain_ReconnectStorm(t *testing.T) {
+	rounds := envIntDef("STORM_ROUNDS", 10)
+	concurrency := envIntDef("STORM_CONCURRENCY", 8)
+	frames := envIntDef("STORM_FRAMES", 3)
+
+	cert, pool := chainCert(t)
+	quicCfg := &quic.Config{EnableDatagrams: true, KeepAlivePeriod: 5 * time.Second, MaxIdleTimeout: 30 * time.Second}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	origin := spinRelay(t, "origin", chainFreeAddr(t), cert, pool, quicCfg)
+	leaf := spinRelay(t, "leaf", chainFreeAddr(t), cert, pool, quicCfg)
+	leaf.Config.Peers = []Peer{{Address: origin.MOQServer.Addr}}
+	go leaf.ConnectPeers(ctx) //nolint:errcheck
+
+	// Continuous publisher for the whole test (group-per-frame, ~500fps).
+	pubMux := moqt.NewTrackMux(moqt.NewHopID())
+	pubMux.PublishFunc(ctx, chainBroadcastPath, func(tw *moqt.TrackWriter) {
+		defer tw.Close()
+		payload := make([]byte, 1200)
+		for {
+			if ctx.Err() != nil {
+				return
+			}
+			binary.BigEndian.PutUint64(payload[8:16], uint64(time.Now().UnixNano()))
+			gw, err := tw.OpenGroup(ctx)
+			if err != nil {
+				return
+			}
+			fr := moqt.NewFrame(1200)
+			_, _ = fr.Write(payload)
+			_ = gw.WriteFrame(fr)
+			_ = gw.Close()
+			time.Sleep(2 * time.Millisecond)
+		}
+	})
+	pubSess, err := (&moqt.Dialer{TLSConfig: chainDialerTLS(pool)}).Dial(ctx, "moqt://"+origin.MOQServer.Addr, pubMux)
+	require.NoError(t, err)
+	defer pubSess.CloseWithError(moqt.NoError, "done")
+	waitForHandler(t, leaf, chainBroadcastPath)
+
+	// Warm-up: one full subscriber lifecycle, then wait for its teardown so the
+	// baseline counts include steady-state background goroutines (peer link, TLS
+	// handshakers, publisher path) rather than a cold process.
+	_ = churnSubscriber(t, leaf, pool, frames)
+	waitGoroutinesStable(t)
+
+	runtime.GC()
+	var memBase runtime.MemStats
+	runtime.ReadMemStats(&memBase)
+	gorosBase := runtime.NumGoroutine()
+
+	// Storm: rounds × concurrency subscriber lifecycles, each closed.
+	totalFrames := 0
+	for r := range rounds {
+		var wg sync.WaitGroup
+		for range concurrency {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				totalFrames += churnSubscriber(t, leaf, pool, frames)
+			}()
+		}
+		wg.Wait()
+		if r == rounds/2 {
+			t.Logf("[reconnect] %d/%d rounds done, frames so far=%d", r+1, rounds, totalFrames)
+		}
+	}
+
+	// Gate: goroutine count must return near baseline after teardown quiescence.
+	waitGoroutinesStable(t)
+	gorosAfter := runtime.NumGoroutine()
+	runtime.GC()
+	var memAfter runtime.MemStats
+	runtime.ReadMemStats(&memAfter)
+	heapGrowthMB := float64(memAfter.HeapAlloc-memBase.HeapAlloc) / (1024 * 1024)
+
+	log.Printf("[reconnect] rounds=%d concurrency=%d frames=%d totalFrames=%d goros base=%d after=%d (Δ=%d) heapΔ=%.2fMB",
+		rounds, concurrency, frames, totalFrames, gorosBase, gorosAfter, gorosAfter-gorosBase, heapGrowthMB)
+	recordBench(t, benchResult{
+		Bench: "ReconnectStorm", Group: "reconnect",
+		Config: fmt.Sprintf("rounds=%d×concurrency=%d", rounds, concurrency),
+		Goros:  gorosAfter - gorosBase, HeapMB: heapGrowthMB,
+	})
+
+	const goroTolerance = 8 // gomoqt/quic-go may leave a few short-lived lingerers
+	require.LessOrEqual(t, gorosAfter, gorosBase+goroTolerance,
+		"goroutine leak: %d→%d after %d subscriber lifecycles (Δ=%d > %d)",
+		gorosBase, gorosAfter, rounds*concurrency, gorosAfter-gorosBase, goroTolerance)
+	// Coarse heap gate: a real leak grows unbounded; allocator noise is small.
+	// Generous bound avoids flakiness while still catching catastrophic leaks.
+	const heapLeakMB = 64
+	require.LessOrEqual(t, heapGrowthMB, float64(heapLeakMB),
+		"heap grew %.2fMB after %d subscriber lifecycles (possible leak)", heapGrowthMB, rounds*concurrency)
+}
+
+// waitGoroutinesStable blocks until the goroutine count stops changing between
+// two samples 1s apart — i.e. the async QUIC teardown has quiesced. Bounded so
+// a real deadlock surfaces instead of hanging the test.
+func waitGoroutinesStable(t *testing.T) {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	prev := runtime.NumGoroutine()
+	for time.Now().Before(deadline) {
+		time.Sleep(time.Second)
+		cur := runtime.NumGoroutine()
+		if cur == prev {
+			return
+		}
+		prev = cur
+	}
 }

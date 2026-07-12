@@ -1,0 +1,80 @@
+name: Relay Bench (PR smoke)
+
+# Short (~10 min) relay-chain benchmark smoke run for PRs: a trimmed fan-out
+# sweep + series latency + the reconnect-storm leak gate + a 30s soak. Emits
+# machine-readable JSONL, generates CSV + SVG plots, and uploads them as an
+# artifact. Report-only — it never fails the check on a metric value (only on a
+# build error or the reconnect-storm leak assertion).
+#
+# Triggered when the `relay-bench` label is present (mirrors bench.yml's
+# performance-check pattern, so unrelated PRs don't burn CI) and via
+# workflow_dispatch.
+
+on:
+  pull_request:
+    types: [labeled, synchronize]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bench-relay-pr-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.pull_request.labels.*.name, 'relay-bench')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      BENCH_RESULTS_DIR: results
+      FANOUT_KS: "1,4,8,16"
+      SOAK_DURATION: 30s
+    steps:
+      - name: Checkout
+        # SHA: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+
+      - name: Set up Go
+        # SHA: actions/setup-go@v6
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # One go test invocation per benchmark group so a failure in one doesn't
+      # discard the others' results. All append to the same results.jsonl.
+      - name: Fan-out sweep (trimmed) + series latency
+        run: |
+          go test -tags=integration -run='^$' \
+            -bench='BenchmarkRelayChain_FanoutSweep$|BenchmarkRelayChain_Series$' \
+            -benchtime=1x -cpu=1 -timeout 15m ./internal/relay/
+
+      - name: Reconnect storm + 30s soak
+        run: |
+          go test -tags=integration -run='TestRelayChain_ReconnectStorm|TestRelayChain_Soak' \
+            -timeout 10m ./internal/relay/ -v
+
+      - name: Set up Deno
+        # Deno runs the report generator (CSV + SVG plots). Third-party action →
+        # tag + dependabot (no SHA pin unless compromised), per repo posture.
+        # Pinned to match docker/Dockerfile's DENO_VERSION and release.yml.
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: "2.8.1"
+
+      - name: Generate CSV + plots
+        run: deno run --allow-read=results --allow-write=results scripts/relay_bench_report.ts results
+
+      - name: Upload results
+        if: always()
+        # SHA: actions/upload-artifact@v6
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: relay-bench-pr
+          path: |
+            results/
+          if-no-files-found: warn

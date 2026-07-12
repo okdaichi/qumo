@@ -32,13 +32,18 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/binary"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"log"
 	"math/big"
 	"net"
+	"os"
+	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -353,6 +358,72 @@ func BenchmarkRelayChain_Fanout(b *testing.B) {
 
 // ---- reporting ----
 
+// benchResult is one machine-readable measurement record. When BENCH_RESULTS_DIR
+// is set (CI), recordBench appends each record as a JSON line to
+// $BENCH_RESULTS_DIR/results.jsonl so the relay-bench report script can build
+// CSV artifacts and plots without parsing free-form `go test` output (Go's -json
+// stream embeds ReportMetric values only inside output strings). No-op locally.
+type benchResult struct {
+	Bench    string  `json:"bench"`            // function name, e.g. "FanoutSweep"
+	Group    string  `json:"group"`            // series|fanout|load|objsize|soak|reconnect
+	Config   string  `json:"config"`           // "K=4", "depth=3", "100fps/K=8", "slice=3"
+	K        int     `json:"k,omitempty"`      // fan-out width
+	Depth    int     `json:"depth,omitempty"`  // chain depth (series)
+	Rate     string  `json:"rate,omitempty"`   // publish rate label (load)
+	SizeB    int     `json:"size_b,omitempty"` // frame size bytes (objsize)
+	Slice    int     `json:"slice,omitempty"`  // soak time-slice index
+	MedianMs float64 `json:"median_ms,omitempty"`
+	P95Ms    float64 `json:"p95_ms,omitempty"`
+	P99Ms    float64 `json:"p99_ms,omitempty"`
+	MinMs    float64 `json:"min_ms,omitempty"`
+	LossPct  float64 `json:"loss_pct,omitempty"`
+	Fps      float64 `json:"fps,omitempty"`
+	Mbps     float64 `json:"mbps,omitempty"`
+	HeapMB   float64 `json:"heap_mb,omitempty"`
+	Goros    int     `json:"goros,omitempty"`
+	CpuMs    float64 `json:"cpu_ms,omitempty"`
+}
+
+func recordBench(tb testing.TB, r benchResult) {
+	tb.Helper()
+	dir := os.Getenv("BENCH_RESULTS_DIR")
+	if dir == "" {
+		return
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return
+	}
+	f, err := os.OpenFile(filepath.Join(dir, "results.jsonl"),
+		os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	_ = json.NewEncoder(f).Encode(r) //nolint:errchkjson // best-effort emission
+}
+
+// parseIntListEnv parses a comma-separated int list env var (e.g. FANOUT_KS),
+// returning the fallback when unset or malformed. Used to let CI trim sweep
+// ranges without code changes.
+func parseIntListEnv(name string, fallback []int) []int {
+	v := os.Getenv(name)
+	if v == "" {
+		return fallback
+	}
+	out := make([]int, 0, 8)
+	for _, part := range strings.Split(v, ",") {
+		n, err := strconv.Atoi(strings.TrimSpace(part))
+		if err != nil {
+			return fallback // malformed → fall back to the documented default
+		}
+		out = append(out, n)
+	}
+	if len(out) == 0 {
+		return fallback
+	}
+	return out
+}
+
 func reportChainStats(b *testing.B, cfg chainConfig, st chainStats, hopsOrFanout int) {
 	if len(st.samples) == 0 {
 		b.Fatalf("no latency samples for %s", cfg.label)
@@ -360,6 +431,7 @@ func reportChainStats(b *testing.B, cfg chainConfig, st chainStats, hopsOrFanout
 	sort.Slice(st.samples, func(i, j int) bool { return st.samples[i] < st.samples[j] })
 	min := st.samples[0]
 	median := st.samples[len(st.samples)/2]
+	p95 := st.samples[(len(st.samples)-1)*95/100]
 	p99 := st.samples[(len(st.samples)-1)*99/100]
 
 	b.ReportMetric(median.Seconds()*1000, "med_ms")
@@ -371,8 +443,27 @@ func reportChainStats(b *testing.B, cfg chainConfig, st chainStats, hopsOrFanout
 		b.ReportMetric(st.cpuDelta.Seconds()*1000, "cpu_ms")
 	}
 
-	log.Printf("[chain-bench] %-20s n=%-5d min=%-7s med=%-7s p99=%-7s heapΔ=%-5.2fMB gorosΔ=%-4d cpuΔ=%-7s",
+	log.Printf("[chain-bench] %-20s n=%-5d min=%-7s med=%-7s p95=%-7s p99=%-7s heapΔ=%-5.2fMB gorosΔ=%-4d cpuΔ=%-7s",
 		cfg.label, len(st.samples),
-		min.Round(time.Microsecond), median.Round(time.Microsecond), p99.Round(time.Microsecond),
+		min.Round(time.Microsecond), median.Round(time.Microsecond), p95.Round(time.Microsecond), p99.Round(time.Microsecond),
 		float64(st.heapDelta)/(1024*1024), st.gorosDelta, st.cpuDelta.Round(time.Microsecond))
+
+	// Structured emission for CI CSV/plot generation. group/K vs depth is
+	// derived from the config (a fan-out run sets cfg.fanout; a series run sets
+	// cfg.depth).
+	r := benchResult{
+		Bench: "RelayChain",
+		MinMs: min.Seconds() * 1000, MedianMs: median.Seconds() * 1000,
+		P95Ms: p95.Seconds() * 1000, P99Ms: p99.Seconds() * 1000,
+		HeapMB: float64(st.heapDelta) / (1024 * 1024), Goros: st.gorosDelta,
+	}
+	if cfg.fanout > 0 {
+		r.Group, r.K, r.Config = "fanout", cfg.fanout, fmt.Sprintf("K=%d", cfg.fanout)
+	} else {
+		r.Group, r.Depth, r.Config = "series", cfg.depth, fmt.Sprintf("depth=%d", cfg.depth)
+	}
+	if st.cpuDelta > 0 {
+		r.CpuMs = st.cpuDelta.Seconds() * 1000
+	}
+	recordBench(b, r)
 }
