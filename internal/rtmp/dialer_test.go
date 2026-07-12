@@ -104,15 +104,11 @@ func TestClientConn(t *testing.T) {
 		}
 	})
 
-	// Handshake error path
+	// Handshake error path: one-entry queues → the error repeats on every call.
 	t.Run("handshake error", func(t *testing.T) {
 		mockConn := &fakeNetConn{
-			ReadFunc: func(a []byte) (int, error) {
-				return 0, io.ErrUnexpectedEOF
-			},
-			WriteFunc: func(a []byte) (int, error) {
-				return 0, io.ErrUnexpectedEOF
-			},
+			Reads:  []connResult{{Err: io.ErrUnexpectedEOF}},
+			Writes: []connResult{{Err: io.ErrUnexpectedEOF}},
 		}
 
 		_, err := ClientConn(mockConn)
