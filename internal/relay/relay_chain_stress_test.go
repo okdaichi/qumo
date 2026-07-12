@@ -37,9 +37,9 @@ import (
 )
 
 const (
-	stressFrameSize  = 1200
-	stressDuration   = 5 * time.Second
-	sustainableGap   = 2 * time.Millisecond // lowest rate; asserted loss-free
+	stressFrameSize = 1200
+	stressDuration  = 2 * time.Second // short enough to fit CI's 5m integration budget
+	sustainableGap  = 2 * time.Millisecond // lowest rate; asserted loss-free
 )
 
 // TestRelayChain_Stress drives sustained load through a depth-1 chain at three
@@ -57,7 +57,10 @@ func TestRelayChain_Stress(t *testing.T) {
 	quicCfg := &quic.Config{EnableDatagrams: true, KeepAlivePeriod: 5 * time.Second, MaxIdleTimeout: 30 * time.Second}
 	const depth = 1
 
-	for _, gap := range []time.Duration{2 * time.Millisecond, time.Millisecond, 500 * time.Microsecond} {
+	// Two rates: the sustainable rate (asserted loss-free, the availability gate)
+	// and one higher rate (the knee — reported, may drop). Kept to two to fit CI's
+	// integration time budget.
+	for _, gap := range []time.Duration{sustainableGap, time.Millisecond} {
 		t.Run(fmt.Sprintf("gap=%s", gap), func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -226,7 +229,10 @@ func TestRelayChain_FanoutStress(t *testing.T) {
 	quicCfg := &quic.Config{EnableDatagrams: true, KeepAlivePeriod: 5 * time.Second, MaxIdleTimeout: 30 * time.Second}
 	const gap = sustainableGap // sustainable single-stream rate; origin load ∝ K
 
-	for _, k := range []int{1, 4, 16} {
+	// K is capped at 8 (not 16) for CI's 2-core, 5-minute integration budget —
+	// the 16-wide durability curve is still available via the manual
+	// BenchmarkRelayChain_Fanout (a benchmark, so it doesn't run in `go test`).
+	for _, k := range []int{1, 4, 8} {
 		t.Run(fmt.Sprintf("fanout=%d", k), func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
