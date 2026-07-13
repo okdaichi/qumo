@@ -372,10 +372,13 @@ type benchResult struct {
 	Rate     string  `json:"rate,omitempty"`   // publish rate label (load)
 	SizeB    int     `json:"size_b,omitempty"` // frame size bytes (objsize)
 	Slice    int     `json:"slice,omitempty"`  // soak time-slice index
+	MinMs    float64 `json:"min_ms,omitempty"`
+	P25Ms    float64 `json:"p25_ms,omitempty"` // Q1 (boxplot lower)
 	MedianMs float64 `json:"median_ms,omitempty"`
+	P75Ms    float64 `json:"p75_ms,omitempty"` // Q3 (boxplot upper)
 	P95Ms    float64 `json:"p95_ms,omitempty"`
 	P99Ms    float64 `json:"p99_ms,omitempty"`
-	MinMs    float64 `json:"min_ms,omitempty"`
+	MaxMs    float64 `json:"max_ms,omitempty"`
 	LossPct  float64 `json:"loss_pct,omitempty"`
 	Fps      float64 `json:"fps,omitempty"`
 	Mbps     float64 `json:"mbps,omitempty"`
@@ -430,9 +433,12 @@ func reportChainStats(b *testing.B, cfg chainConfig, st chainStats, hopsOrFanout
 	}
 	sort.Slice(st.samples, func(i, j int) bool { return st.samples[i] < st.samples[j] })
 	min := st.samples[0]
-	median := st.samples[len(st.samples)/2]
+	p25 := st.samples[(len(st.samples)-1)*25/100]
+	median := st.samples[(len(st.samples)-1)*50/100]
+	p75 := st.samples[(len(st.samples)-1)*75/100]
 	p95 := st.samples[(len(st.samples)-1)*95/100]
 	p99 := st.samples[(len(st.samples)-1)*99/100]
+	maxLat := st.samples[len(st.samples)-1]
 
 	b.ReportMetric(median.Seconds()*1000, "med_ms")
 	b.ReportMetric(min.Seconds()*1000, "min_ms")
@@ -453,8 +459,10 @@ func reportChainStats(b *testing.B, cfg chainConfig, st chainStats, hopsOrFanout
 	// cfg.depth).
 	r := benchResult{
 		Bench: "RelayChain",
-		MinMs: min.Seconds() * 1000, MedianMs: median.Seconds() * 1000,
+		MinMs: min.Seconds() * 1000, P25Ms: p25.Seconds() * 1000,
+		MedianMs: median.Seconds() * 1000, P75Ms: p75.Seconds() * 1000,
 		P95Ms: p95.Seconds() * 1000, P99Ms: p99.Seconds() * 1000,
+		MaxMs: maxLat.Seconds() * 1000,
 		HeapMB: float64(st.heapDelta) / (1024 * 1024), Goros: st.gorosDelta,
 	}
 	if cfg.fanout > 0 {

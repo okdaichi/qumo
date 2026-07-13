@@ -35,10 +35,14 @@ import (
 
 // scalabilityStats holds all decision-grade metrics for one fan-out config.
 type scalabilityStats struct {
-	K       int
-	median  time.Duration
-	p95     time.Duration
-	p99     time.Duration
+	K      int
+	min    time.Duration
+	p25    time.Duration
+	median time.Duration
+	p75    time.Duration
+	p95    time.Duration
+	p99    time.Duration
+	maxLat time.Duration
 	lossPct float64
 	fps     float64
 	mbps    float64
@@ -129,7 +133,11 @@ func fanoutSweepRun(tb testing.TB, cert tls.Certificate, pool *x509.CertPool, qu
 	heapMB, goros, cpu := before.delta(after)
 
 	return scalabilityStats{
-		K: K, median: percentile(allLats, 50), p95: percentile(allLats, 95), p99: percentile(allLats, 99),
+		K:      K,
+		min:    percentile(allLats, 0), p25: percentile(allLats, 25),
+		median: percentile(allLats, 50), p75: percentile(allLats, 75),
+		p95:    percentile(allLats, 95), p99: percentile(allLats, 99),
+		maxLat: percentile(allLats, 100),
 		lossPct: lossPct, fps: fps, mbps: fps * float64(frameSize) * 8 / 1e6,
 		heapMB: heapMB, goros: goros, cpuMs: cpu.Seconds() * 1000,
 	}
@@ -199,7 +207,9 @@ func BenchmarkRelayChain_FanoutSweep(b *testing.B) {
 				st.p99.Round(time.Microsecond), st.lossPct, st.fps, st.mbps, st.heapMB, st.goros)
 			recordBench(b, benchResult{
 				Bench: "FanoutSweep", Group: "fanout", Config: fmt.Sprintf("K=%d", K), K: K,
-				MedianMs: st.median.Seconds() * 1000, P95Ms: st.p95.Seconds() * 1000, P99Ms: st.p99.Seconds() * 1000,
+				MinMs: st.min.Seconds() * 1000, P25Ms: st.p25.Seconds() * 1000,
+				MedianMs: st.median.Seconds() * 1000, P75Ms: st.p75.Seconds() * 1000,
+				P95Ms: st.p95.Seconds() * 1000, P99Ms: st.p99.Seconds() * 1000, MaxMs: st.maxLat.Seconds() * 1000,
 				LossPct: st.lossPct, Fps: st.fps, Mbps: st.mbps, HeapMB: st.heapMB, Goros: st.goros, CpuMs: st.cpuMs,
 			})
 		})
@@ -232,7 +242,10 @@ func BenchmarkRelayChain_FanoutSweep_Load(b *testing.B) {
 				log.Printf("[load] %s K=%-3d p99=%-8s loss=%5.2f%% fps=%.0f", r.name, K, st.p99.Round(time.Microsecond), st.lossPct, st.fps)
 				recordBench(b, benchResult{
 					Bench: "FanoutSweep_Load", Group: "load", Rate: r.name, Config: fmt.Sprintf("%s/K=%d", r.name, K), K: K,
-					P99Ms: st.p99.Seconds() * 1000, LossPct: st.lossPct, Fps: st.fps, HeapMB: st.heapMB,
+					MinMs: st.min.Seconds() * 1000, P25Ms: st.p25.Seconds() * 1000,
+					MedianMs: st.median.Seconds() * 1000, P75Ms: st.p75.Seconds() * 1000,
+					P95Ms: st.p95.Seconds() * 1000, P99Ms: st.p99.Seconds() * 1000, MaxMs: st.maxLat.Seconds() * 1000,
+					LossPct: st.lossPct, Fps: st.fps, HeapMB: st.heapMB,
 				})
 			})
 		}
@@ -255,7 +268,10 @@ func BenchmarkRelayChain_FanoutSweep_ObjSize(b *testing.B) {
 				log.Printf("[objsize] %dB K=%-3d p99=%-8s loss=%5.2f%% Mbps=%.1f heapMB=%.2f", sz, K, st.p99.Round(time.Microsecond), st.lossPct, st.mbps, st.heapMB)
 				recordBench(b, benchResult{
 					Bench: "FanoutSweep_ObjSize", Group: "objsize", SizeB: sz, Config: fmt.Sprintf("size=%dB/K=%d", sz, K), K: K,
-					P99Ms: st.p99.Seconds() * 1000, LossPct: st.lossPct, Mbps: st.mbps, HeapMB: st.heapMB,
+					MinMs: st.min.Seconds() * 1000, P25Ms: st.p25.Seconds() * 1000,
+					MedianMs: st.median.Seconds() * 1000, P75Ms: st.p75.Seconds() * 1000,
+					P95Ms: st.p95.Seconds() * 1000, P99Ms: st.p99.Seconds() * 1000, MaxMs: st.maxLat.Seconds() * 1000,
+					LossPct: st.lossPct, Mbps: st.mbps, HeapMB: st.heapMB,
 				})
 			})
 		}
@@ -387,16 +403,21 @@ func TestRelayChain_Soak(t *testing.T) {
 			break
 		}
 		slice := allLats[start:end]
+		sMin := percentile(slice, 0).Seconds() * 1000
+		s25 := percentile(slice, 25).Seconds() * 1000
 		s50 := percentile(slice, 50).Seconds() * 1000
+		s75 := percentile(slice, 75).Seconds() * 1000
 		s95 := percentile(slice, 95).Seconds() * 1000
 		s99 := percentile(slice, 99).Seconds() * 1000
+		sMax := percentile(slice, 100).Seconds() * 1000
 		log.Printf("  slice %d: p50=%s p95=%s p99=%s", s,
 			percentile(slice, 50).Round(time.Microsecond),
 			percentile(slice, 95).Round(time.Microsecond),
 			percentile(slice, 99).Round(time.Microsecond))
 		recordBench(t, benchResult{
 			Bench: "Soak", Group: "soak", Slice: s, Config: fmt.Sprintf("slice=%d", s),
-			MedianMs: s50, P95Ms: s95, P99Ms: s99, LossPct: lossPct,
+			MinMs: sMin, P25Ms: s25, MedianMs: s50, P75Ms: s75, P95Ms: s95, P99Ms: s99, MaxMs: sMax,
+			LossPct: lossPct,
 		})
 	}
 	log.Printf("[soak] overall: p50=%s p95=%s p99=%s",

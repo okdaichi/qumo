@@ -93,9 +93,10 @@ jobs:
       # relays. The relay-chain durability harness (TestRelayChain_*: stress,
       # fan-out stress, soak, slow-subscriber, reconnect-storm) is skipped here
       # with -skip='RelayChain' — these are heavy multi-relay benchmarks whose
-      # home is the relay-bench workflows (bench-relay-pr.yml / bench-relay.yml),
-      # not the per-PR gate. (They were originally moved out due to a teardown hang
-      # since fixed — #286 — but stay in the bench workflows by design.) This gate
+      # home is the relay-bench workflow (bench-relay.yml: nightly full sweep +
+      # on-demand soak), not the per-PR gate. (They were originally moved out due
+      # to a teardown hang since fixed — #286 — but stay out of the per-PR gate by
+      # design.) This gate
       # keeps the 180+ correctness integration tests (route recovery, auth, peer
       # discovery, frame pool, group ring) + ffmpeg/RTSP fast.
       # No -race here: the real-QUIC stack has not been validated under the race

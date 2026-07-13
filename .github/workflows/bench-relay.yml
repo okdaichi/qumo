@@ -42,10 +42,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 420 # >= 6h soak + full-sweep headroom
     env:
-      # Absolute path: see bench-relay-pr.yml — `go test ./internal/relay/` runs
-      # the binary in the package dir, so a relative BENCH_RESULTS_DIR would land
-      # the JSONL in internal/relay/ and the report step (cwd = workspace root)
-      # would find nothing. Absolute path is cwd-independent.
+      # Absolute path: `go test ./internal/relay/` runs the binary in the package
+      # dir, so a relative BENCH_RESULTS_DIR would land the JSONL in
+      # internal/relay/ and the report step (cwd = workspace root) would find
+      # nothing. Absolute path is cwd-independent.
       BENCH_RESULTS_DIR: ${{ github.workspace }}/results
       # FANOUT_KS unset → full sweep (1,2,4,8,16,32,64,128). K=128 spins 129
       # in-process QUIC relays; on a 2-core runner this is the heaviest config
