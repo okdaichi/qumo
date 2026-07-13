@@ -68,7 +68,7 @@ func TestRelayChain_Stress(t *testing.T) {
 	// Two rates: the sustainable rate (asserted loss-free, the availability gate)
 	// and one higher rate (the knee — reported, may drop). Kept to two to fit CI's
 	// integration time budget.
-	for _, gap := range []time.Duration{sustainableGap, time.Millisecond} {
+	for _, gap := range []time.Duration{sustainableGap, time.Millisecond, 500 * time.Microsecond} {
 		t.Run(fmt.Sprintf("gap=%s", gap), func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -99,6 +99,15 @@ func TestRelayChain_Stress(t *testing.T) {
 				gap, sent, received, loss, lossPct, fps, mbps,
 				med.Round(time.Microsecond), p99.Round(time.Microsecond), drift.Round(time.Microsecond),
 				float64(heapGrowth)/(1024*1024))
+
+			// Emit for the report (depth-1 capacity vs publish rate).
+			nominalFps := int(1 / gap.Seconds())
+			recordBench(t, benchResult{
+				Bench: "Stress", Group: "stress", Rate: fmt.Sprintf("%dfps", nominalFps),
+				Config: fmt.Sprintf("gap=%s", gap),
+				MedianMs: med.Seconds() * 1000, P99Ms: p99.Seconds() * 1000,
+				LossPct: lossPct, Fps: fps, Mbps: mbps, HeapMB: float64(heapGrowth) / (1024 * 1024),
+			})
 
 			// Availability gate: the lowest (sustainable) rate must be essentially
 			// loss-free and stable (within the subscribe-setup-race tolerance).

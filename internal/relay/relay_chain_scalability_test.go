@@ -190,7 +190,7 @@ func BenchmarkRelayChain_FanoutSweep(b *testing.B) {
 	const dur = 3 * time.Second
 	const sz = 1200
 
-	ks := parseIntListEnv("FANOUT_KS", []int{1, 2, 4, 8, 16, 32, 64, 128})
+	ks := parseIntListEnv("FANOUT_KS", []int{1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024})
 	log.Printf("\n=== Fan-out Sweep (gap=%s, size=%dB, dur=%s, K=%v) ===", gap, sz, dur, ks)
 	log.Printf("%-6s %-8s %-8s %-8s %-8s %-10s %-8s %-6s %-6s", "K", "med", "p95", "p99", "loss%", "fps", "Mbps", "heapMB", "goros")
 

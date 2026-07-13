@@ -827,6 +827,54 @@ emit(
 		{ title: "Object size: throughput vs K", xLabel: "K (leaves)", yLabel: "Mbps", xLog: true },
 	),
 );
+// stress: depth-1 capacity vs offered publish rate (loss / throughput / latency)
+const stressRecs2 = recs.filter((r) => r.group === "stress" && r.rate);
+if (stressRecs2.length >= 2) {
+	const fpsOf = (r: Rec) => parseInt((r.rate ?? "0").replace(/\D/g, "")) || 0;
+	const srs = stressRecs2.slice().sort((a, b) => fpsOf(a) - fpsOf(b));
+	const pts = (field: keyof Rec) =>
+		srs.map((r) => ({ x: fpsOf(r), y: (r[field] ?? 0) as number }));
+	emit(
+		dir,
+		"stress_loss",
+		lineChart([{ label: "loss%", points: pts("loss_pct") }], {
+			title: "Stress: frame loss vs offered load",
+			xLabel: "offered load (fps)",
+			yLabel: "loss %",
+		}),
+	);
+	emit(
+		dir,
+		"stress_throughput",
+		lineChart(
+			[{ label: "delivered fps", points: pts("fps") }, {
+				label: "Mbps",
+				points: pts("mbps"),
+			}],
+			{
+				title: "Stress: delivered throughput vs offered load",
+				xLabel: "offered load (fps)",
+				yLabel: "fps / Mbps",
+			},
+		),
+	);
+	emit(
+		dir,
+		"stress_latency",
+		lineChart(
+			[{ label: "p99", points: pts("p99_ms") }, {
+				label: "median",
+				points: pts("median_ms"),
+			}],
+			{
+				title: "Stress: latency vs offered load",
+				xLabel: "offered load (fps)",
+				yLabel: "latency (ms)",
+			},
+		),
+	);
+}
+
 // series: per-hop latency (median vs depth) with regression fit
 emit(
 	dir,

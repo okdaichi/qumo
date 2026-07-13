@@ -94,11 +94,21 @@ jobs:
             -bench='BenchmarkRelayChain_Series$' \
             -benchtime=1x -cpu=1 -timeout 30m ./internal/relay/
 
-      - name: Fan-out scalability sweep (K=1..128)
+      # Fan-out scalability sweep, K-by-K. Each K runs in its own `go test`
+      # process with FANOUT_KS=<k>; a failure at a heavy K (OOM/FD-exhaustion at
+      # K≥512 on a small runner) is non-fatal (`|| true`) and only loses that K's
+      # row — the lighter Ks are already appended to results.jsonl. ulimit is
+      # raised because each relay holds a UDP socket (K=1024 ⇒ ~1025 sockets).
+      - name: Fan-out scalability sweep (K=1..1024)
         run: |
-          go test -tags=integration -run='^$' \
-            -bench='BenchmarkRelayChain_FanoutSweep$' \
-            -benchtime=1x -cpu=1 -timeout 60m ./internal/relay/
+          ulimit -n 1048576 2>/dev/null || true
+          for k in 1 2 4 8 16 32 64 128 256 512 1024; do
+            echo "::group::FanoutSweep K=$k"
+            FANOUT_KS=$k go test -tags=integration -run='^$' \
+              -bench='BenchmarkRelayChain_FanoutSweep$' \
+              -benchtime=1x -cpu=1 -timeout 20m ./internal/relay/ || true
+            echo "::endgroup::"
+          done
 
       - name: Fan-out × load
         run: |
