@@ -90,11 +90,19 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
 
       # In-process integration tests (build tag `integration`) stand up real QUIC
-      # relays, so they are kept out of the default unit run. No -race here: the
-      # real-QUIC stack has not been validated under the race detector yet —
-      # revisit enabling it once confirmed clean.
+      # relays. The relay-chain durability harness (TestRelayChain_*: stress,
+      # fan-out stress, soak, slow-subscriber, reconnect-storm) is skipped here
+      # with -skip='RelayChain' — these are heavy multi-relay benchmarks whose
+      # home is the relay-bench workflow (bench-relay.yml: nightly full sweep +
+      # on-demand soak), not the per-PR gate. (They were originally moved out due
+      # to a teardown hang since fixed — #286 — but stay out of the per-PR gate by
+      # design.) This gate
+      # keeps the 180+ correctness integration tests (route recovery, auth, peer
+      # discovery, frame pool, group ring) + ffmpeg/RTSP fast.
+      # No -race here: the real-QUIC stack has not been validated under the race
+      # detector yet — revisit enabling it once confirmed clean.
       - name: Run integration tests
-        run: go test -tags=integration -count=1 -timeout 5m ./internal/relay/... ./internal/integration/...
+        run: go test -tags=integration -count=1 -skip='RelayChain' -timeout 8m ./internal/relay/... ./internal/integration/...
 
   build:
     name: Build
