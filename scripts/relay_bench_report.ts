@@ -40,6 +40,7 @@ interface Rec {
 	heap_mb?: number;
 	goros?: number;
 	cpu_ms?: number;
+	fairness?: number; // Jain's index 0-1
 }
 
 interface Pt {
@@ -115,6 +116,7 @@ const COLUMNS: [string, (r: Rec) => string][] = [
 	["heap_mb", (r) => num(r.heap_mb)],
 	["goros", (r) => num(r.goros)],
 	["cpu_ms", (r) => num(r.cpu_ms)],
+	["fairness", (r) => num(r.fairness)],
 ];
 
 function writeCsv(path: string, header: string[], rows: string[][]) {
@@ -630,6 +632,35 @@ console.log(
 	}`,
 );
 
+// timer-floor warning: on fast loopback, low percentiles measure ≈0 and absolute
+// latencies aren't representative. Warn so the plot isn't misread.
+const floored = recs.filter((r) => (r.median_ms ?? 1) < 0.001 && r.group !== "reconnect");
+if (floored.length > 0) {
+	console.log(
+		`  ⚠ ${floored.length} record(s) have median latency ≈ 0 — likely timer-floored on fast loopback. Absolute latencies NOT representative; read p99/tail + shape across K.`,
+	);
+}
+
+// jitter (p99−median) and per-subscriber resource at max K
+const maxK = fanoutRecs[fanoutRecs.length - 1];
+if (maxK?.p99_ms !== undefined && maxK?.median_ms !== undefined) {
+	console.log(
+		`  jitter at max K (${maxK.k}): p99−median = ${
+			(maxK.p99_ms - maxK.median_ms).toFixed(2)
+		} ms`,
+	);
+}
+if (maxK?.k && maxK.k > 0 && maxK.heap_mb !== undefined) {
+	console.log(
+		`  per-subscriber at K=${maxK.k}: ${(maxK.heap_mb / maxK.k).toFixed(2)} MB heap, ${
+			(maxK.goros ?? 0) / maxK.k
+		} goros`,
+	);
+}
+if (maxK?.fairness !== undefined) {
+	console.log(`  fairness at K=${maxK.k}: ${maxK.fairness.toFixed(3)} (Jain, 1=perfect)`);
+}
+
 // summary.csv — per group, metrics at the largest K/depth, plus derived values.
 const groups = [...new Set(recs.map((r) => r.group))];
 const sumRows: string[][] = [];
@@ -684,6 +715,26 @@ writeCsv(`${dir}/derived.csv`, [
 		`first K with loss≥${KNEE_LOSS_PCT}%`,
 	],
 	["fanout_knee_loss_pct", kneeRec ? kneeRec.loss_pct!.toFixed(2) : "", "%", ""],
+	[
+		"jitter_at_max_k_ms",
+		(maxK?.p99_ms !== undefined && maxK?.median_ms !== undefined)
+			? (maxK.p99_ms - maxK.median_ms).toFixed(3)
+			: "",
+		"ms",
+		`p99−median at K=${maxK?.k ?? "?"}`,
+	],
+	[
+		"heap_per_subscriber_mb",
+		maxK?.k ? (maxK.heap_mb! / maxK.k).toFixed(3) : "",
+		"MB/subscriber",
+		`at K=${maxK?.k}`,
+	],
+	[
+		"fairness_at_max_k",
+		maxK?.fairness !== undefined ? maxK.fairness.toFixed(3) : "",
+		"Jain 0-1",
+		`at K=${maxK?.k}`,
+	],
 ]);
 console.log(`wrote summary.csv (${groups.length} groups) + derived.csv`);
 
@@ -768,6 +819,17 @@ if (fanout.length >= 2) {
 			title: "Fan-out latency distribution vs K",
 			xLabel: "K (leaves)",
 			yLabel: "latency (ms)",
+		}),
+	);
+	// per-subscriber fairness (Jain's index on delivered frames)
+	emit(
+		dir,
+		"fanout_fairness",
+		lineChart([mk("fairness", "Jain's fairness")], {
+			title: "Per-subscriber fairness vs K",
+			xLabel: "K (leaves)",
+			yLabel: "Jain's index (1=fair)",
+			xLog: true,
 		}),
 	);
 	// overview dashboard (latency / loss / throughput / heap, shared K axis)

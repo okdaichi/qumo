@@ -49,6 +49,7 @@ type scalabilityStats struct {
 	heapMB  float64
 	goros   int
 	cpuMs   float64
+	fairness float64 // Jain's index across per-leaf delivered (1.0 = fair)
 }
 
 // fanoutSweepRun sets up origin + K leaves, publishes at gap for duration,
@@ -122,15 +123,30 @@ func fanoutSweepRun(tb testing.TB, cert tls.Certificate, pool *x509.CertPool, qu
 	// Aggregate.
 	var allLats []time.Duration
 	totalRecv := 0
-	for _, lats := range results {
+	perLeafRecv := make([]float64, K) // per-leaf delivered, for fairness
+	for i, lats := range results {
 		allLats = append(allLats, lats...)
 		totalRecv += len(lats)
+		perLeafRecv[i] = float64(len(lats))
 	}
 	sent := atomic.LoadUint64(&sentCounter)
-	perLeafRecv := totalRecv / K
-	lossPct := (float64(sent) - float64(perLeafRecv)) / float64(sent) * 100
-	fps := float64(perLeafRecv) / duration.Seconds()
+	avgLeafRecv := totalRecv / K
+	lossPct := (float64(sent) - float64(avgLeafRecv)) / float64(sent) * 100
+	fps := float64(avgLeafRecv) / duration.Seconds()
 	heapMB, goros, cpu := before.delta(after)
+
+	// Jain's fairness index across per-leaf delivered counts: 1.0 = every leaf
+	// got the same number of frames; <1 = some leaves starved (head-of-line
+	// blocking). The aggregate latency/loss can't see this.
+	var sum, sumSq float64
+	for _, r := range perLeafRecv {
+		sum += r
+		sumSq += r * r
+	}
+	fairness := 1.0
+	if sumSq > 0 {
+		fairness = (sum * sum) / (float64(K) * sumSq)
+	}
 
 	return scalabilityStats{
 		K:      K,
@@ -140,6 +156,7 @@ func fanoutSweepRun(tb testing.TB, cert tls.Certificate, pool *x509.CertPool, qu
 		maxLat: percentile(allLats, 100),
 		lossPct: lossPct, fps: fps, mbps: fps * float64(frameSize) * 8 / 1e6,
 		heapMB: heapMB, goros: goros, cpuMs: cpu.Seconds() * 1000,
+		fairness: fairness,
 	}
 }
 
@@ -211,6 +228,7 @@ func BenchmarkRelayChain_FanoutSweep(b *testing.B) {
 				MedianMs: st.median.Seconds() * 1000, P75Ms: st.p75.Seconds() * 1000,
 				P95Ms: st.p95.Seconds() * 1000, P99Ms: st.p99.Seconds() * 1000, MaxMs: st.maxLat.Seconds() * 1000,
 				LossPct: st.lossPct, Fps: st.fps, Mbps: st.mbps, HeapMB: st.heapMB, Goros: st.goros, CpuMs: st.cpuMs,
+				Fairness: st.fairness,
 			})
 		})
 	}
