@@ -31,7 +31,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      BENCH_RESULTS_DIR: results
+      # Absolute path: `go test ./internal/relay/` runs the test binary with its
+      # working directory in the package dir (internal/relay/), so a relative
+      # BENCH_RESULTS_DIR would land the JSONL there instead of at the workspace
+      # root where the report step reads it — and no CSV/plots artifact would be
+      # produced. An absolute path is cwd-independent.
+      BENCH_RESULTS_DIR: ${{ github.workspace }}/results
       FANOUT_KS: "1,4,8,16"
       SOAK_DURATION: 30s
     steps:
