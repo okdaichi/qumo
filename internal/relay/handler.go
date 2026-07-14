@@ -14,7 +14,7 @@ import (
 )
 
 // Optimized timeout for best CPU/latency tradeoff (based on benchmarks)
-var NotifyTimeout = 5 * time.Millisecond
+var NotifyTimeout = 1 * time.Millisecond
 
 // DrainTimeout is the grace period given to a displaced relayHandler before
 // its upstream context is cancelled. During this window existing subscribers
@@ -434,7 +434,7 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 			// If the subscriber has fallen behind the ring window, jump to the
 			// latest group and let get()/the wait below handle it — don't spin.
 			if earliest := d.ring.earliestAvailable(); last < earliest {
-				slog.Debug("subscriber fell behind; skipping groups",
+				slog.Warn("subscriber fell behind; skipping groups",
 					"requested_group", last,
 					"earliest_available", earliest,
 					"latest_available", latest,
