@@ -1,0 +1,17 @@
+# Example parameter space for paramexp.
+# Each parameter is a discrete dimension with named levels.
+
+runner: bash example/bench.sh
+db: paramexp.db
+samples: 12
+adaptive: 2
+output: report
+
+space:
+  params:
+    - name: workers
+      values: [1, 2, 4, 8, 16]
+    - name: buffer
+      values: [16KB, 64KB, 256KB]
+    - name: batch
+      values: [1, 4, 16]
