@@ -63,6 +63,14 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # Raise UDP buffer limits. quic-go wants 7 MiB receive/send buffers but the
+      # runner's default rmem_max/wmem_max (2 MiB) caps it — at high fan-out (K≥8
+      # connections) this causes kernel-level packet drops → QUIC retransmits →
+      # congestion → groupRing eviction → frame loss. This is the #1 cause of the
+      # fan-out collapse.
+      - name: Raise UDP buffer limits
+        run: sudo sysctl -w net.core.rmem_max=16777216 net.core.wmem_max=16777216
+
       # Soak first: highest-value, bounded by SOAK_DURATION. A flat, generous
       # -timeout covers the longest soak (6h) + drain margin; go test returns as
       # soon as the (shorter) test finishes, so it never idles the full window.
