@@ -197,16 +197,26 @@ func parseOutput(stdout string) (experiment.MetricSet, *experiment.Telemetry) {
 	return metrics, tel
 }
 
-// toMetricSet converts a decoded object to scalar numeric metrics (dropping
-// non-scalar fields like nested "telemetry").
+// telemetryKeys are the resource-snapshot fields the framework recognizes. When
+// a benchmark emits them at the top level (flat telemetry shape) they are peeled
+// into Telemetry and must NOT also appear in the metrics MetricSet, or they would
+// pollute importance/GP-fit/objective selection.
+var telemetryKeys = map[string]bool{
+	"cpu_pct": true, "gc_pause_ms": true, "syscalls": true,
+	"retransmits": true, "rss_mb": true, "goroutines": true,
+}
+
+// toMetricSet converts a decoded object to scalar numeric metrics, dropping
+// non-scalar fields (e.g. nested "telemetry") and recognized telemetry keys.
 func toMetricSet(obj map[string]any) experiment.MetricSet {
 	m := make(experiment.MetricSet, len(obj))
 	for k, v := range obj {
-		f, ok := toFloat(v)
-		if !ok {
+		if telemetryKeys[k] {
 			continue
 		}
-		m[k] = f
+		if f, ok := toFloat(v); ok {
+			m[k] = f
+		}
 	}
 	return m
 }

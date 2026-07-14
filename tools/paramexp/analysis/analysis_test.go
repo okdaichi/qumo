@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/qumo-dev/qumo/tools/paramexp/experiment"
 )
@@ -15,7 +16,6 @@ func TestDetectKnees_RespectsObjective(t *testing.T) {
 		{Name: "w", Type: experiment.TypeDiscrete, Values: []string{"1", "2", "4", "8", "16"}},
 	}}
 	// throughput increases monotonically with w; latency_p99_ms decreases.
-	// A knee query for latency must operate on latency, not throughput.
 	obs := []experiment.Observation{
 		{Vector: experiment.ParamVector{"w": "1"}, Metrics: experiment.MetricSet{"throughput_fps": 10, "latency_p99_ms": 50}},
 		{Vector: experiment.ParamVector{"w": "2"}, Metrics: experiment.MetricSet{"throughput_fps": 40, "latency_p99_ms": 30}},
@@ -23,17 +23,33 @@ func TestDetectKnees_RespectsObjective(t *testing.T) {
 		{Vector: experiment.ParamVector{"w": "8"}, Metrics: experiment.MetricSet{"throughput_fps": 95, "latency_p99_ms": 10}},
 		{Vector: experiment.ParamVector{"w": "16"}, Metrics: experiment.MetricSet{"throughput_fps": 100, "latency_p99_ms": 9}},
 	}
-	// Should not panic and should return at most one knee; the metric values used
-	// must come from latency when objective=latency_p99_ms (verified indirectly:
-	// a knee exists for the concave throughput curve).
+	for _, objective := range []string{"throughput_fps", "latency_p99_ms"} {
+		knees := DetectKnees(obs, space, objective)
+		for _, k := range knees {
+			assert.Equal(t, objective, k.Metric, "knee metric must match objective")
+		}
+	}
+}
+
+// TestDetectKnees_ConcaveThroughput is the regression test for the sign bug:
+// a concave-increasing (diminishing-returns) throughput sweep — the default
+// objective — must actually return a knee. The old single-sign (xNorm - yNorm)
+// criterion found nothing because the curve lies above the diagonal.
+func TestDetectKnees_ConcaveThroughput(t *testing.T) {
+	space := experiment.ParamSpace{Params: []experiment.ParamDef{
+		{Name: "w", Type: experiment.TypeDiscrete, Values: []string{"1", "2", "4", "8", "16"}},
+	}}
+	obs := []experiment.Observation{
+		{Vector: experiment.ParamVector{"w": "1"}, Metrics: experiment.MetricSet{"throughput_fps": 10}},
+		{Vector: experiment.ParamVector{"w": "2"}, Metrics: experiment.MetricSet{"throughput_fps": 40}},
+		{Vector: experiment.ParamVector{"w": "4"}, Metrics: experiment.MetricSet{"throughput_fps": 80}},
+		{Vector: experiment.ParamVector{"w": "8"}, Metrics: experiment.MetricSet{"throughput_fps": 95}},
+		{Vector: experiment.ParamVector{"w": "16"}, Metrics: experiment.MetricSet{"throughput_fps": 100}},
+	}
 	knees := DetectKnees(obs, space, "throughput_fps")
-	for _, k := range knees {
-		assert.Equal(t, "throughput_fps", k.Metric, "knee metric must match objective")
-	}
-	kneesLat := DetectKnees(obs, space, "latency_p99_ms")
-	for _, k := range kneesLat {
-		assert.Equal(t, "latency_p99_ms", k.Metric)
-	}
+	require.NotEmpty(t, knees, "a concave diminishing-returns sweep must yield a knee")
+	// The elbow sits around w=2..4 (gains 10→40→80 then flatten to 95→100).
+	assert.Contains(t, []string{"2", "4"}, knees[0].Value)
 }
 
 func TestRankImportance_KnownEta(t *testing.T) {
@@ -81,8 +97,9 @@ func TestDetectInteractions_Sign(t *testing.T) {
 	assert.Empty(t, intsAdd, "an additive surface should yield ~0 interaction")
 }
 
-func TestDetectRegressions_SetsParamValue(t *testing.T) {
-	// Regression detection must populate Param/Value (the original dead-code bug).
+func TestDetectRegressions_RecordsVector(t *testing.T) {
+	// Regression detection must record the full, deterministic vector of the
+	// offending run (the original bug used non-deterministic map iteration).
 	obs := []experiment.Observation{
 		{Vector: experiment.ParamVector{"w": "1"}, Metrics: experiment.MetricSet{"throughput_fps": 100}},
 		{Vector: experiment.ParamVector{"w": "2"}, Metrics: experiment.MetricSet{"throughput_fps": 100}},
@@ -91,9 +108,8 @@ func TestDetectRegressions_SetsParamValue(t *testing.T) {
 		{Vector: experiment.ParamVector{"w": "4"}, Metrics: experiment.MetricSet{"throughput_fps": 10}}, // regress
 	}
 	regs := DetectRegressions(obs, experiment.MetricSet{"throughput_fps": 100}, 1.5)
-	assert.NotEmpty(t, regs)
-	for _, r := range regs {
-		assert.NotEmpty(t, r.Param)
-		assert.NotEmpty(t, r.Value)
-	}
+	require.NotEmpty(t, regs)
+	// The single regression must be attributed to w=4 exactly (deterministic).
+	require.Len(t, regs, 1)
+	assert.Equal(t, "4", regs[0].Vector["w"])
 }

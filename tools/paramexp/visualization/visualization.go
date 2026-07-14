@@ -1,17 +1,18 @@
 // Package visualization renders SVG plots from observed data and precomputed
 // model surfaces. It is model-agnostic: callers that need surrogate-derived
 // surfaces (response bands, contours) compute the mean/std grid first and pass
-// it in, so this package depends only on the experiment and analysis types.
+// it in, so this package depends only on the experiment and analysis types (and
+// model.MeanStd for the band math).
 package visualization
 
 import (
 	"fmt"
 	"math"
-	"sort"
 	"strings"
 
 	"github.com/qumo-dev/qumo/tools/paramexp/analysis"
 	"github.com/qumo-dev/qumo/tools/paramexp/experiment"
+	"github.com/qumo-dev/qumo/tools/paramexp/model"
 )
 
 const (
@@ -59,7 +60,7 @@ func SweepSVG(obs []experiment.Observation, p experiment.ParamDef, objective str
 		if !ok || len(vals) == 0 {
 			continue
 		}
-		mean, std := meanStd(vals)
+		mean, std := model.MeanStd(vals)
 		xs = append(xs, float64(len(xs)))
 		means = append(means, mean)
 		stds = append(stds, std)
@@ -305,29 +306,4 @@ func ContourSVG(grid [][]float64, xName, yName string, xLabels, yLabels []string
 	return sb.String()
 }
 
-// meanStd is a local population-stat helper.
-func meanStd(xs []float64) (float64, float64) {
-	if len(xs) == 0 {
-		return 0, 0
-	}
-	sum := 0.0
-	for _, x := range xs {
-		sum += x
-	}
-	mean := sum / float64(len(xs))
-	var sq float64
-	for _, x := range xs {
-		sq += (x - mean) * (x - mean)
-	}
-	return mean, math.Sqrt(sq / float64(len(xs)))
-}
-
-// SortedParams returns the param names sorted, for stable output ordering.
-func SortedParams(space experiment.ParamSpace) []string {
-	names := make([]string, 0, len(space.Params))
-	for _, p := range space.Params {
-		names = append(names, p.Name)
-	}
-	sort.Strings(names)
-	return names
-}
+// (SortedParams removed: unused; report builds its own ordering from filenames.)
