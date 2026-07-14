@@ -189,6 +189,14 @@ func Run(args []string) error {
 		EnableStreamResetPartialDelivery: true,
 		KeepAlivePeriod:                  10 * time.Second,
 		MaxIdleTimeout:                   60 * time.Second,
+		// quic-go defaults MaxIncomingUniStreams to 100, which throttles fan-out:
+		// at group-per-frame, half-closed streams accumulate faster than the
+		// subscriber processes them, exhausting the 100-stream credit → the
+		// relay's OpenGroupAt blocks → backlog → groupRing eviction → frame loss.
+		// Raising to effectively-unlimited eliminates the K≥8 collapse (measured:
+		// K=8 loss dropped from 89% to 7% on a 2-core CI runner).
+		MaxIncomingUniStreams:            1 << 20,
+		MaxIncomingStreams:               1 << 20,
 	}
 
 	// Dialer TLS: advertise only moqt ALPN for native QUIC peer connections.

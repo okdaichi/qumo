@@ -490,3 +490,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [v0.2.0]: https://github.com/qumo-dev/qumo/compare/v0.1.0...v0.2.0
 [v0.1.0]: https://github.com/qumo-dev/qumo/releases/tag/v0.1.0
 
+
+### Fixed (cont.)
+
+- **Fan-out collapse at K≥8 (`internal/relay`, production fix):** The production QUIC config now sets `MaxIncomingUniStreams`/`MaxIncomingStreams` to effectively-unlimited (1<<20). quic-go defaults these to 100, which throttled the relay's per-group stream opens at high fan-out: at group-per-frame, half-closed streams accumulated faster than the subscriber processed them, exhausting the 100-stream credit → `OpenGroupAt` blocked → backlog → groupRing eviction → frame loss. Measured: K=8 loss dropped from 89% to 7% on a 2-core CI runner; the fan-out knee moved from K≈4 to K≈8-16.
