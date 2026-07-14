@@ -160,7 +160,7 @@ func explore(args []string) {
 				log.Printf("  [%d/%d] save: %v", i+1, len(vectors), err)
 				continue
 			}
-			log.Printf("  [%d/%d] %s", i+1, len(vectors), fmtVector(v))
+			log.Printf("  [%d/%d] %s", i+1, len(vectors), v.String())
 			res, err := execRunner.Run(ctx, v)
 			if err != nil || res == nil {
 				log.Printf("    runner error: %v", err)
@@ -192,7 +192,7 @@ func reportOnly(args []string) {
 	dbPath := fs.String("db", "paramexp.db", "SQLite path")
 	configPath := fs.String("config", "", "parameter space config (YAML)")
 	objective := fs.String("objective", "throughput_fps", "metric to maximize")
-	output := fs.String("output", "report", "output dir")
+	output := fs.String("output", "report_out", "output dir")
 	fs.Parse(args)
 
 	store, err := storage.Open(*dbPath)
@@ -220,7 +220,7 @@ func listCmd(args []string) {
 	obs, _ := store.Observations(true)
 	for _, o := range obs {
 		metrics, _ := json.Marshal(o.Metrics)
-		fmt.Printf("[%d] %s → %s\n", o.ExperimentID, fmtVector(o.Vector), string(metrics))
+		fmt.Printf("[%d] %s → %s\n", o.ExperimentID, o.Vector.String(), string(metrics))
 	}
 }
 
@@ -370,19 +370,6 @@ func fmtMetrics(m experiment.MetricSet, highlight string) string {
 			s = "*" + s + "*"
 		}
 		parts[i] = s
-	}
-	return strings.Join(parts, " ")
-}
-
-func fmtVector(v experiment.ParamVector) string {
-	keys := make([]string, 0, len(v))
-	for k := range v {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	parts := make([]string, len(keys))
-	for i, k := range keys {
-		parts[i] = fmt.Sprintf("%s=%s", k, v[k])
 	}
 	return strings.Join(parts, " ")
 }

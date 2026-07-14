@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`tools/paramexp` `report` package was never committed (#294 regression):** the module `.gitignore` rule `report/` — intended for the generated report *output* directory — also matched the `report/` source *package*, so `report/report.go` was silently excluded from #294. `cmd/paramexp` imports it, so `go build ./...` in `tools/paramexp` failed on `main` (CI didn't catch it because the qumo root `go test ./...` does not traverse the separate `tools/paramexp` module). The output directory is renamed to `report_out/` (default `--output`, gitignored) so it no longer collides with the `report` package, which is now tracked.
+
+- **`tools/paramexp` GP surrogate math (post-merge review of #294):**
+  - **Signal variance σ_f² was optimized but never applied to the kernel** (`model`): `K`, `k*`, and `k(x,x)` were built from the unit-variance RBF correlation with no σ_f² factor, so θ[D] was a dead search axis, `Hyperparameters().SignalVar` reported a value that never influenced the fit, and predictive variance was implicitly locked to σ_f²=1. The kernel correlation is now scaled by σ_f² at every build site via a `cov` helper.
+  - **Log-marginal-likelihood complexity term had the wrong coefficient** (`model`): `-logdet` was used where the GP LML requires `-0.5·log|K|` (`chol.LogDet()` returns `log|K|`). The doubled model-complexity penalty biased the optimizer toward shorter length-scales (rougher, overfitting posteriors) on every fit. Now `-0.5·logdet`.
+  - **`DetectKnees` missed the common concave/diminishing-returns case** (`analysis`): the single-sign `xNorm - yNorm` criterion only fired when the normalized curve lay below the diagonal, so a concave-increasing sweep (the default `throughput_fps` objective) returned no knee. Now uses `|yNorm - xNorm|` with decreasing-curve mirroring, finding the elbow for both concave and convex sweeps (the diminishing-returns knee on `workers` is now detected, where it previously was not).
+  - **`DetectRegressions` attribution was non-deterministic** (`analysis`): two independent map range loops could pair a `Param` from one key with a `Value` from another, varying across runs. `Regression` now carries the full offending `Vector` (deterministic, no information loss).
+- **`tools/paramexp` flat telemetry no longer contaminates metrics** (`runner`): `toMetricSet` now excludes the recognized telemetry keys (`cpu_pct`/`gc_pause_ms`/`syscalls`/`retransmits`/`rss_mb`/`goroutines`) so a benchmark emitting the flat telemetry shape does not pollute `RankImportance`/GP-fit/`--objective`. The nested `"telemetry"` shape was already clean.
+- **`tools/paramexp` in-memory storage DSN no longer drops pragmas** (`storage`): `:memory:` previously stripped `foreign_keys=ON` and did not pin the connection pool, so modernc/sqlite could route a query to a different connection's empty private DB. Pragmas now apply to all DSNs and `:memory:` pins `SetMaxOpenConns(1)`.
+
 ### Changed
 
 - **`tools/paramexp` rewritten as a scientific performance-landscape framework.** The flat `package main` MVP is restructured into importable library packages (`experiment`, `encoding`, `provenance`, `runner`, `storage`, `sampler`, `model`, `analysis`, `scheduler`, `visualization`, `report`) plus a thin `cmd/paramexp` CLI — generic for any black-box benchmarkable system. Key additions:

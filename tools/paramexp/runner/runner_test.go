@@ -73,10 +73,15 @@ func TestParseMetrics_TelemetryNested(t *testing.T) {
 }
 
 func TestParseMetrics_TelemetryFlat(t *testing.T) {
-	_, tel := parseOutput(`{"cpu_pct": 50, "retransmits": 3}`)
+	// Flat telemetry fields must be peeled into Telemetry and NOT leak into the
+	// metrics MetricSet (otherwise they pollute importance/GP-fit/objective).
+	m, tel := parseOutput(`{"throughput_fps": 420, "cpu_pct": 50, "retransmits": 3}`)
 	require.NotNil(t, tel)
 	assert.InDelta(t, 50, tel.CPUpct, 1e-9)
 	assert.InDelta(t, 3, tel.Retransmits, 1e-9)
+	assert.InDelta(t, 420, m["throughput_fps"], 1e-9)
+	assert.NotContains(t, m, "cpu_pct", "telemetry field must not leak into metrics")
+	assert.NotContains(t, m, "retransmits", "telemetry field must not leak into metrics")
 }
 
 func TestExecRunner_MetricsParsed(t *testing.T) {

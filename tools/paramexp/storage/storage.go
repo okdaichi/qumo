@@ -36,13 +36,18 @@ type Attempt struct {
 // Open opens (creating if needed) the database at path and applies the schema.
 // Use ":memory:" for an in-memory database (testing).
 func Open(path string) (*Storage, error) {
+	// Pragmas are applied to every connection via the DSN (modernc/sqlite), so
+	// file and in-memory DBs behave identically (foreign keys ON, etc.).
 	dsn := path + "?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(ON)&_pragma=busy_timeout(5000)"
-	if path == ":memory:" {
-		dsn = ":memory:"
-	}
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
+	}
+	// modernc/sqlite gives each pooled connection its own private in-memory
+	// database, so pin a single connection for ":memory:" — otherwise a query
+	// routed to a different connection sees an empty DB.
+	if path == ":memory:" {
+		db.SetMaxOpenConns(1)
 	}
 	s := &Storage{db: db}
 	if err := s.init(); err != nil {

@@ -1,8 +1,16 @@
-// Package model provides surrogate models of the response surface f: X→y.
-// The primary implementation is a Gaussian Process with automatic relevance
-// determination (ARD), which predicts both a mean and a predictive variance
-// (uncertainty). Random Forest / Gradient-Boosted Trees (later phases) will
-// implement the same Surrogate interface.
+// Package model provides surrogate models of a response surface f: X→y.
+//
+// The primary implementation is a Gaussian Process with an anisotropic RBF
+// (squared-exponential) kernel and automatic relevance determination (ARD):
+// one length-scale per input dimension. It is fit by maximizing the
+// log-marginal-likelihood, and Predict returns both a posterior mean and a
+// predictive standard deviation (uncertainty) — the foundation for Bayesian
+// optimization and confidence maps.
+//
+// All models implement the Surrogate interface, so analysis and (in later
+// phases) a BO driver are agnostic to the model family. Random Forest and
+// Gradient-Boosted Trees are planned to implement the same interface for
+// mixed-type / high-cardinality categorical spaces where RBF struggles.
 package model
 
 import "math"

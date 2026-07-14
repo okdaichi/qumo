@@ -108,7 +108,7 @@ func (g *GaussianProcess) Fit(X [][]float64, y []float64) error {
 	g.kernel = g.opt.Kernel
 
 	// Standardize y. If it is (near) constant, short-circuit to a mean predictor.
-	mean, std := meanStd(y)
+	mean, std := MeanStd(y)
 	g.yMean = mean
 	if std < 1e-12 {
 		g.yStd = 0
@@ -187,11 +187,12 @@ func (g *GaussianProcess) negLogMarginalLikelihood(X [][]float64, y []float64, t
 		lens[d] = clamp(math.Exp(theta[d]), g.opt.LengthBounds[0], g.opt.LengthBounds[1])
 	}
 
+	// K = σ_f² · R + σ_n² · I, where R is the unit-variance correlation from the
+	// kernel. The signal variance σ_f² scales the correlation.
 	K := mat.NewSymDense(len(X), nil)
 	for i := range X {
 		for j := i; j < len(X); j++ {
-			kij := g.kernel.Eval(X[i], X[j], lens)
-			K.SetSym(i, j, kij)
+			K.SetSym(i, j, sigF2*g.kernel.Eval(X[i], X[j], lens))
 		}
 	}
 	trace := 0.0
@@ -217,13 +218,12 @@ func (g *GaussianProcess) negLogMarginalLikelihood(X [][]float64, y []float64, t
 			yv := mat.NewVecDense(len(y), y)
 			alpha := &mat.VecDense{}
 			chol.SolveVecTo(alpha, yv)
-			// LML = -0.5 yᵀ α - Σ log L_ii - n/2 log(2π)
+			// LML = -0.5·yᵀα - 0.5·log|K| - (n/2)·log(2π). LogDet() returns
+			// log|K| (= 2·Σ log L_ii), so the complexity term is -0.5·logdet.
 			ytAlpha := mat.Dot(yv, alpha)
 			logdet := chol.LogDet()
 			n := float64(len(y))
-			lml := -0.5*ytAlpha - logdet - 0.5*n*math.Log(2*math.Pi)
-			// guard against sigma explosion: penalize runaway scale.
-			_ = sigF2
+			lml := -0.5*ytAlpha - 0.5*logdet - 0.5*n*math.Log(2*math.Pi)
 			return -lml
 		}
 		jitter *= 100
@@ -242,13 +242,20 @@ func (g *GaussianProcess) unpackTheta(theta []float64) {
 	g.noise = math.Exp(theta[D+1])
 }
 
+// cov is the GP covariance: the kernel correlation scaled by the signal
+// variance σ_f². Used uniformly in fit/factorize/predict so σ_f² is applied
+// consistently everywhere K or k* is built.
+func (g *GaussianProcess) cov(a, b []float64) float64 {
+	return g.sigF2 * g.kernel.Eval(a, b, g.lens)
+}
+
 // factorize caches K = L Lᵀ and α = K⁻¹ y' for prediction.
 func (g *GaussianProcess) factorize(X [][]float64, y []float64) error {
 	n := len(X)
 	K := mat.NewSymDense(n, nil)
 	for i := range X {
 		for j := i; j < n; j++ {
-			K.SetSym(i, j, g.kernel.Eval(X[i], X[j], g.lens))
+			K.SetSym(i, j, g.cov(X[i], X[j]))
 		}
 		K.SetSym(i, i, K.At(i, i)+g.noise)
 	}
@@ -289,14 +296,14 @@ func (g *GaussianProcess) Predict(x []float64) (float64, float64, error) {
 	}
 	kstar := mat.NewVecDense(len(g.X), nil)
 	for i := range g.X {
-		kstar.SetVec(i, g.kernel.Eval(g.X[i], x, g.lens))
+		kstar.SetVec(i, g.cov(g.X[i], x))
 	}
 	meanStd := mat.Dot(kstar, g.alpha)
 
-	// predictive variance: k(x,x) - k*ᵀ K⁻¹ k*  via L⁻¹ k*.
+	// predictive variance: k(x,x) - k*ᵀ K⁻¹ k*  via K⁻¹ k* (SolveVecTo).
 	v := mat.NewVecDense(len(g.X), nil)
 	g.chol.SolveVecTo(v, kstar)
-	varSig2 := g.kernel.Eval(x, x, g.lens) - mat.Dot(kstar, v)
+	varSig2 := g.cov(x, x) - mat.Dot(kstar, v)
 	if varSig2 < 0 {
 		varSig2 = 0
 	}
@@ -388,7 +395,8 @@ func polishNM(f func([]float64) float64, x0 []float64) []float64 {
 
 // --- small numeric helpers ---
 
-func meanStd(xs []float64) (float64, float64) {
+// MeanStd returns the population mean and standard deviation of xs.
+func MeanStd(xs []float64) (float64, float64) {
 	if len(xs) == 0 {
 		return 0, 0
 	}

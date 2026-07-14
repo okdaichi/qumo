@@ -156,6 +156,21 @@ func (v ParamVector) Equal(other ParamVector) bool {
 	return true
 }
 
+// String renders the vector as sorted "name=value" pairs, for stable logging
+// and report output. Satisfies fmt.Stringer.
+func (v ParamVector) String() string {
+	keys := make([]string, 0, len(v))
+	for k := range v {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, len(keys))
+	for i, k := range keys {
+		parts[i] = k + "=" + v[k]
+	}
+	return strings.Join(parts, " ")
+}
+
 // MetricSet is the multidimensional measurement vector produced by one run.
 type MetricSet map[string]float64
 
@@ -235,7 +250,7 @@ func ParseConfig(path string) (*Config, error) {
 		DBPath:    "paramexp.db",
 		Samples:   20,
 		Adaptive:  3,
-		Output:    "report",
+		Output:    "report_out",
 		Objective: "throughput_fps",
 		Timeout:   10 * time.Minute,
 	}

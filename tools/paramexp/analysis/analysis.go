@@ -51,15 +51,29 @@ func DetectKnees(obs []experiment.Observation, space experiment.ParamSpace, obje
 	return knees
 }
 
+// kneedle finds the index of the knee: the point farthest (in normalized
+// [0,1]² space) from the diagonal. Using the absolute distance |yNorm - xNorm|
+// finds the elbow for both concave (curve above the diagonal, e.g. throughput
+// diminishing returns) and convex (curve below) sweeps. Decreasing sweeps are
+// mirrored first so the same criterion applies (e.g. latency).
 func kneedle(xs, ys []float64) int {
 	xNorm := normalize(xs)
 	yNorm := normalize(ys)
-	maxDist := 0.0
+	if len(ys) >= 2 && ys[len(ys)-1] < ys[0] {
+		// Decreasing curve: mirror y so the elbow logic is direction-agnostic.
+		for i := range yNorm {
+			yNorm[i] = 1 - yNorm[i]
+		}
+	}
+	maxDist := -1.0
 	maxIdx := 0
 	for i := range xNorm {
-		dist := xNorm[i] - yNorm[i] // positive when y is below the diagonal (concave)
-		if dist > maxDist {
-			maxDist = dist
+		d := yNorm[i] - xNorm[i]
+		if d < 0 {
+			d = -d
+		}
+		if d > maxDist {
+			maxDist = d
 			maxIdx = i
 		}
 	}
@@ -69,25 +83,36 @@ func kneedle(xs, ys []float64) int {
 func kneeScore(xs, ys []float64, idx int) float64 {
 	xNorm := normalize(xs)
 	yNorm := normalize(ys)
-	return xNorm[idx] - yNorm[idx]
+	if len(ys) >= 2 && ys[len(ys)-1] < ys[0] {
+		for i := range yNorm {
+			yNorm[i] = 1 - yNorm[i]
+		}
+	}
+	d := yNorm[idx] - xNorm[idx]
+	if d < 0 {
+		d = -d
+	}
+	return d
 }
 
 // --- Regression detection ---
 
 // Regression flags a statistically significant degradation of a metric versus a
-// baseline value (|z| > threshold), attributed to the (param,value) of the run.
+// baseline value (|z| > threshold), carrying the full parameter vector of the
+// offending run. A regression is a property of a configuration, so the whole
+// vector is recorded (deterministic, no information loss) rather than a single
+// guessed param/value.
 type Regression struct {
-	Param    string  `json:"param"`
-	Value    string  `json:"value"`
-	Metric   string  `json:"metric"`
-	Baseline float64 `json:"baseline"`
-	Observed float64 `json:"observed"`
-	ZScore   float64 `json:"z_score"`
+	Vector   experiment.ParamVector `json:"vector"`
+	Metric   string                 `json:"metric"`
+	Baseline float64                `json:"baseline"`
+	Observed float64                `json:"observed"`
+	ZScore   float64                `json:"z_score"`
 }
 
 // DetectRegressions compares observations against a baseline metric set. A
 // regression is a run whose metric is worse than baseline by more than `threshold`
-// population standard deviations. Each regression records its param/value.
+// population standard deviations. Each regression records the run's full vector.
 func DetectRegressions(obs []experiment.Observation, baseline experiment.MetricSet, threshold float64) []Regression {
 	if threshold == 0 {
 		threshold = 2.0
@@ -101,7 +126,7 @@ func DetectRegressions(obs []experiment.Observation, baseline experiment.MetricS
 		if len(values) == 0 {
 			continue
 		}
-		mean, std := meanStd(values)
+		mean, std := model.MeanStd(values)
 		if std == 0 {
 			continue
 		}
@@ -113,28 +138,13 @@ func DetectRegressions(obs []experiment.Observation, baseline experiment.MetricS
 			z := (val - mean) / std
 			if isWorse(metric, val, baseVal) && math.Abs(z) > threshold {
 				regressions = append(regressions, Regression{
-					Param: worstParam(o), Value: worstValue(o), Metric: metric,
+					Vector: o.Vector, Metric: metric,
 					Baseline: baseVal, Observed: val, ZScore: z,
 				})
 			}
 		}
 	}
 	return regressions
-}
-
-// worstParam/worstValue attribute a regression to the single most-deviating
-// parameter of the run (a heuristic until full attribution lands in a later phase).
-func worstParam(o experiment.Observation) string {
-	for k := range o.Vector {
-		return k
-	}
-	return ""
-}
-func worstValue(o experiment.Observation) string {
-	for _, v := range o.Vector {
-		return v
-	}
-	return ""
 }
 
 // --- Parameter importance (correlation ratio η²) ---
@@ -152,7 +162,7 @@ func RankImportance(obs []experiment.Observation, space experiment.ParamSpace, o
 	if len(allVals) < 3 {
 		return nil
 	}
-	totalMean, _ := meanStd(allVals)
+	totalMean, _ := model.MeanStd(allVals)
 	totalVar := variance(allVals, totalMean)
 	if totalVar == 0 {
 		return nil
@@ -184,7 +194,7 @@ func DetectInteractions(obs []experiment.Observation, space experiment.ParamSpac
 	if len(allVals) < 3 {
 		return nil
 	}
-	totalMean, _ := meanStd(allVals)
+	totalMean, _ := model.MeanStd(allVals)
 	totalVar := variance(allVals, totalMean)
 	if totalVar == 0 {
 		return nil
@@ -273,7 +283,7 @@ func sortedXY(groups map[string][]float64, order []string) ([]float64, []float64
 		if !ok || len(vals) == 0 {
 			continue
 		}
-		mean, _ := meanStd(vals)
+		mean, _ := model.MeanStd(vals)
 		xs = append(xs, float64(len(xs)))
 		ys = append(ys, mean)
 	}
@@ -314,22 +324,6 @@ func extractMetric(obs []experiment.Observation, metric string) []float64 {
 	return vals
 }
 
-func meanStd(xs []float64) (float64, float64) {
-	if len(xs) == 0 {
-		return 0, 0
-	}
-	sum := 0.0
-	for _, x := range xs {
-		sum += x
-	}
-	mean := sum / float64(len(xs))
-	var sq float64
-	for _, x := range xs {
-		sq += (x - mean) * (x - mean)
-	}
-	return mean, math.Sqrt(sq / float64(len(xs)))
-}
-
 func variance(xs []float64, mean float64) float64 {
 	if len(xs) == 0 {
 		return 0
@@ -352,7 +346,7 @@ func etaSquared(obs []experiment.Observation, param, objective string, totalMean
 		if len(vals) == 0 {
 			continue
 		}
-		gm, _ := meanStd(vals)
+		gm, _ := model.MeanStd(vals)
 		betweenVar += float64(len(vals)) * (gm - totalMean) * (gm - totalMean)
 		n += len(vals)
 	}
@@ -385,7 +379,7 @@ func etaSquared2D(obs []experiment.Observation, paramA, paramB, objective string
 		if len(vals) == 0 {
 			continue
 		}
-		gm, _ := meanStd(vals)
+		gm, _ := model.MeanStd(vals)
 		betweenVar += float64(len(vals)) * (gm - totalMean) * (gm - totalMean)
 		n += len(vals)
 	}

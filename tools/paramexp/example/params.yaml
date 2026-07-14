@@ -6,7 +6,7 @@ runner: bash example/bench.sh
 db: paramexp.db
 samples: 16
 adaptive: 2
-output: report
+output: report_out
 objective: throughput_fps
 timeout: 1m
 max_attempts: 2

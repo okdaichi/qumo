@@ -110,7 +110,31 @@ func TestGP_ConstantY(t *testing.T) {
 	assert.LessOrEqual(t, s, 1e-9)
 }
 
-// TestGP_PredictBatch returns parallel slices of the right length.
+// TestGP_Calibration checks a sound property of a correctly-fit GP: predictive
+// uncertainty is small at/near training points (interpolation) and large far
+// from any training point (extrapolation approaches the prior). This exercises
+// the applied signal variance and the corrected log-marginal-likelihood.
+func TestGP_Calibration(t *testing.T) {
+	gp := NewGP(Options{Starts: 40})
+	// Cluster training data in [0, 0.3]; x=0.9 is far from all of it.
+	X := [][]float64{}
+	y := []float64{}
+	for i := 0; i < 12; i++ {
+		x := float64(i) / 11 * 0.3
+		X = append(X, []float64{x})
+		y = append(y, math.Sin(2*math.Pi*x))
+	}
+	require.NoError(t, gp.Fit(X, y))
+
+	_, stdInterp, err := gp.Predict([]float64{0.15})
+	require.NoError(t, err)
+	_, stdExtrap, err := gp.Predict([]float64{0.9})
+	require.NoError(t, err)
+	assert.Greater(t, stdExtrap, stdInterp,
+		"extrapolation (far from data) should be more uncertain than interpolation")
+	assert.Less(t, stdInterp, stdExtrap*0.9, "interpolation notably tighter than extrapolation")
+}
+
 func TestGP_PredictBatch(t *testing.T) {
 	gp := NewGP(Options{Starts: 20})
 	X := [][]float64{{0.0}, {0.25}, {0.5}, {0.75}, {1.0}}

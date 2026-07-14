@@ -1,3 +1,5 @@
 *.db
 *.exe
-report/
+# Generated report output (NOT the report/ source package — the package dir must
+# be tracked, so the output dir is named differently to avoid a path collision).
+report_out/
