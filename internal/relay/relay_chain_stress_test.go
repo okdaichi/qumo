@@ -156,7 +156,7 @@ func stressRun(tb testing.TB, parent context.Context, pool *x509.CertPool, relay
 			}
 		}
 	})
-	pubSess, err := (&moqt.Dialer{TLSConfig: chainDialerTLS(pool)}).Dial(runCtx, "moqt://"+relays[0].MOQServer.Addr, pubMux)
+	pubSess, err := (&moqt.Dialer{TLSConfig: chainDialerTLS(pool), QUICConfig: &quic.Config{EnableDatagrams: true, MaxIncomingUniStreams: 1 << 20, MaxIncomingStreams: 1 << 20}}).Dial(runCtx, "moqt://"+relays[0].MOQServer.Addr, pubMux)
 	require.NoError(tb, err)
 	defer pubSess.CloseWithError(moqt.NoError, "done")
 
@@ -166,7 +166,7 @@ func stressRun(tb testing.TB, parent context.Context, pool *x509.CertPool, relay
 	runtime.GC()
 	runtime.ReadMemStats(&memBefore)
 
-	subSess, err := (&moqt.Dialer{TLSConfig: chainDialerTLS(pool)}).Dial(runCtx, "moqt://"+relays[len(relays)-1].MOQServer.Addr, moqt.NewTrackMux(0))
+	subSess, err := (&moqt.Dialer{TLSConfig: chainDialerTLS(pool), QUICConfig: &quic.Config{EnableDatagrams: true, MaxIncomingUniStreams: 1 << 20, MaxIncomingStreams: 1 << 20}}).Dial(runCtx, "moqt://"+relays[len(relays)-1].MOQServer.Addr, moqt.NewTrackMux(0))
 	require.NoError(tb, err)
 	defer subSess.CloseWithError(moqt.NoError, "done")
 	tr, err := subSess.Subscribe(runCtx, chainBroadcastPath, chainTrackName, nil)
@@ -331,7 +331,7 @@ func stressFanoutRun(tb testing.TB, parent context.Context, pool *x509.CertPool,
 			}
 		}
 	})
-	pubSess, err := (&moqt.Dialer{TLSConfig: chainDialerTLS(pool)}).Dial(runCtx, "moqt://"+origin.MOQServer.Addr, pubMux)
+	pubSess, err := (&moqt.Dialer{TLSConfig: chainDialerTLS(pool), QUICConfig: &quic.Config{EnableDatagrams: true, MaxIncomingUniStreams: 1 << 20, MaxIncomingStreams: 1 << 20}}).Dial(runCtx, "moqt://"+origin.MOQServer.Addr, pubMux)
 	require.NoError(tb, err)
 	defer pubSess.CloseWithError(moqt.NoError, "done")
 
@@ -356,7 +356,7 @@ func stressFanoutRun(tb testing.TB, parent context.Context, pool *x509.CertPool,
 			res := leafResult{lats: make([]time.Duration, 0, 4096)}
 			readCtx, readCancel := context.WithTimeout(context.Background(), duration+5*time.Second)
 			defer readCancel()
-			sess, err := (&moqt.Dialer{TLSConfig: chainDialerTLS(pool)}).Dial(readCtx, "moqt://"+leaf.MOQServer.Addr, moqt.NewTrackMux(0))
+			sess, err := (&moqt.Dialer{TLSConfig: chainDialerTLS(pool), QUICConfig: &quic.Config{EnableDatagrams: true, MaxIncomingUniStreams: 1 << 20, MaxIncomingStreams: 1 << 20}}).Dial(readCtx, "moqt://"+leaf.MOQServer.Addr, moqt.NewTrackMux(0))
 			if err != nil {
 				results[i] = res
 				return
