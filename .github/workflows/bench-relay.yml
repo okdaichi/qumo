@@ -120,12 +120,14 @@ jobs:
 
       # CPU profile at K=8 (the knee) for performance analysis. Uploaded as a
       # separate artifact so it can be analyzed with `go tool pprof -top`.
-      - name: CPU profile at K=8 (the knee)
+      - name: Profiles at K=8 (the knee)
         run: |
           FANOUT_KS=8 go test -tags=integration -run='^$' \
             -bench='BenchmarkRelayChain_FanoutSweep$' \
             -benchtime=1x -cpu=1 -timeout 10m \
-            -cpuprofile="$GITHUB_WORKSPACE"/results/k8-cpu.pprof ./internal/relay/ || true
+            -cpuprofile="$GITHUB_WORKSPACE"/results/k8-cpu.pprof \
+            -goroutineprofile="$GITHUB_WORKSPACE"/results/k8-goroutines.pprof \
+            ./internal/relay/ || true
 
       - name: Fan-out × load
         run: |

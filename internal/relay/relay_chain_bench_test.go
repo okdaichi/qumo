@@ -203,7 +203,7 @@ func chainPublish(tb testing.TB, pubURL string, pool *x509.CertPool, cfg chainCo
 		}
 		_ = gw.Close()
 	})
-	sess, err := (&moqt.Dialer{TLSConfig: chainDialerTLS(pool)}).Dial(ctx, pubURL, pubMux)
+	sess, err := (&moqt.Dialer{TLSConfig: chainDialerTLS(pool), QUICConfig: &quic.Config{EnableDatagrams: true, MaxIncomingUniStreams: 1 << 20, MaxIncomingStreams: 1 << 20}}).Dial(ctx, pubURL, pubMux)
 	require.NoError(tb, err)
 	return sess
 }
@@ -217,7 +217,7 @@ func chainSubscribe(tb testing.TB, subURL string, subRelay *Server, pool *x509.C
 	defer cancel()
 
 	waitForHandler(tb, subRelay, chainBroadcastPath)
-	sess, err := (&moqt.Dialer{TLSConfig: chainDialerTLS(pool)}).Dial(ctx, subURL, moqt.NewTrackMux(0))
+	sess, err := (&moqt.Dialer{TLSConfig: chainDialerTLS(pool), QUICConfig: &quic.Config{EnableDatagrams: true, MaxIncomingUniStreams: 1 << 20, MaxIncomingStreams: 1 << 20}}).Dial(ctx, subURL, moqt.NewTrackMux(0))
 	require.NoError(tb, err)
 	defer sess.CloseWithError(moqt.NoError, "done")
 

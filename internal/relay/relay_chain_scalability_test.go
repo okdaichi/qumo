@@ -98,7 +98,7 @@ func fanoutSweepRun(tb testing.TB, cert tls.Certificate, pool *x509.CertPool, qu
 			}
 		}
 	})
-	pubSess, err := (&moqt.Dialer{TLSConfig: chainDialerTLS(pool)}).Dial(runCtx, "moqt://"+origin.MOQServer.Addr, pubMux)
+	pubSess, err := (&moqt.Dialer{TLSConfig: chainDialerTLS(pool), QUICConfig: &quic.Config{EnableDatagrams: true, MaxIncomingUniStreams: 1 << 20, MaxIncomingStreams: 1 << 20}}).Dial(runCtx, "moqt://"+origin.MOQServer.Addr, pubMux)
 	require.NoError(tb, err)
 	defer pubSess.CloseWithError(moqt.NoError, "done")
 	for _, leaf := range leaves {
@@ -165,7 +165,7 @@ func leafSubscribeTimed(tb testing.TB, leaf *Server, pool *x509.CertPool, timeou
 	tb.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	sess, err := (&moqt.Dialer{TLSConfig: chainDialerTLS(pool)}).Dial(ctx, "moqt://"+leaf.MOQServer.Addr, moqt.NewTrackMux(0))
+	sess, err := (&moqt.Dialer{TLSConfig: chainDialerTLS(pool), QUICConfig: &quic.Config{EnableDatagrams: true, MaxIncomingUniStreams: 1 << 20, MaxIncomingStreams: 1 << 20}}).Dial(ctx, "moqt://"+leaf.MOQServer.Addr, moqt.NewTrackMux(0))
 	if err != nil {
 		return nil
 	}
@@ -202,7 +202,7 @@ func leafSubscribeTimed(tb testing.TB, leaf *Server, pool *x509.CertPool, timeou
 // FANOUT_KS (e.g. "1,4,8,16") to trim for CI smoke runs.
 func BenchmarkRelayChain_FanoutSweep(b *testing.B) {
 	cert, pool := chainCert(b)
-	quicCfg := &quic.Config{EnableDatagrams: true, KeepAlivePeriod: 5 * time.Second, MaxIdleTimeout: 30 * time.Second}
+	quicCfg := &quic.Config{EnableDatagrams: true, KeepAlivePeriod: 5 * time.Second, MaxIdleTimeout: 30 * time.Second, MaxIncomingUniStreams: 1 << 20, MaxIncomingStreams: 1 << 20}
 	const gap = 2 * time.Millisecond // ~500fps sustainable
 	const dur = 3 * time.Second
 	const sz = 1200
@@ -240,7 +240,7 @@ func BenchmarkRelayChain_FanoutSweep(b *testing.B) {
 // Run: -bench='FanoutSweep_Load' -benchtime=1x -timeout 60m
 func BenchmarkRelayChain_FanoutSweep_Load(b *testing.B) {
 	cert, pool := chainCert(b)
-	quicCfg := &quic.Config{EnableDatagrams: true, KeepAlivePeriod: 5 * time.Second, MaxIdleTimeout: 30 * time.Second}
+	quicCfg := &quic.Config{EnableDatagrams: true, KeepAlivePeriod: 5 * time.Second, MaxIdleTimeout: 30 * time.Second, MaxIncomingUniStreams: 1 << 20, MaxIncomingStreams: 1 << 20}
 	rates := []struct {
 		name string
 		gap  time.Duration
@@ -275,7 +275,7 @@ func BenchmarkRelayChain_FanoutSweep_Load(b *testing.B) {
 // BenchmarkRelayChain_FanoutSweep_ObjSize sweeps K at multiple frame sizes.
 func BenchmarkRelayChain_FanoutSweep_ObjSize(b *testing.B) {
 	cert, pool := chainCert(b)
-	quicCfg := &quic.Config{EnableDatagrams: true, KeepAlivePeriod: 5 * time.Second, MaxIdleTimeout: 30 * time.Second}
+	quicCfg := &quic.Config{EnableDatagrams: true, KeepAlivePeriod: 5 * time.Second, MaxIdleTimeout: 30 * time.Second, MaxIncomingUniStreams: 1 << 20, MaxIncomingStreams: 1 << 20}
 	for _, sz := range []int{200, 2048, 20480, 204800} {
 		for _, K := range []int{1, 8, 32} {
 			b.Run(fmt.Sprintf("size=%dB/K=%d", sz, K), func(b *testing.B) {
@@ -303,7 +303,7 @@ func BenchmarkRelayChain_FanoutSweep_ObjSize(b *testing.B) {
 // or loss — confirming per-subscriber egress isolation (no head-of-line blocking).
 func TestRelayChain_SlowSubscriber(t *testing.T) {
 	cert, pool := chainCert(t)
-	quicCfg := &quic.Config{EnableDatagrams: true, KeepAlivePeriod: 5 * time.Second, MaxIdleTimeout: 30 * time.Second}
+	quicCfg := &quic.Config{EnableDatagrams: true, KeepAlivePeriod: 5 * time.Second, MaxIdleTimeout: 30 * time.Second, MaxIncomingUniStreams: 1 << 20, MaxIncomingStreams: 1 << 20}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -328,7 +328,7 @@ func TestRelayChain_SlowSubscriber(t *testing.T) {
 		}
 		_ = gw.Close()
 	})
-	pubSess, err := (&moqt.Dialer{TLSConfig: chainDialerTLS(pool)}).Dial(ctx, "moqt://"+origin.MOQServer.Addr, pubMux)
+	pubSess, err := (&moqt.Dialer{TLSConfig: chainDialerTLS(pool), QUICConfig: &quic.Config{EnableDatagrams: true, MaxIncomingUniStreams: 1 << 20, MaxIncomingStreams: 1 << 20}}).Dial(ctx, "moqt://"+origin.MOQServer.Addr, pubMux)
 	require.NoError(t, err)
 	defer pubSess.CloseWithError(moqt.NoError, "done")
 	waitForHandler(t, leafFast, chainBroadcastPath)
@@ -364,7 +364,7 @@ func TestRelayChain_Soak(t *testing.T) {
 		}
 	}
 	cert, pool := chainCert(t)
-	quicCfg := &quic.Config{EnableDatagrams: true, KeepAlivePeriod: 5 * time.Second, MaxIdleTimeout: 30 * time.Second}
+	quicCfg := &quic.Config{EnableDatagrams: true, KeepAlivePeriod: 5 * time.Second, MaxIdleTimeout: 30 * time.Second, MaxIncomingUniStreams: 1 << 20, MaxIncomingStreams: 1 << 20}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -397,7 +397,7 @@ func TestRelayChain_Soak(t *testing.T) {
 			time.Sleep(2 * time.Millisecond)
 		}
 	})
-	pubSess, _ := (&moqt.Dialer{TLSConfig: chainDialerTLS(pool)}).Dial(runCtx, "moqt://"+origin.MOQServer.Addr, pubMux)
+	pubSess, _ := (&moqt.Dialer{TLSConfig: chainDialerTLS(pool), QUICConfig: &quic.Config{EnableDatagrams: true, MaxIncomingUniStreams: 1 << 20, MaxIncomingStreams: 1 << 20}}).Dial(runCtx, "moqt://"+origin.MOQServer.Addr, pubMux)
 	defer pubSess.CloseWithError(moqt.NoError, "done")
 	waitForHandler(t, leaf, chainBroadcastPath)
 
@@ -465,7 +465,7 @@ func churnSubscriber(t *testing.T, leaf *Server, pool *x509.CertPool, maxGroups 
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	sess, err := (&moqt.Dialer{TLSConfig: chainDialerTLS(pool)}).Dial(ctx, "moqt://"+leaf.MOQServer.Addr, moqt.NewTrackMux(0))
+	sess, err := (&moqt.Dialer{TLSConfig: chainDialerTLS(pool), QUICConfig: &quic.Config{EnableDatagrams: true, MaxIncomingUniStreams: 1 << 20, MaxIncomingStreams: 1 << 20}}).Dial(ctx, "moqt://"+leaf.MOQServer.Addr, moqt.NewTrackMux(0))
 	if err != nil {
 		return 0
 	}
@@ -511,7 +511,7 @@ func TestRelayChain_ReconnectStorm(t *testing.T) {
 	frames := envIntDef("STORM_FRAMES", 2)
 
 	cert, pool := chainCert(t)
-	quicCfg := &quic.Config{EnableDatagrams: true, KeepAlivePeriod: 5 * time.Second, MaxIdleTimeout: 30 * time.Second}
+	quicCfg := &quic.Config{EnableDatagrams: true, KeepAlivePeriod: 5 * time.Second, MaxIdleTimeout: 30 * time.Second, MaxIncomingUniStreams: 1 << 20, MaxIncomingStreams: 1 << 20}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -541,7 +541,7 @@ func TestRelayChain_ReconnectStorm(t *testing.T) {
 			time.Sleep(2 * time.Millisecond)
 		}
 	})
-	pubSess, err := (&moqt.Dialer{TLSConfig: chainDialerTLS(pool)}).Dial(ctx, "moqt://"+origin.MOQServer.Addr, pubMux)
+	pubSess, err := (&moqt.Dialer{TLSConfig: chainDialerTLS(pool), QUICConfig: &quic.Config{EnableDatagrams: true, MaxIncomingUniStreams: 1 << 20, MaxIncomingStreams: 1 << 20}}).Dial(ctx, "moqt://"+origin.MOQServer.Addr, pubMux)
 	require.NoError(t, err)
 	defer pubSess.CloseWithError(moqt.NoError, "done")
 	waitForHandler(t, leaf, chainBroadcastPath)
