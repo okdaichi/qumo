@@ -553,7 +553,7 @@ func TestTrackDistributor_MemoryBehavior(t *testing.T) {
 // TestTrackDistributor_Timeout tests timeout behavior
 func TestTrackDistributor_Timeout(t *testing.T) {
 	t.Run("verify_timeout_constant", func(t *testing.T) {
-		assert.Equal(t, 5*time.Millisecond, NotifyTimeout, "Expected NotifyTimeout to be 5ms")
+		assert.Equal(t, 1*time.Millisecond, NotifyTimeout, "Expected NotifyTimeout to be 1ms")
 	})
 }
 
@@ -720,7 +720,7 @@ func TestTrackDistributor_NotifyTimeout(t *testing.T) {
 	assert.Greater(t, NotifyTimeout, time.Duration(0), "NotifyTimeout should be positive")
 
 	// Verify it's the optimized value from benchmarks
-	expectedTimeout := 5 * time.Millisecond
+	expectedTimeout := 1 * time.Millisecond
 	assert.Equal(t, expectedTimeout, NotifyTimeout, "NotifyTimeout should be optimal value")
 }
 
