@@ -414,7 +414,7 @@ function boxPlot(boxes: Box[], opts: { title: string; xLabel: string; yLabel: st
 		inner.push(`<text x="${cx}" y="${M.top + plotH + 18}" text-anchor="middle">${b.x}</text>`);
 	});
 
-	return svgWrap(opts.title + "  (箱ひけ図)", inner);
+	return svgWrap(opts.title, inner);
 }
 
 // overview: 3 stacked panels (latency / loss / throughput) sharing the K x-axis,
