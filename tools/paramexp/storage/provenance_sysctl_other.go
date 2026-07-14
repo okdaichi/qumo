@@ -1,6 +1,6 @@
 //go:build !darwin
 
-package provenance
+package storage
 
 // readSysctlMachine is a no-op on non-darwin platforms; machine details are
 // read from /proc on Linux and left "unknown"/0 elsewhere.

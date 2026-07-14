@@ -1,6 +1,6 @@
 //go:build darwin
 
-package provenance
+package storage
 
 import "syscall"
 

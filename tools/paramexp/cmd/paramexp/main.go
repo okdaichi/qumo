@@ -28,13 +28,11 @@ import (
 	"time"
 
 	"github.com/qumo-dev/qumo/tools/paramexp/analysis"
-	"github.com/qumo-dev/qumo/tools/paramexp/encoding"
 	"github.com/qumo-dev/qumo/tools/paramexp/experiment"
 	"github.com/qumo-dev/qumo/tools/paramexp/model"
-	"github.com/qumo-dev/qumo/tools/paramexp/provenance"
 	"github.com/qumo-dev/qumo/tools/paramexp/report"
 	"github.com/qumo-dev/qumo/tools/paramexp/runner"
-	"github.com/qumo-dev/qumo/tools/paramexp/scheduler"
+	"github.com/qumo-dev/qumo/tools/paramexp/sampler"
 	"github.com/qumo-dev/qumo/tools/paramexp/storage"
 )
 
@@ -102,7 +100,7 @@ func explore(args []string) {
 		cfg.MaxAttempts = *maxAttempts
 	}
 
-	enc, err := encoding.New(cfg.Space)
+	enc, err := experiment.NewEncoder(cfg.Space)
 	if err != nil {
 		log.Fatalf("encoding: %v", err)
 	}
@@ -112,7 +110,7 @@ func explore(args []string) {
 	}
 	defer store.Close()
 
-	run := provenance.Capture(cfg, provenance.Abs("."))
+	run := storage.Capture(cfg, storage.Abs("."))
 	if err := store.SaveRun(&run); err != nil {
 		log.Fatalf("save run: %v", err)
 	}
@@ -125,7 +123,7 @@ func explore(args []string) {
 	log.Printf("runner: %s (timeout=%s, attempts=%d)", cfg.Runner, cfg.Timeout, cfg.MaxAttempts)
 
 	execRunner := runner.NewExecRunner(cfg.Runner, cfg.Timeout, cfg.MaxAttempts)
-	sched := &scheduler.Static{LHSn: cfg.Samples, AdaptiveRounds: cfg.Adaptive, AdaptiveN: 5}
+	sched := &sampler.StaticScheduler{LHSn: cfg.Samples, AdaptiveRounds: cfg.Adaptive, AdaptiveN: 5}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -135,7 +133,7 @@ func explore(args []string) {
 		if err != nil {
 			log.Printf("load observations: %v", err)
 		}
-		vectors, phase, err := sched.Next(ctx, scheduler.State{Space: cfg.Space, Enc: enc, Observations: obs, Objective: cfg.Objective})
+		vectors, phase, err := sched.Next(ctx, sampler.SchedulerState{Space: cfg.Space, Enc: enc, Observations: obs, Objective: cfg.Objective})
 		if err == io.EOF {
 			break
 		}
@@ -226,10 +224,10 @@ func listCmd(args []string) {
 
 // loadSpace returns the param space from config, or infers it from stored
 // observations when no config is given.
-func loadSpace(configPath string, store *storage.Storage) (experiment.ParamSpace, *encoding.Encoder) {
+func loadSpace(configPath string, store *storage.Storage) (experiment.ParamSpace, *experiment.Encoder) {
 	if configPath != "" {
 		if cfg, err := experiment.ParseConfig(configPath); err == nil {
-			if enc, err := encoding.New(cfg.Space); err == nil {
+			if enc, err := experiment.NewEncoder(cfg.Space); err == nil {
 				return cfg.Space, enc
 			}
 			return cfg.Space, nil
@@ -237,7 +235,7 @@ func loadSpace(configPath string, store *storage.Storage) (experiment.ParamSpace
 	}
 	obs, _ := store.Observations(true)
 	space := inferSpace(obs)
-	enc, _ := encoding.New(space)
+	enc, _ := experiment.NewEncoder(space)
 	return space, enc
 }
 
@@ -265,7 +263,7 @@ func inferSpace(obs []experiment.Observation) experiment.ParamSpace {
 }
 
 // generateReport runs analysis + GP fit and writes the report.
-func generateReport(store *storage.Storage, cfg *experiment.Config, enc *encoding.Encoder) {
+func generateReport(store *storage.Storage, cfg *experiment.Config, enc *experiment.Encoder) {
 	log.Println("=== Analysis ===")
 	obs, err := store.Observations(false)
 	if err != nil {
@@ -316,7 +314,7 @@ func generateReport(store *storage.Storage, cfg *experiment.Config, enc *encodin
 
 // fitGP builds X/y from observations and fits a GP on the objective. Returns
 // (nil, nil) if there is too little data or the fit fails.
-func fitGP(obs []experiment.Observation, enc *encoding.Encoder, objective string) (*model.GaussianProcess, []analysis.Sensitivity) {
+func fitGP(obs []experiment.Observation, enc *experiment.Encoder, objective string) (*model.GaussianProcess, []analysis.Sensitivity) {
 	var X [][]float64
 	var y []float64
 	for _, o := range obs {

@@ -8,17 +8,16 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/qumo-dev/qumo/tools/paramexp/encoding"
 	"github.com/qumo-dev/qumo/tools/paramexp/experiment"
 )
 
-func twoDEnc(t *testing.T) *encoding.Encoder {
+func twoDEnc(t *testing.T) *experiment.Encoder {
 	t.Helper()
 	space := experiment.ParamSpace{Params: []experiment.ParamDef{
 		{Name: "a", Type: experiment.TypeContinuous, Min: 0, Max: 1},
 		{Name: "b", Type: experiment.TypeContinuous, Min: 0, Max: 1},
 	}}
-	enc, err := encoding.New(space)
+	enc, err := experiment.NewEncoder(space)
 	require.NoError(t, err)
 	return enc
 }
@@ -46,7 +45,7 @@ func TestLHS_Coverage(t *testing.T) {
 		{Name: "y", Type: experiment.TypeContinuous, Min: 0, Max: 1},
 		{Name: "z", Type: experiment.TypeContinuous, Min: 0, Max: 1},
 	}}
-	enc, _ := encoding.New(space)
+	enc, _ := experiment.NewEncoder(space)
 	n := 12
 	vectors, err := LHS{}.Sample(enc, n)
 	require.NoError(t, err)
@@ -66,7 +65,7 @@ func TestAdaptive_Neighbors(t *testing.T) {
 		{Name: "w", Type: experiment.TypeDiscrete, Values: []string{"1", "2", "4", "8"}},
 		{Name: "b", Type: experiment.TypeDiscrete, Values: []string{"x", "y", "z"}},
 	}}
-	enc, _ := encoding.New(space)
+	enc, _ := experiment.NewEncoder(space)
 
 	// Best observation at w=2(idx1), b=y(idx1).
 	obs := []experiment.Observation{{

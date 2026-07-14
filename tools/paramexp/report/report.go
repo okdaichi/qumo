@@ -16,7 +16,6 @@ import (
 	"github.com/qumo-dev/qumo/tools/paramexp/analysis"
 	"github.com/qumo-dev/qumo/tools/paramexp/experiment"
 	"github.com/qumo-dev/qumo/tools/paramexp/model"
-	"github.com/qumo-dev/qumo/tools/paramexp/visualization"
 )
 
 // Surface is a precomputed 1-D model surface (level index → mean, std).
@@ -57,27 +56,27 @@ func Generate(in Inputs) error {
 
 	// 1. Per-parameter empirical sweeps.
 	for _, p := range in.Space.Params {
-		if svg := visualization.SweepSVG(in.Observations, p, in.Objective); svg != "" {
+		if svg := sweepSVG(in.Observations, p, in.Objective); svg != "" {
 			writeFile(filepath.Join(in.Dir, fmt.Sprintf("sweep_%s.svg", p.Name)), svg)
 		}
 	}
 
 	// 2. Importance (η²) and, if present, GP sensitivity.
 	if len(in.Importance) > 0 {
-		writeFile(filepath.Join(in.Dir, "importance.svg"), visualization.ImportanceSVG(in.Importance))
+		writeFile(filepath.Join(in.Dir, "importance.svg"), importanceSVG(in.Importance))
 	}
 	if len(in.Sensitivity) > 0 {
-		writeFile(filepath.Join(in.Dir, "sensitivity.svg"), visualization.ImportanceSVG(sensitivityToRanks(in.Sensitivity)))
+		writeFile(filepath.Join(in.Dir, "sensitivity.svg"), importanceSVG(sensitivityToRanks(in.Sensitivity)))
 	}
 
 	// 3. Interaction heatmap.
 	if len(in.Interactions) > 0 {
-		writeFile(filepath.Join(in.Dir, "interactions.svg"), visualization.InteractionSVG(in.Interactions, in.Space))
+		writeFile(filepath.Join(in.Dir, "interactions.svg"), interactionSVG(in.Interactions, in.Space))
 	}
 
 	// 4. GP-derived 1-D response surfaces.
 	for _, s := range in.Surfaces {
-		svg := visualization.ResponseSurfaceSVG(s.Xs, s.Means, s.Stds, s.Param, in.Objective)
+		svg := responseSurfaceSVG(s.Xs, s.Means, s.Stds, s.Param, in.Objective)
 		if svg != "" {
 			writeFile(filepath.Join(in.Dir, fmt.Sprintf("surface_%s.svg", s.Param)), svg)
 		}
@@ -86,7 +85,7 @@ func Generate(in Inputs) error {
 	// 5. 2-D contour over the two most-sensitive params.
 	if in.Contour != nil {
 		writeFile(filepath.Join(in.Dir, "contour.svg"),
-			visualization.ContourSVG(in.Contour.Grid, in.Contour.XParam, in.Contour.YParam, in.Contour.XLabels, in.Contour.YLabels))
+			contourSVG(in.Contour.Grid, in.Contour.XParam, in.Contour.YParam, in.Contour.XLabels, in.Contour.YLabels))
 	}
 
 	// 6. JSON summary.

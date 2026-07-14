@@ -8,7 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/qumo-dev/qumo/tools/paramexp/experiment"
-	"github.com/qumo-dev/qumo/tools/paramexp/provenance"
 )
 
 func TestRoundTrip(t *testing.T) {
@@ -16,7 +15,7 @@ func TestRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	defer s.Close()
 
-	run := provenance.Run{
+	run := Run{
 		StartedAt:        time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC),
 		FrameworkVersion: "test",
 		GitRevision:      "abc123",
@@ -58,7 +57,7 @@ func TestRoundTrip(t *testing.T) {
 func TestObservations_FailureFilter(t *testing.T) {
 	s, _ := Open(":memory:")
 	defer s.Close()
-	var run provenance.Run
+	var run Run
 	run.StartedAt = time.Now()
 	s.SaveRun(&run)
 
