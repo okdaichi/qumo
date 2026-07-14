@@ -15,7 +15,7 @@ type frameSource interface {
 	Frames(buf *moqt.Frame) iter.Seq[*moqt.Frame]
 }
 
-const DefaultGroupCacheSize = 8
+const DefaultGroupCacheSize = 128
 
 // MaxFramesPerGroup is the maximum number of frames allowed in a single group cache.
 // It bounds growth and bounds the per-append work of the copy-on-write publish (see
