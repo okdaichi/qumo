@@ -124,12 +124,21 @@ func chainDialerTLS(pool *x509.CertPool) *tls.Config {
 
 func spinRelay(tb testing.TB, nodeID, addr string, cert tls.Certificate, pool *x509.CertPool, quicCfg *quic.Config) *Server {
 	tb.Helper()
+	// Sweepable relay knobs (paramexp wiring): RELAY_RING → GroupCacheSize,
+	// RELAY_FRAME → FrameCapacity. ≤0 keeps the defaults.
+	cfg := &Config{NodeID: nodeID, AdvertiseAddr: addr}
+	if v := envIntDef("RELAY_RING", 0); v > 0 {
+		cfg.GroupCacheSize = v
+	}
+	if v := envIntDef("RELAY_FRAME", 0); v > 0 {
+		cfg.FrameCapacity = v
+	}
 	s := &Server{
 		MOQServer: &moqt.Server{Addr: addr, TLSConfig: &tls.Config{
 			Certificates: []tls.Certificate{cert}, NextProtos: []string{moqt.NextProtoMOQ}, MinVersion: tls.VersionTLS13,
 		}, QUICConfig: quicCfg},
 		MOQDialer: &moqt.Dialer{TLSConfig: chainDialerTLS(pool), QUICConfig: quicCfg},
-		Config:    &Config{NodeID: nodeID, AdvertiseAddr: addr},
+		Config:    cfg,
 		// A real (non-zero) per-relay HopID is REQUIRED for announce-loop
 		// prevention (excludeHop==0 disables it): without it a ≥3-hop chain
 		// re-floods the announcement and hits "duplicated broadcast path".

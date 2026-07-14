@@ -206,19 +206,24 @@ type Result struct {
 	Duration     float64     `json:"duration_sec"`
 	ExitCode     int         `json:"exit_code"`
 	Attempts     int         `json:"attempts"`
+	Replicate    int         `json:"replicate,omitempty"` // 1-based index when a vector is run N times
 	Error        string      `json:"error,omitempty"`
 	Stdout       string      `json:"stdout,omitempty"`
 	Stderr       string      `json:"stderr,omitempty"`
 	Timestamp    time.Time   `json:"timestamp"`
 }
 
-// Observation is the analysis-oriented join of an Experiment with its Result
-// (and the encoded numeric vector the surrogate models consume).
+// Observation is the analysis-oriented join of an Experiment with its Results.
+// When the experiment was replicated (run N times), Metrics holds the per-metric
+// MEANS across replicates, Variances the per-metric population variance, and N
+// the replicate count; the GP fits on the means with per-point noise = Var/N.
 type Observation struct {
 	ExperimentID int64        `json:"experiment_id"`
 	Vector       ParamVector  `json:"vector"`
 	EncodedX     []float64    `json:"encoded_x"`
-	Metrics      MetricSet    `json:"metrics"`
+	Metrics      MetricSet    `json:"metrics"`     // per-metric means across replicates
+	Variances    MetricSet    `json:"variances,omitempty"`
+	N            int          `json:"n,omitempty"`
 	Telemetry    *Telemetry   `json:"telemetry,omitempty"`
 	Duration     float64      `json:"duration_sec"`
 	ExitCode     int          `json:"exit_code"`
@@ -237,6 +242,7 @@ type Config struct {
 	Objective   string       `yaml:"objective"`    // metric to maximize (default throughput_fps)
 	Timeout     time.Duration `yaml:"timeout"`     // per-run timeout (default 10m)
 	MaxAttempts int          `yaml:"max_attempts"` // retry count (default 1)
+	Replicates  int          `yaml:"replicates"`   // runs per parameter vector (default 1)
 }
 
 // ParseConfig reads a minimal YAML config (see example/params.yaml). No YAML
@@ -265,6 +271,9 @@ func ParseConfig(path string) (*Config, error) {
 	}
 	if cfg.MaxAttempts < 1 {
 		cfg.MaxAttempts = 1
+	}
+	if cfg.Replicates < 1 {
+		cfg.Replicates = 1
 	}
 	if err := cfg.Space.Normalize(); err != nil {
 		return nil, err
@@ -354,6 +363,11 @@ func parseYAML(src string, cfg *Config) error {
 			n := parseInt(trimQuote(strings.TrimSpace(strings.TrimPrefix(line, "max_attempts:"))))
 			if n > 0 {
 				cfg.MaxAttempts = n
+			}
+		case strings.HasPrefix(line, "replicates:"):
+			n := parseInt(trimQuote(strings.TrimSpace(strings.TrimPrefix(line, "replicates:"))))
+			if n > 0 {
+				cfg.Replicates = n
 			}
 		}
 	}

@@ -113,3 +113,35 @@ func TestDetectRegressions_RecordsVector(t *testing.T) {
 	require.Len(t, regs, 1)
 	assert.Equal(t, "4", regs[0].Vector["w"])
 }
+
+func TestStabilityReport_FlagsHighCV(t *testing.T) {
+	obs := []experiment.Observation{
+		{ExperimentID: 1, Vector: experiment.ParamVector{"w": "1"}, Metrics: experiment.MetricSet{"m": 100}, Variances: experiment.MetricSet{"m": 1}, N: 5},     // cv=0.01 stable
+		{ExperimentID: 2, Vector: experiment.ParamVector{"w": "2"}, Metrics: experiment.MetricSet{"m": 100}, Variances: experiment.MetricSet{"m": 900}, N: 5},   // cv=0.3 unstable
+		{ExperimentID: 3, Vector: experiment.ParamVector{"w": "4"}, Metrics: experiment.MetricSet{"m": 100}, Variances: experiment.MetricSet{"m": 0}, N: 1},     // single-replicate → stable
+	}
+	stab := StabilityReport(obs, "m")
+	byID := map[int64]bool{}
+	for _, s := range stab {
+		if s.Unstable {
+			byID[s.ExperimentID] = true
+		}
+	}
+	assert.True(t, byID[2], "high-CV config (cv=0.3) is unstable")
+	assert.False(t, byID[1], "low-CV config is stable")
+	assert.False(t, byID[3], "single-replicate config is stable (no evidence)")
+}
+
+func TestIndistinguishableFromBest(t *testing.T) {
+	// Best at mean=100 (n=20, var=4 → se≈0.45). A near config at mean=99.5
+	// (overlapping CI) is a peer; a clearly-worse config at mean=50 is not.
+	obs := []experiment.Observation{
+		{ExperimentID: 1, Vector: experiment.ParamVector{"w": "best"}, Metrics: experiment.MetricSet{"m": 100}, Variances: experiment.MetricSet{"m": 4}, N: 20},
+		{ExperimentID: 2, Vector: experiment.ParamVector{"w": "near"}, Metrics: experiment.MetricSet{"m": 99.5}, Variances: experiment.MetricSet{"m": 4}, N: 20},
+		{ExperimentID: 3, Vector: experiment.ParamVector{"w": "worse"}, Metrics: experiment.MetricSet{"m": 50}, Variances: experiment.MetricSet{"m": 4}, N: 20},
+	}
+	best, peers := IndistinguishableFromBest(obs, "m")
+	assert.Equal(t, int64(1), best.ExperimentID)
+	require.Len(t, peers, 1, "only the near config is indistinguishable from best")
+	assert.Equal(t, int64(2), peers[0].ExperimentID)
+}

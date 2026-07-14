@@ -108,7 +108,8 @@ CREATE TABLE IF NOT EXISTS attempts (
 );
 CREATE INDEX IF NOT EXISTS idx_attempts_exp ON attempts(experiment_id);
 CREATE TABLE IF NOT EXISTS results (
-	experiment_id   INTEGER PRIMARY KEY REFERENCES experiments(id),
+	experiment_id   INTEGER NOT NULL REFERENCES experiments(id),
+	replicate       INTEGER NOT NULL DEFAULT 1,
 	attempt_count   INTEGER DEFAULT 1,
 	metrics         TEXT NOT NULL,
 	duration_sec    REAL,
@@ -116,7 +117,8 @@ CREATE TABLE IF NOT EXISTS results (
 	error           TEXT,
 	stdout          TEXT,
 	stderr          TEXT,
-	timestamp       TEXT NOT NULL
+	timestamp       TEXT NOT NULL,
+	PRIMARY KEY (experiment_id, replicate)
 );
 CREATE TABLE IF NOT EXISTS telemetry (
 	experiment_id   INTEGER PRIMARY KEY REFERENCES experiments(id),
@@ -203,13 +205,18 @@ func (s *Storage) AppendAttempt(a Attempt) error {
 	return err
 }
 
-// SaveResult upserts the successful/result rollup for an experiment.
+// SaveResult stores one replicate's result rollup. r.Replicate (1-based; 0 → 1)
+// keys the row alongside experiment_id so a vector run N times yields N rows.
 func (s *Storage) SaveResult(r *experiment.Result) error {
+	replicate := r.Replicate
+	if replicate < 1 {
+		replicate = 1
+	}
 	metricsJSON, _ := json.Marshal(r.Metrics)
 	_, err := s.db.Exec(
-		`INSERT OR REPLACE INTO results (experiment_id, attempt_count, metrics, duration_sec, exit_code, error, stdout, stderr, timestamp)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		r.ExperimentID, r.Attempts, string(metricsJSON), r.Duration, r.ExitCode, r.Error, truncate(r.Stdout, 4096), r.Stderr,
+		`INSERT OR REPLACE INTO results (experiment_id, replicate, attempt_count, metrics, duration_sec, exit_code, error, stdout, stderr, timestamp)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		r.ExperimentID, replicate, r.Attempts, string(metricsJSON), r.Duration, r.ExitCode, r.Error, truncate(r.Stdout, 4096), r.Stderr,
 		r.Timestamp.UTC().Format(time.RFC3339Nano),
 	)
 	return err
@@ -233,39 +240,132 @@ func (s *Storage) SaveTelemetry(expID int64, t *experiment.Telemetry) error {
 	return err
 }
 
-// Observations returns the analysis-oriented join of experiments and results.
-// When includeFailures is false, only successful (exit_code = 0) runs are returned.
+// Observations returns one analysis-oriented Observation per experiment,
+// aggregating across replicates in Go (metrics are arbitrary-key JSON, so SQL
+// aggregation is impractical). Metrics = per-metric means, Variances = per-metric
+// population variance, N = replicate count. When includeFailures is false,
+// experiments with any failed replicate (non-zero exit) are excluded.
 func (s *Storage) Observations(includeFailures bool) ([]experiment.Observation, error) {
 	q := `SELECT e.id, e.vector, e.encoded_x, e.phase, r.metrics, r.duration_sec, r.exit_code, r.timestamp
-	      FROM experiments e JOIN results r ON r.experiment_id = e.id`
-	if !includeFailures {
-		q += ` WHERE r.exit_code = 0`
-	}
-	q += ` ORDER BY e.id`
+	      FROM experiments e JOIN results r ON r.experiment_id = e.id
+	      ORDER BY e.id, r.replicate`
 	rows, err := s.db.Query(q)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var out []experiment.Observation
+	type agg struct {
+		vector    experiment.ParamVector
+		enc       []float64
+		phase     string
+		metrics   []experiment.MetricSet
+		durations []float64
+		exits     []int
+		ts        time.Time
+	}
+	order := make([]int64, 0)
+	groups := make(map[int64]*agg)
 	for rows.Next() {
-		var o experiment.Observation
-		var vectorJSON, metricsJSON string
+		var id int64
+		var vectorJSON, phase, metricsJSON, ts string
 		var encJSON sql.NullString
-		var ts string
-		if err := rows.Scan(&o.ExperimentID, &vectorJSON, &encJSON, &o.Phase, &metricsJSON, &o.Duration, &o.ExitCode, &ts); err != nil {
+		var dur float64
+		var exit int
+		if err := rows.Scan(&id, &vectorJSON, &encJSON, &phase, &metricsJSON, &dur, &exit, &ts); err != nil {
 			return nil, err
 		}
-		_ = json.Unmarshal([]byte(vectorJSON), &o.Vector)
-		_ = json.Unmarshal([]byte(metricsJSON), &o.Metrics)
-		if encJSON.Valid && encJSON.String != "" {
-			_ = json.Unmarshal([]byte(encJSON.String), &o.EncodedX)
+		a, ok := groups[id]
+		if !ok {
+			a = &agg{phase: phase}
+			_ = json.Unmarshal([]byte(vectorJSON), &a.vector)
+			if encJSON.Valid && encJSON.String != "" {
+				_ = json.Unmarshal([]byte(encJSON.String), &a.enc)
+			}
+			groups[id] = a
+			order = append(order, id)
 		}
-		o.Timestamp, _ = time.Parse(time.RFC3339Nano, ts)
-		out = append(out, o)
+		var ms experiment.MetricSet
+		_ = json.Unmarshal([]byte(metricsJSON), &ms)
+		a.metrics = append(a.metrics, ms)
+		a.durations = append(a.durations, dur)
+		a.exits = append(a.exits, exit)
+		a.ts, _ = time.Parse(time.RFC3339Nano, ts)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	out := make([]experiment.Observation, 0, len(order))
+	for _, id := range order {
+		a := groups[id]
+		worstExit := 0
+		for _, e := range a.exits {
+			if e != 0 {
+				worstExit = e
+				break
+			}
+		}
+		if !includeFailures && worstExit != 0 {
+			continue
+		}
+		means, vars := aggregateMetrics(a.metrics)
+		out = append(out, experiment.Observation{
+			ExperimentID: id,
+			Vector:       a.vector,
+			EncodedX:     a.enc,
+			Phase:        a.phase,
+			Metrics:      means,
+			Variances:    vars,
+			N:            len(a.metrics),
+			Duration:     meanFloats(a.durations),
+			ExitCode:     worstExit,
+			Timestamp:    a.ts,
+		})
+	}
+	return out, nil
+}
+
+// aggregateMetrics returns per-key mean and population variance across metric
+// sets. A key present in only some replicates is aggregated over those present
+// (missing values do not count toward N for that key). Uses the two-pass
+// Σ(x−mean)² form (never negative for near-constant data, unlike E[x²]−E[x]²).
+func aggregateMetrics(sets []experiment.MetricSet) (experiment.MetricSet, experiment.MetricSet) {
+	sum := experiment.MetricSet{}
+	values := map[string][]float64{}
+	for _, ms := range sets {
+		for k, v := range ms {
+			sum[k] += v
+			values[k] = append(values[k], v)
+		}
+	}
+	means := experiment.MetricSet{}
+	vars := experiment.MetricSet{}
+	for k, vs := range values {
+		n := len(vs)
+		mean := sum[k] / float64(n)
+		means[k] = mean
+		if n > 1 {
+			var ss float64
+			for _, v := range vs {
+				d := v - mean
+				ss += d * d
+			}
+			vars[k] = ss / float64(n) // population variance, ≥0 by construction
+		}
+	}
+	return means, vars
+}
+
+func meanFloats(xs []float64) float64 {
+	if len(xs) == 0 {
+		return 0
+	}
+	var sum float64
+	for _, x := range xs {
+		sum += x
+	}
+	return sum / float64(len(xs))
 }
 
 // AllVectors returns the parameter vectors of every experiment (regardless of result).

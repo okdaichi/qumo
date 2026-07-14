@@ -151,7 +151,69 @@ func TestGP_PredictBatch(t *testing.T) {
 	}
 }
 
-// gpsensitivityWeights mirrors analysis.GPSensitivity's 1/ℓ² normalization.
+// TestGP_FitReplicated_DownweightsHighVariance checks the heteroscedastic
+// behavior: a point reported with large per-replicate variance should be
+// downweighted (its prediction pulled toward the surrounding trend), while the
+// same point with tiny variance should be tracked closely.
+func TestGP_FitReplicated_DownweightsHighVariance(t *testing.T) {
+	// 8 points across [0,1]; yMean is ~0 everywhere except a spike at the middle.
+	n := 8
+	X := make([][]float64, n)
+	yMean := make([]float64, n)
+	yVarLo := make([]float64, n)
+	yVarHi := make([]float64, n)
+	mid := n / 2
+	for i := 0; i < n; i++ {
+		X[i] = []float64{float64(i) / float64(n-1)}
+		yMean[i] = 0
+		yVarLo[i] = 1e-6
+		yVarHi[i] = 1e-6
+	}
+	yMean[mid] = 5.0 // a certain-looking spike
+	yVarHi[mid] = 100.0
+
+	gpLo := NewGP(Options{Starts: 30})
+	require.NoError(t, gpLo.FitReplicated(X, yMean, yVarLo))
+	predLo, _, err := gpLo.Predict(X[mid])
+	require.NoError(t, err)
+
+	gpHi := NewGP(Options{Starts: 30})
+	require.NoError(t, gpHi.FitReplicated(X, yMean, yVarHi))
+	predHi, _, err := gpHi.Predict(X[mid])
+	require.NoError(t, err)
+
+	t.Logf("spike prediction: lowVar=%.3f highVar=%.3f", predLo, predHi)
+	assert.Greater(t, predLo, 3.5, "a near-certain spike should be tracked closely")
+	assert.Less(t, predHi, predLo-2.0, "a high-variance spike should be downweighted toward the trend (~0)")
+}
+
+// TestGP_FitReplicated_EqualsFitWhenNoiseFree: with all yVar≈0, FitReplicated
+// should behave like the homoscedastic Fit (predict the means).
+func TestGP_FitReplicated_EqualsFitWhenNoiseFree(t *testing.T) {
+	n := 16
+	X := make([][]float64, n)
+	y := make([]float64, n)
+	yVar := make([]float64, n)
+	for i := 0; i < n; i++ {
+		x := float64(i) / float64(n-1)
+		X[i] = []float64{x}
+		y[i] = math.Sin(2 * math.Pi * x)
+		yVar[i] = 1e-9
+	}
+	gp := NewGP(Options{Starts: 30})
+	require.NoError(t, gp.FitReplicated(X, y, yVar))
+	// Should recover sin(2πx) at held-out points.
+	var mae float64
+	for i := 0; i < n; i++ {
+		m, _, err := gp.Predict(X[i])
+		require.NoError(t, err)
+		mae += math.Abs(m - y[i])
+	}
+	mae /= float64(n)
+	assert.Less(t, mae, 0.2, "noise-free FitReplicated should track the means")
+}
+
+
 func gpsensitivityWeights(lens []float64) []float64 {
 	w := make([]float64, len(lens))
 	var sum float64

@@ -46,6 +46,9 @@ type Inputs struct {
 	Sensitivity  []analysis.Sensitivity // GP-derived; may be nil
 	Surfaces     []Surface              // GP-derived 1-D surfaces; may be nil
 	Contour      *Contour               // GP-derived 2-D contour; may be nil
+	Stability    []analysis.Stability   // per-config CV / unstable flag; may be nil
+	Best         analysis.ConfigCI      // best config (max objective mean) + its CI
+	Peers        []analysis.ConfigCI    // configs statistically indistinguishable from Best
 }
 
 // Generate writes the report directory.
@@ -98,6 +101,9 @@ func Generate(in Inputs) error {
 		Importance   []analysis.ImportanceRank `json:"importance"`
 		Interactions []analysis.Interaction   `json:"interactions"`
 		Sensitivity  []analysis.Sensitivity   `json:"sensitivity,omitempty"`
+		Stability    []analysis.Stability     `json:"stability,omitempty"`
+		BestConfig   analysis.ConfigCI        `json:"best_config,omitempty"`
+		Peers        []analysis.ConfigCI      `json:"indistinguishable_peers,omitempty"`
 	}{
 		Objective:    in.Objective,
 		N:            len(in.Observations),
@@ -107,8 +113,16 @@ func Generate(in Inputs) error {
 		Importance:   in.Importance,
 		Interactions: in.Interactions,
 		Sensitivity:  in.Sensitivity,
+		Stability:    in.Stability,
+		BestConfig:   in.Best,
+		Peers:        in.Peers,
 	}
-	b, _ := json.MarshalIndent(summary, "", "  ")
+	b, err := json.MarshalIndent(summary, "", "  ")
+	if err != nil {
+		// A marshal error (e.g. a NaN sneaking into a metric) would otherwise
+		// produce a silently empty report.json — surface it.
+		return fmt.Errorf("marshal report.json: %w", err)
+	}
 	writeFile(filepath.Join(in.Dir, "report.json"), string(b))
 
 	// 7. Text report.
@@ -256,6 +270,8 @@ func sensitivityToRanks(s []analysis.Sensitivity) []analysis.ImportanceRank {
 type configSummary struct {
 	Vector  experiment.ParamVector `json:"vector"`
 	Metrics experiment.MetricSet    `json:"metrics"`
+	N       int                    `json:"n,omitempty"`
+	CI      float64                `json:"ci,omitempty"` // half-width z·sqrt(var/N) of the objective mean
 }
 
 func topConfigs(obs []experiment.Observation, objective string, n int, best bool) []configSummary {
@@ -272,7 +288,15 @@ func topConfigs(obs []experiment.Observation, objective string, n int, best bool
 	}
 	out := make([]configSummary, n)
 	for i := range n {
-		out[i] = configSummary{Vector: cp[i].Vector, Metrics: cp[i].Metrics}
+		o := cp[i]
+		nr := o.N
+		if nr < 1 {
+			nr = 1
+		}
+		out[i] = configSummary{
+			Vector: o.Vector, Metrics: o.Metrics, N: o.N,
+			CI: 1.96 * math.Sqrt(o.Variances[objective]/float64(nr)),
+		}
 	}
 	return out
 }
@@ -280,18 +304,42 @@ func topConfigs(obs []experiment.Observation, objective string, n int, best bool
 func buildText(in Inputs) string {
 	var sb strings.Builder
 	sb.WriteString("=== Parameter Exploration Report ===\n\n")
-	sb.WriteString(fmt.Sprintf("Experiments: %d\n", len(in.Observations)))
+	sb.WriteString(fmt.Sprintf("Experiments: %d (aggregated; replicates collapsed to mean±CI)\n", len(in.Observations)))
 	sb.WriteString(fmt.Sprintf("Objective: %s (maximize)\n\n", in.Objective))
 	best := topConfigs(in.Observations, in.Objective, 3, true)
 	worst := topConfigs(in.Observations, in.Objective, 3, false)
-	sb.WriteString("--- Top 3 configurations ---\n")
+	sb.WriteString("--- Top 3 configurations (mean ± 95% CI) ---\n")
 	for i, c := range best {
-		sb.WriteString(fmt.Sprintf("  #%d: %s → %s=%s\n", i+1, c.Vector.String(), in.Objective, fmtMetric(c.Metrics[in.Objective])))
+		sb.WriteString(fmt.Sprintf("  #%d: %s → %s=%s\n", i+1, c.Vector.String(), in.Objective, fmtMeanCI(c.Metrics[in.Objective], c.CI, c.N)))
 	}
 	sb.WriteString("\n--- Bottom 3 ---\n")
 	for i, c := range worst {
-		sb.WriteString(fmt.Sprintf("  #%d: %s → %s=%s\n", i+1, c.Vector.String(), in.Objective, fmtMetric(c.Metrics[in.Objective])))
+		sb.WriteString(fmt.Sprintf("  #%d: %s → %s=%s\n", i+1, c.Vector.String(), in.Objective, fmtMeanCI(c.Metrics[in.Objective], c.CI, c.N)))
 	}
+
+	// Best config + statistically indistinguishable peers (the "can't tell apart
+	// from best" set — the brief asks to surface this rather than rank by noise).
+	if in.Best.ExperimentID != 0 {
+		sb.WriteString("\n--- Best vs. indistinguishable peers ---\n")
+		sb.WriteString(fmt.Sprintf("  best: %s → %s=%s\n", in.Best.Vector.String(), in.Objective,
+			fmtMeanCI(in.Best.Mean, 1.96*in.Best.SE, in.Best.N)))
+		if len(in.Peers) == 0 {
+			sb.WriteString("  (no other config is statistically indistinguishable from the best)\n")
+		}
+		for _, p := range in.Peers {
+			sb.WriteString(fmt.Sprintf("  ~peer: %s → %s=%s\n", p.Vector.String(), in.Objective,
+				fmtMeanCI(p.Mean, 1.96*p.SE, p.N)))
+		}
+	}
+
+	// Stability: which configs are noisy across replicates.
+	if unstable := unstableStability(in.Stability); len(unstable) > 0 {
+		sb.WriteString("\n--- Unstable configurations (cv>0.15) ---\n")
+		for _, s := range unstable {
+			sb.WriteString(fmt.Sprintf("  %s → %s (cv=%.2f, n=%d)\n", s.Vector.String(), in.Objective, s.CV, s.N))
+		}
+	}
+
 	if len(in.Knees) > 0 {
 		sb.WriteString("\n--- Knee points ---\n")
 		for _, k := range in.Knees {
@@ -299,18 +347,22 @@ func buildText(in Inputs) string {
 		}
 	}
 	if len(in.Importance) > 0 {
-		sb.WriteString("\n--- Parameter importance (η²) ---\n")
+		sb.WriteString("\n--- Parameter importance (η² = variance explained) ---\n")
 		for _, r := range in.Importance {
 			bar := strings.Repeat("█", int(r.Importance*30))
 			sb.WriteString(fmt.Sprintf("  %-12s %.3f %s\n", r.Param, r.Importance, bar))
 		}
 	}
 	if len(in.Sensitivity) > 0 {
-		sb.WriteString("\n--- GP sensitivity (1/ℓ², normalized) ---\n")
+		sb.WriteString("\n--- GP relevance (1/ℓ² ARD, normalized) ---\n")
 		for _, r := range in.Sensitivity {
 			bar := strings.Repeat("█", int(r.Importance*30))
 			sb.WriteString(fmt.Sprintf("  %-12s %.3f %s\n", r.Param, r.Importance, bar))
 		}
+		sb.WriteString("\nNote: η² and GP 1/ℓ² measure different things — η² is contribution to\n" +
+			"overall variance; 1/ℓ² is local relevance/smoothness. A dimension with a\n" +
+			"large-but-smooth effect ranks high in η² but low in 1/ℓ². Contradictory\n" +
+			"rankings are informative, not a bug.\n")
 	}
 	if len(in.Interactions) > 0 {
 		sb.WriteString("\n--- Parameter interactions ---\n")
@@ -319,6 +371,25 @@ func buildText(in Inputs) string {
 		}
 	}
 	return sb.String()
+}
+
+// unstableStability returns only the configs flagged unstable (sorted by CV desc).
+func unstableStability(stab []analysis.Stability) []analysis.Stability {
+	var out []analysis.Stability
+	for _, s := range stab {
+		if s.Unstable {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// fmtMeanCI renders "value ± ci (n=N)" when replicated, else the bare value.
+func fmtMeanCI(mean, ci float64, n int) string {
+	if n > 1 {
+		return fmt.Sprintf("%.4g ± %.3g (n=%d)", mean, ci, n)
+	}
+	return fmtMetric(mean)
 }
 
 func buildHTML(in Inputs) string {

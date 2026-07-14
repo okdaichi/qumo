@@ -401,3 +401,97 @@ func isWorse(metric string, val, baseline float64) bool {
 	}
 	return val < baseline // lower is worse
 }
+
+// --- Stability & statistical distinguishability (replication-aware) ---
+
+// UnstableCV is the coefficient-of-variation threshold above which a config's
+// objective is classified as unstable (noisy across replicates). CV = std/|mean|.
+var UnstableCV = 0.15
+
+// IndistZ is the z-score for the two-sample "indistinguishable from best" test.
+// 1.96 ≈ 95% confidence that two means differ.
+var IndistZ = 1.96
+
+// Stability is one config's run-to-run consistency on an objective.
+type Stability struct {
+	ExperimentID int64                  `json:"experiment_id"`
+	Vector       experiment.ParamVector `json:"vector"`
+	Mean         float64                `json:"mean"`
+	Std          float64                `json:"std"`
+	CV           float64                `json:"cv"`
+	N            int                    `json:"n"`
+	Unstable     bool                   `json:"unstable"`
+}
+
+// StabilityReport classifies each observation's objective as stable or unstable
+// by its coefficient of variation across replicates (Variances/N must be set by
+// the storage aggregation). Single-replicate observations (N<=1, zero variance)
+// are conservatively left stable (no evidence of instability).
+func StabilityReport(obs []experiment.Observation, objective string) []Stability {
+	out := make([]Stability, 0, len(obs))
+	for _, o := range obs {
+		mean, ok := o.Metrics[objective]
+		if !ok {
+			continue
+		}
+		std := math.Sqrt(o.Variances[objective])
+		cv := 0.0
+		if math.Abs(mean) > 1e-12 {
+			cv = std / math.Abs(mean)
+		}
+		out = append(out, Stability{
+			ExperimentID: o.ExperimentID, Vector: o.Vector,
+			Mean: mean, Std: std, CV: cv, N: o.N,
+			Unstable: o.N > 1 && cv > UnstableCV,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CV > out[j].CV })
+	return out
+}
+
+// ConfigCI is a config's objective mean with the half-width of its mean's
+// confidence interval (z·sqrt(var/N)).
+type ConfigCI struct {
+	ExperimentID int64                  `json:"experiment_id"`
+	Vector       experiment.ParamVector `json:"vector"`
+	Mean         float64                `json:"mean"`
+	SE           float64                `json:"se"` // standard error sqrt(var/N)
+	N            int                    `json:"n"`
+}
+
+// IndistinguishableFromBest returns the best config (max objective mean) and the
+// other configs whose objective mean is NOT statistically distinguishable from
+// it at the IndistZ level (their CIs overlap the best's). A config NOT in peers
+// is significantly worse than the best. Peers are the "can't tell apart from
+// best" set the brief asks to surface.
+func IndistinguishableFromBest(obs []experiment.Observation, objective string) (best ConfigCI, peers []ConfigCI) {
+	cis := make([]ConfigCI, 0, len(obs))
+	for _, o := range obs {
+		mean, ok := o.Metrics[objective]
+		if !ok {
+			continue
+		}
+		n := o.N
+		if n < 1 {
+			n = 1
+		}
+		cis = append(cis, ConfigCI{
+			ExperimentID: o.ExperimentID, Vector: o.Vector,
+			Mean: mean, SE: math.Sqrt(o.Variances[objective] / float64(n)), N: n,
+		})
+	}
+	if len(cis) == 0 {
+		return ConfigCI{}, nil
+	}
+	sort.Slice(cis, func(i, j int) bool { return cis[i].Mean > cis[j].Mean })
+	best = cis[0]
+	for _, c := range cis[1:] {
+		// |mean_i - mean_best| <= z·sqrt(se_i² + se_best²)  ⇒ CIs overlap.
+		gap := math.Abs(c.Mean - best.Mean)
+		threshold := IndistZ * math.Sqrt(c.SE*c.SE+best.SE*best.SE)
+		if gap <= threshold {
+			peers = append(peers, c)
+		}
+	}
+	return best, peers
+}
