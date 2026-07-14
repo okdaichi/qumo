@@ -145,7 +145,7 @@ func TestGroupRing_EarliestAvailable(t *testing.T) {
 		"exactly at size": {head: size, expected: 1},
 		"one past size":   {head: size + 1, expected: 2},
 		"five past size":  {head: size + 5, expected: 6},
-		"large value":     {head: 100, expected: 100 - size + 1},
+		"large value":     {head: size * 2, expected: size + 1},
 	}
 
 	for name, tt := range tests {
