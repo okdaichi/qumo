@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`tools/paramexp` rewritten as a scientific performance-landscape framework.** The flat `package main` MVP is restructured into importable library packages (`experiment`, `encoding`, `provenance`, `runner`, `storage`, `sampler`, `model`, `analysis`, `scheduler`, `visualization`, `report`) plus a thin `cmd/paramexp` CLI — generic for any black-box benchmarkable system. Key additions:
+  - **Gaussian-process surrogate (`model`):** anisotropic RBF kernel with ARD length-scales, fit by maximizing the log-marginal-likelihood (multistart random search + Nelder-Mead polish via `gonum/optimize`, with a median-heuristic fallback), Cholesky-based solve via `gonum/mat`, adaptive-jitter numerical-stability handling, and a per-metric `MultiOutput`. Predict returns mean **and** predictive std (uncertainty) — the framework's first surrogate model and the foundation for Bayesian optimization.
+  - **Numeric parameter encoding:** parameters are now typed (continuous / discrete-ordinal / categorical) and mapped to a normalized `[0,1]^D` space the sampler and GP operate in; the runner still receives original string values. Continuous `min`/`max` and a continuous `jitter` dimension are demonstrated in `example/params.yaml`.
+  - **GP-derived analysis + viz:** `analysis.GPSensitivity` ranks dimensions by `1/ℓ²` (shorter length-scale ⟹ more sensitive); the report draws per-parameter response surfaces (mean ± 2σ band) and a 2-D contour over the two most-sensitive parameters.
+  - **Full provenance + retry + telemetry:** SQLite schema gains `runs` (git revision via `debug.ReadBuildInfo`, machine info, redacted env, config hash), per-retry `attempts`, and a `telemetry` table for resource snapshots (cpu/gc/retransmits/rss/goroutines) the benchmark may emit (feeds later bottleneck attribution). The runner enforces a real context timeout and retries with backoff.
+  - **Bug fixes from the MVP:** `DetectKnees`/`RankImportance` no longer hardcode `throughput_fps` (they honor `--objective`); `DetectRegressions` is no longer dead code and populates param/value; local `min`/`max` shadows of Go 1.21+ builtins removed; `Observations(includeFailures)` makes failed runs analyzable.
+  - New dependency: `gonum.org/v1/gonum` (pure Go, no CGO — consistent with the `CGO_ENABLED=0` posture). Sobol sampling is deferred to a roadmap phase-2 item: a first direction-number recurrence was not a true `(0,m)`-net (it degenerated to covering half the space), so `sampler.Sobol` falls back to LHS rather than ship a subtly-broken generator.
+
 ### Added
 
 - **Automated parameter exploration framework (`tools/paramexp`):** A generic, black-box parameter optimization tool for any benchmarkable system. Samples a discrete parameter space via Latin Hypercube Sampling + adaptive neighbor exploration, runs benchmarks (params as `PARAM_<NAME>` env vars, JSON stdout metrics), stores every experiment in SQLite, then analyzes: knee points (Kneedle), parameter importance (η²), pairwise interactions, regressions, and generates SVG plots + JSON/text reports. One dependency: `modernc.org/sqlite` (pure Go).

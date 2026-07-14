@@ -1,17 +1,28 @@
 # Example parameter space for paramexp.
-# Each parameter is a discrete dimension with named levels.
+# Demonstrates all three parameter types: discrete (numeric levels), categorical
+# (string levels, unordered), and continuous (real-valued min/max).
 
 runner: bash example/bench.sh
 db: paramexp.db
-samples: 12
+samples: 16
 adaptive: 2
 output: report
+objective: throughput_fps
+timeout: 1m
+max_attempts: 2
 
 space:
   params:
     - name: workers
+      type: discrete
       values: [1, 2, 4, 8, 16]
     - name: buffer
+      type: categorical
       values: [16KB, 64KB, 256KB]
     - name: batch
+      type: discrete
       values: [1, 4, 16]
+    - name: jitter
+      type: continuous
+      min: 0
+      max: 1
