@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Automated parameter exploration framework (`tools/paramexp`):** A generic, black-box parameter optimization tool for any benchmarkable system. Samples a discrete parameter space via Latin Hypercube Sampling + adaptive neighbor exploration, runs benchmarks (params as `PARAM_<NAME>` env vars, JSON stdout metrics), stores every experiment in SQLite, then analyzes: knee points (Kneedle), parameter importance (η²), pairwise interactions, regressions, and generates SVG plots + JSON/text reports. One dependency: `modernc.org/sqlite` (pure Go).
+
 ### Fixed
 
 - **Subscriber egress teardown hang (`internal/relay`, #286):** `trackDistributor.egress` now routes every non-delivery loop path through a single wait/cancellation `select` (on `twCtx.Done()`/`d.done`). Its fell-behind skip and cache-miss paths previously iterated via bare `continue` without consulting those signals, so a subscriber that fell behind could blind-spin past cancellation and never return when the subscriber disconnected or the relay shut down. That pinned gomoqt's stream-handler `WaitGroup`, so `Session.CloseWithError`'s `wg.Wait()` hung, the connection was never removed from the connManager, and `Server.Shutdown`/`Close` hung on `<-connManager.Done()` — the multi-subscriber teardown hang and churn-time goroutine leak. The cancellation signal already reached qumo (gomoqt's per-conn `goAway` force-closes the connection on ctx expiry, cancelling the subscribe-stream context `twCtx` derives from); qumo only needed to converge on the one select it already had. The per-group delivery body is extracted into `deliverGroup`. No gomoqt change required.
