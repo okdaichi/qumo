@@ -65,6 +65,7 @@ func explore(args []string) {
 	output := fs.String("output", "", "report output dir (overrides config)")
 	timeout := fs.Duration("timeout", 0, "per-run timeout (overrides config)")
 	maxAttempts := fs.Int("max-attempts", 0, "retry attempts per run (overrides config)")
+	replicates := fs.Int("replicates", 0, "runs per parameter vector (overrides config)")
 	fs.Parse(args)
 
 	if *configPath == "" {
@@ -98,6 +99,9 @@ func explore(args []string) {
 	}
 	if *maxAttempts > 0 {
 		cfg.MaxAttempts = *maxAttempts
+	}
+	if *replicates > 0 {
+		cfg.Replicates = *replicates
 	}
 
 	enc, err := experiment.NewEncoder(cfg.Space)
@@ -159,25 +163,31 @@ func explore(args []string) {
 				continue
 			}
 			log.Printf("  [%d/%d] %s", i+1, len(vectors), v.String())
-			res, err := execRunner.Run(ctx, v)
-			if err != nil || res == nil {
-				log.Printf("    runner error: %v", err)
-				continue
-			}
-			res.ExperimentID = exp.ID
-			_ = store.AppendAttempt(storage.Attempt{
-				ExperimentID: exp.ID, Attempt: max1(res.Attempts),
-				StartedAt: res.Timestamp, DurationSec: res.Duration,
-				ExitCode: res.ExitCode, TimedOut: strings.Contains(res.Error, "timeout"),
-				Error: res.Error, Stdout: res.Stdout, Stderr: res.Stderr,
-				Telemetry: res.Telemetry,
-			})
-			_ = store.SaveResult(res)
-			_ = store.SaveTelemetry(exp.ID, res.Telemetry)
-			if res.ExitCode != 0 {
-				log.Printf("    EXIT %d: %s", res.ExitCode, truncate(res.Error, 80))
-			} else {
-				log.Printf("    → %s", fmtMetrics(res.Metrics, cfg.Objective))
+			for r := 1; r <= cfg.Replicates; r++ {
+				if ctx.Err() != nil {
+					break
+				}
+				res, err := execRunner.Run(ctx, v)
+				if err != nil || res == nil {
+					log.Printf("    replicate %d/%d runner error: %v", r, cfg.Replicates, err)
+					continue
+				}
+				res.ExperimentID = exp.ID
+				res.Replicate = r
+				_ = store.AppendAttempt(storage.Attempt{
+					ExperimentID: exp.ID, Attempt: max1(res.Attempts),
+					StartedAt: res.Timestamp, DurationSec: res.Duration,
+					ExitCode: res.ExitCode, TimedOut: strings.Contains(res.Error, "timeout"),
+					Error: res.Error, Stdout: res.Stdout, Stderr: res.Stderr,
+					Telemetry: res.Telemetry,
+				})
+				_ = store.SaveResult(res)
+				_ = store.SaveTelemetry(exp.ID, res.Telemetry)
+				if res.ExitCode != 0 {
+					log.Printf("    replicate %d/%d EXIT %d: %s", r, cfg.Replicates, res.ExitCode, truncate(res.Error, 80))
+				} else {
+					log.Printf("    replicate %d/%d → %s", r, cfg.Replicates, fmtMetrics(res.Metrics, cfg.Objective))
+				}
 			}
 		}
 	}
@@ -288,10 +298,20 @@ func generateReport(store *storage.Storage, cfg *experiment.Config, enc *experim
 	for _, it := range interactions {
 		log.Printf("  interaction: %s × %s = %.3f", it.ParamA, it.ParamB, it.Score)
 	}
+	stability := analysis.StabilityReport(obs, cfg.Objective)
+	if n := countUnstable(stability); n > 0 {
+		log.Printf("  stability: %d/%d configs unstable (cv>%.2f)", n, len(stability), analysis.UnstableCV)
+	}
+	best, peers := analysis.IndistinguishableFromBest(obs, cfg.Objective)
+	if best.ExperimentID != 0 {
+		log.Printf("  best: %s = %.3g ± %.2g (n=%d); %d config(s) statistically indistinguishable",
+			best.Vector, best.Mean, best.SE, best.N, len(peers))
+	}
 
 	in := report.Inputs{
 		Dir: cfg.Output, Objective: cfg.Objective, Space: cfg.Space,
 		Observations: obs, Knees: knees, Importance: importance, Interactions: interactions,
+		Stability: stability, Best: best, Peers: peers,
 	}
 
 	// GP surrogate fit (best-effort; surfaces/sensitivity skipped on failure).
@@ -312,29 +332,56 @@ func generateReport(store *storage.Storage, cfg *experiment.Config, enc *experim
 	log.Printf("report written to %s/", cfg.Output)
 }
 
-// fitGP builds X/y from observations and fits a GP on the objective. Returns
-// (nil, nil) if there is too little data or the fit fails.
+// fitGP builds X / yMean / yVar from aggregated observations and fits the GP on
+// the objective. When replicates provide per-point variance it fits the
+// heteroscedastic FitReplicated (measured per-point noise); otherwise Fit.
+// Returns (nil, nil) if there is too little data or the fit fails.
 func fitGP(obs []experiment.Observation, enc *experiment.Encoder, objective string) (*model.GaussianProcess, []analysis.Sensitivity) {
 	var X [][]float64
-	var y []float64
+	var yMean, yVar []float64
+	replicated := false
 	for _, o := range obs {
 		if len(o.EncodedX) == 0 {
 			continue
 		}
-		if v, ok := o.Metrics[objective]; ok {
-			X = append(X, o.EncodedX)
-			y = append(y, v)
+		v, ok := o.Metrics[objective]
+		if !ok {
+			continue
 		}
+		X = append(X, o.EncodedX)
+		yMean = append(yMean, v)
+		vv := o.Variances[objective]
+		if o.N > 1 {
+			vv /= float64(o.N) // variance of the mean
+			replicated = true
+		}
+		yVar = append(yVar, vv)
 	}
 	if len(X) < 4 || enc == nil {
 		return nil, nil
 	}
 	gp := model.NewGP(model.Options{})
-	if err := gp.Fit(X, y); err != nil {
+	var err error
+	if replicated {
+		err = gp.FitReplicated(X, yMean, yVar)
+	} else {
+		err = gp.Fit(X, yMean)
+	}
+	if err != nil {
 		log.Printf("  GP fit skipped: %v", err)
 		return nil, nil
 	}
 	return gp, analysis.GPSensitivity(gp, enc.Names())
+}
+
+func countUnstable(stab []analysis.Stability) int {
+	n := 0
+	for _, s := range stab {
+		if s.Unstable {
+			n++
+		}
+	}
+	return n
 }
 
 func fmtLengthScales(names []string, lens []float64) string {

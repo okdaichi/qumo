@@ -54,6 +54,11 @@ type GaussianProcess struct {
 	sigF2  float64
 	noise  float64
 
+	// measuredNoise[i] is the per-point observation variance (in standardized-y
+	// units) when the GP is fit on replicate means; nil/empty ⇒ homoscedastic.
+	// Added to the training-covariance diagonal alongside the noise floor.
+	measuredNoise []float64
+
 	// Cached factorization K = L Lᵀ over the training set (fit on standardized y).
 	chol *mat.Cholesky
 	alpha *mat.VecDense // K⁻¹ y'
@@ -130,9 +135,62 @@ func (g *GaussianProcess) Fit(X [][]float64, y []float64) error {
 	// so Predict (which sizes kstar by len(g.X)) stays consistent with alpha.
 	Xd, yd := dedup(X, ys)
 	g.X = Xd
+	return g.optimizeAndFactorize(Xd, yd)
+}
 
-	// θ = (log ℓ_1..log ℓ_D, log σ_f², log σ_n²). Optimize negative LML.
-	D := dim
+// FitReplicated trains the GP on per-vector replicate means with known per-point
+// variance (heteroscedastic). yMean[i]/yVar[i] are the mean/variance of the
+// objective across the N replicates at X[i]. The per-point observation noise
+// becomes yVar[i] (in standardized-y units), so high-variance points are
+// downweighted automatically; the global noise hyperparameter stays as a floor.
+// Equivalent to Fit when all yVar are ~0 (single replicate).
+func (g *GaussianProcess) FitReplicated(X [][]float64, yMean, yVar []float64) error {
+	if len(X) == 0 || len(X) != len(yMean) || len(X) != len(yVar) {
+		return fmt.Errorf("gp: X/yMean/yVar length mismatch (X=%d yMean=%d yVar=%d)", len(X), len(yMean), len(yVar))
+	}
+	dim := len(X[0])
+	for _, row := range X {
+		if len(row) != dim {
+			return errors.New("gp: ragged X")
+		}
+	}
+	g.dim = dim
+	g.X = X
+	g.kernel = g.opt.Kernel
+	g.measuredNoise = nil // reset (Fit may have been called before)
+
+	mean, std := MeanStd(yMean)
+	g.yMean = mean
+	if std < 1e-12 {
+		g.yStd = 0
+		g.constant = true
+		g.lens = ones(dim, 1.0)
+		g.sigF2 = 0
+		g.noise = g.opt.NoiseFloor
+		return nil
+	}
+	g.yStd = std
+	g.constant = false
+	ys := make([]float64, len(yMean))
+	for i := range yMean {
+		ys[i] = (yMean[i] - mean) / std
+	}
+
+	// Dedup carries the variance (inverse-variance pooled) so a merged point's
+	// measured noise reflects the combined uncertainty.
+	Xd, yd, vd := dedupWithVar(X, ys, yVar)
+	g.X = Xd
+	g.measuredNoise = make([]float64, len(Xd))
+	for i := range Xd {
+		g.measuredNoise[i] = vd[i] / (std * std) // measured variance in standardized-y units
+	}
+	return g.optimizeAndFactorize(Xd, yd)
+}
+
+// optimizeAndFactorize runs the multistart + Nelder-Mead hyperparameter search
+// (maximizing the LML) and caches the Cholesky/α. Shared by Fit and FitReplicated.
+func (g *GaussianProcess) optimizeAndFactorize(Xd [][]float64, yd []float64) error {
+	D := g.dim
 	starts := g.opt.Starts
 	if starts == 0 {
 		starts = 40 + 8*D
@@ -144,7 +202,6 @@ func (g *GaussianProcess) Fit(X [][]float64, y []float64) error {
 		}
 	}
 
-	// objective is the negative log-marginal-likelihood as a function of θ.
 	objective := func(theta []float64) float64 {
 		return g.negLogMarginalLikelihood(Xd, yd, theta)
 	}
@@ -160,18 +217,15 @@ func (g *GaussianProcess) Fit(X [][]float64, y []float64) error {
 		}
 	}
 
-	// Nelder-Mead polish on the best random point.
 	polished := polishNM(objective, bestTheta)
 	if pv := objective(polished); pv < bestVal {
 		bestVal, bestTheta = pv, polished
 	}
 
-	// Final guard: keep median-heuristic if the optimized fit is worse.
 	if medianVal := objective(medianHeuristicTheta(D, yd)); medianVal < bestVal {
 		bestTheta = medianHeuristicTheta(D, yd)
 	}
 
-	// Unpack θ and cache the factorization for prediction.
 	g.unpackTheta(bestTheta)
 	return g.factorize(Xd, yd)
 }
@@ -197,9 +251,13 @@ func (g *GaussianProcess) negLogMarginalLikelihood(X [][]float64, y []float64, t
 	}
 	trace := 0.0
 	for i := range X {
+		n := noise
+		if i < len(g.measuredNoise) {
+			n += g.measuredNoise[i]
+		}
 		trace += K.At(i, i)
-		trace += noise
-		K.SetSym(i, i, K.At(i, i)+noise)
+		trace += n
+		K.SetSym(i, i, K.At(i, i)+n)
 	}
 	jitter := 1e-6 * (trace/float64(len(X)) + 1e-12)
 
@@ -257,7 +315,11 @@ func (g *GaussianProcess) factorize(X [][]float64, y []float64) error {
 		for j := i; j < n; j++ {
 			K.SetSym(i, j, g.cov(X[i], X[j]))
 		}
-		K.SetSym(i, i, K.At(i, i)+g.noise)
+		nv := g.noise
+		if i < len(g.measuredNoise) {
+			nv += g.measuredNoise[i]
+		}
+		K.SetSym(i, i, K.At(i, i)+nv)
 	}
 	var chol mat.Cholesky
 	jitter := 1e-6
@@ -460,6 +522,42 @@ func dedup(X [][]float64, y []float64) ([][]float64, []float64) {
 		ykeep[i] = sums[i] / float64(counts[i])
 	}
 	return keep, ykeep
+}
+
+// dedupWithVar is dedup that also pools per-point variance: a merged point keeps
+// the inverse-variance-weighted mean of y and the combined observation variance
+// (pooled as 1/Σ(1/vᵢ); a zero-variance point dominates). Used by FitReplicated.
+func dedupWithVar(X [][]float64, y, v []float64) ([][]float64, []float64, []float64) {
+	keep := [][]float64{}
+	ykeep := []float64{}
+	vkeep := []float64{}
+	for i, xi := range X {
+		found := -1
+		for j, xj := range keep {
+			if nearEqual(xi, xj) {
+				found = j
+				break
+			}
+		}
+		if found < 0 {
+			keep = append(keep, xi)
+			ykeep = append(ykeep, y[i])
+			vkeep = append(vkeep, v[i])
+			continue
+		}
+		// Inverse-variance pooling: wᵢ = 1/vᵢ (clamp tiny v to avoid div-by-zero).
+		va, vb := vkeep[found], v[i]
+		if va < 1e-12 {
+			va = 1e-12
+		}
+		if vb < 1e-12 {
+			vb = 1e-12
+		}
+		wa, wb := 1/va, 1/vb
+		ykeep[found] = (wa*ykeep[found] + wb*y[i]) / (wa + wb)
+		vkeep[found] = 1 / (wa + wb) // variance of the weighted mean (known-variance case)
+	}
+	return keep, ykeep, vkeep
 }
 
 func nearEqual(a, b []float64) bool {

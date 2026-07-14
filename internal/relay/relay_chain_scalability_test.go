@@ -57,6 +57,11 @@ type scalabilityStats struct {
 // All relays share one self-signed cert (trusted via pool).
 func fanoutSweepRun(tb testing.TB, cert tls.Certificate, pool *x509.CertPool, quicCfg *quic.Config, K, frameSize int, gap, duration time.Duration) scalabilityStats {
 	tb.Helper()
+	// Sweepable relay knob (paramexp wiring): RELAY_NOTIFY_TIMEOUT_MS overrides
+	// the package-level NotifyTimeout for this run. Set once; idempotent.
+	if v := envIntDef("RELAY_NOTIFY_TIMEOUT_MS", 0); v > 0 {
+		NotifyTimeout = time.Duration(v) * time.Millisecond
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 

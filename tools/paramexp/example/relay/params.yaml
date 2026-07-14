@@ -1,0 +1,38 @@
+# paramexp → qumo relay fan-out exploration.
+#
+# Sweeps relay-side knobs (group-cache ring size, frame capacity, notify
+# timeout) across fan-out widths, to find the configuration that serves stable
+# high-performance large fan-out. Each vector runs the real
+# BenchmarkRelayChain_FanoutSweep integration benchmark at the given fan-out K
+# and reports loss / p99 latency / throughput / fairness.
+#
+# Run from the qumo repo root:
+#   go run ./tools/paramexp/cmd/paramexp explore \
+#     --config tools/paramexp/example/relay/params.yaml
+# (The full sweep is intended for the nightly bench job on Linux; trim with
+# --samples and PARAM_FANOUT_KS for a local smoke.)
+
+runner: bash tools/paramexp/example/relay/bench.sh
+db: paramexp_relay.db
+samples: 16
+adaptive: 2
+output: relay_report
+objective: score      # composite: throughput * fairness * (1 - loss) — higher is better
+timeout: 15m
+max_attempts: 1
+replicates: 5         # run each vector 5× so variance/CIs are first-class
+
+space:
+  params:
+    - name: ring
+      type: discrete
+      values: ["4", "8", "16", "32"]       # group-cache ring size (DefaultGroupCacheSize=8)
+    - name: frame
+      type: discrete
+      values: ["1500", "9000"]             # frame buffer bytes (MTU vs jumbo)
+    - name: notify_ms
+      type: discrete
+      values: ["1", "5"]                   # egress NotifyTimeout (default 1ms)
+    - name: fanout_k
+      type: discrete
+      values: ["16", "64"]                 # fan-out width K

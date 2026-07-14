@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`tools/paramexp` replication + variance (statistical rigor).** Each parameter vector can now be run N times (`replicates:` config / `--replicates`); variance becomes first-class. `storage.Observations` aggregates replicates in Go (per-metric means + population variance + N), so analysis runs on the de-noised means. The GP gains a heteroscedastic `FitReplicated(X, yMean, yVar)` that uses the measured per-point variance as observation noise (the global noise hyperparameter stays as a floor) — high-variance configs are downweighted automatically and `var/N` shrinks as N grows. New analysis: `StabilityReport` flags configs whose objective CV exceeds `UnstableCV` (0.15), and `IndistinguishableFromBest` returns the best config plus the set whose CI overlaps it (the "can't tell apart from best" group). Reports now show `mean ± 95% CI (n=N)`, an unstable-configs section, best-vs-peers, and a caption explaining that η² (variance-explained) and GP 1/ℓ² (local relevance) measure different things.
+- **`tools/paramexp` → relay integration.** The relay fan-out benchmark is now sweepable by paramexp: `RELAY_RING`/`RELAY_FRAME` knobs in `spinRelay` and a `RELAY_NOTIFY_TIMEOUT_MS` knob in `fanoutSweepRun` (integration tests), plus `example/relay/{params.yaml,bench.sh}` — a self-contained harness that runs `BenchmarkRelayChain_FanoutSweep` per vector and emits one JSON line of loss/p99/mbps/fairness. This is the brief's "Relay Integration" layer; the full sweep belongs on the nightly Linux bench job.
+
+### Fixed
+
+- **`tools/paramexp` variance NaN.** `aggregateMetrics` used the numerically unstable `E[x²]−E[x]²` form, which goes slightly negative for near-constant (deterministic-bench) data and yielded `sqrt(NaN)` CIs — which in turn broke `report.json` marshaling (silent empty file). Switched to the two-pass `Σ(x−mean)²` form (never negative) and surfaced the marshal error instead of swallowing it.
+
 ### Changed
 
 - **`tools/paramexp` package layout simplified (11 → 7 packages).** Folded the small leaf and coupled-pair packages into their natural homes to reduce over-decomposition: `encoding` → `experiment` (`experiment.Encoder`/`NewEncoder`; the encoder is the numeric view of the domain types, and everyone already imported `experiment`, so this also removes an import edge); `provenance` → `storage` (`storage.Run`/`Capture`/`Abs`); `visualization` → `report` (SVG helpers are now unexported, since only `report` ever used them); `scheduler` → `sampler` (`sampler.Scheduler`/`SchedulerState`/`StaticScheduler`). Final layout: `experiment`, `storage`, `runner`, `sampler`, `model`, `analysis`, `report`, plus the thin `cmd/paramexp`. The distinct heavy concerns (GP math in `model`, statistics in `analysis`, SQL in `storage`, exec in `runner`) stay separate.
