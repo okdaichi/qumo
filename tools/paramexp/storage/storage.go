@@ -11,7 +11,6 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/qumo-dev/qumo/tools/paramexp/experiment"
-	"github.com/qumo-dev/qumo/tools/paramexp/provenance"
 )
 
 // Storage wraps a SQLite database.
@@ -132,7 +131,7 @@ CREATE TABLE IF NOT EXISTS telemetry (
 `
 
 // SaveRun inserts a provenance Run and writes back its ID.
-func (s *Storage) SaveRun(r *provenance.Run) error {
+func (s *Storage) SaveRun(r *Run) error {
 	dirty := 0
 	if r.GitDirty {
 		dirty = 1

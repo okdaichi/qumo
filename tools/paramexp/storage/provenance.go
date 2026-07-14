@@ -1,7 +1,8 @@
-// Package provenance captures reproducibility metadata for an exploration run:
-// framework + VCS revision, machine info, a redacted environment snapshot, and a
-// config hash. All gathering is pure Go (no CGO, no gopsutil) and best-effort.
-package provenance
+// Provenance capture for an exploration run: framework + VCS revision, machine
+// info, a redacted environment snapshot, and a config hash. All gathering is
+// pure Go (no CGO, no gopsutil) and best-effort.
+
+package storage
 
 import (
 	"crypto/sha256"
@@ -142,18 +143,12 @@ func gitOutput(dir string, args ...string) (string, error) {
 
 // Hash canonicalizes v as sorted JSON and returns its sha256 hex digest.
 func Hash(v any) (string, error) {
-	b, err := canonicalJSON(v)
+	b, err := json.Marshal(v)
 	if err != nil {
 		return "", err
 	}
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:]), nil
-}
-
-// canonicalJSON marshals v with map keys sorted (json.Marshal already sorts
-// map[string]... keys), producing a stable representation.
-func canonicalJSON(v any) ([]byte, error) {
-	return json.Marshal(v)
 }
 
 // AsJSON marshals v, returning "" on error (best-effort provenance fields).

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`tools/paramexp` package layout simplified (11 → 7 packages).** Folded the small leaf and coupled-pair packages into their natural homes to reduce over-decomposition: `encoding` → `experiment` (`experiment.Encoder`/`NewEncoder`; the encoder is the numeric view of the domain types, and everyone already imported `experiment`, so this also removes an import edge); `provenance` → `storage` (`storage.Run`/`Capture`/`Abs`); `visualization` → `report` (SVG helpers are now unexported, since only `report` ever used them); `scheduler` → `sampler` (`sampler.Scheduler`/`SchedulerState`/`StaticScheduler`). Final layout: `experiment`, `storage`, `runner`, `sampler`, `model`, `analysis`, `report`, plus the thin `cmd/paramexp`. The distinct heavy concerns (GP math in `model`, statistics in `analysis`, SQL in `storage`, exec in `runner`) stay separate.
+
 ### Fixed
 
 - **`tools/paramexp` `report` package was never committed (#294 regression):** the module `.gitignore` rule `report/` — intended for the generated report *output* directory — also matched the `report/` source *package*, so `report/report.go` was silently excluded from #294. `cmd/paramexp` imports it, so `go build ./...` in `tools/paramexp` failed on `main` (CI didn't catch it because the qumo root `go test ./...` does not traverse the separate `tools/paramexp` module). The output directory is renamed to `report_out/` (default `--output`, gitignored) so it no longer collides with the `report` package, which is now tracked.

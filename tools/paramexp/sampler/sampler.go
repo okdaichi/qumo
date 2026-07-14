@@ -1,19 +1,18 @@
 // Package sampler generates parameter vectors (decoded to strings via an
-// encoding.Encoder) from a parameter space. Implementations: LHS, Sobol
+// experiment.Encoder) from a parameter space. Implementations: LHS, Sobol
 // (Joe-Kuo direction numbers), and Adaptive (neighbor exploration).
 package sampler
 
 import (
 	"sort"
 
-	"github.com/qumo-dev/qumo/tools/paramexp/encoding"
 	"github.com/qumo-dev/qumo/tools/paramexp/experiment"
 )
 
 // Sampler generates n parameter vectors by sampling in [0,1]^D and decoding
 // each point to a string ParamVector.
 type Sampler interface {
-	Sample(enc *encoding.Encoder, n int) ([]experiment.ParamVector, error)
+	Sample(enc *experiment.Encoder, n int) ([]experiment.ParamVector, error)
 }
 
 // --- LHS ---
@@ -26,7 +25,7 @@ type LHS struct {
 }
 
 // Sample generates n vectors.
-func (s LHS) Sample(enc *encoding.Encoder, n int) ([]experiment.ParamVector, error) {
+func (s LHS) Sample(enc *experiment.Encoder, n int) ([]experiment.ParamVector, error) {
 	dim := enc.Dim()
 	if n <= 0 {
 		return nil, nil
@@ -71,7 +70,7 @@ func (s LHS) Sample(enc *encoding.Encoder, n int) ([]experiment.ParamVector, err
 type Sobol struct{}
 
 // Sample delegates to LHS until a verified Sobol generator is implemented.
-func (Sobol) Sample(enc *encoding.Encoder, n int) ([]experiment.ParamVector, error) {
+func (Sobol) Sample(enc *experiment.Encoder, n int) ([]experiment.ParamVector, error) {
 	return LHS{}.Sample(enc, n)
 }
 
@@ -84,7 +83,7 @@ type Adaptive struct {
 }
 
 // SampleNear returns up to n untried neighbor vectors near the best observations.
-func (a *Adaptive) SampleNear(enc *encoding.Encoder, obs []experiment.Observation, n int, objective string, space experiment.ParamSpace) ([]experiment.ParamVector, error) {
+func (a *Adaptive) SampleNear(enc *experiment.Encoder, obs []experiment.Observation, n int, objective string, space experiment.ParamSpace) ([]experiment.ParamVector, error) {
 	if n <= 0 || len(obs) == 0 {
 		return nil, nil
 	}

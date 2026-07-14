@@ -1,43 +1,42 @@
-// Package encoding bridges the string-valued parameter space the black-box
-// runner consumes and the normalized [0,1]^D numeric space that samplers and
-// surrogate models operate in.
+// Encoder bridges the string-valued parameter space the black-box runner
+// consumes and the normalized [0,1]^D numeric space that samplers and surrogate
+// models operate in.
 //
-// It is the single source of truth for that mapping. Samplers produce points
-// in [0,1]^D; the scheduler decodes them to string ParamVectors before the
+// It is the single source of truth for that mapping: samplers produce points in
+// [0,1]^D and the scheduler decodes them to string ParamVectors before the
 // runner is invoked, so the benchmark script never sees encoded numbers.
-package encoding
+
+package experiment
 
 import (
 	"fmt"
 	"math"
 	"strconv"
-
-	"github.com/qumo-dev/qumo/tools/paramexp/experiment"
 )
 
 // Encoder encodes/decodes parameter vectors for a fixed ParamSpace.
 type Encoder struct {
-	specs []spec
+	specs []encSpec
 }
 
-type spec struct {
-	name    string
-	typ     experiment.ParamType
-	values  []string // discrete/categorical levels (declared order)
-	min, max float64 // continuous bounds
+type encSpec struct {
+	name     string
+	typ      ParamType
+	values   []string // discrete/categorical levels (declared order)
+	min, max float64  // continuous bounds
 }
 
-// New builds an Encoder from a (normalized) ParamSpace.
-func New(space experiment.ParamSpace) (*Encoder, error) {
-	e := &Encoder{specs: make([]spec, len(space.Params))}
+// NewEncoder builds an Encoder from a (normalized) ParamSpace.
+func NewEncoder(space ParamSpace) (*Encoder, error) {
+	e := &Encoder{specs: make([]encSpec, len(space.Params))}
 	for i, p := range space.Params {
-		s := spec{name: p.Name, typ: p.Type, values: p.Values, min: p.Min, max: p.Max}
+		s := encSpec{name: p.Name, typ: p.Type, values: p.Values, min: p.Min, max: p.Max}
 		switch p.Type {
-		case experiment.TypeContinuous:
+		case TypeContinuous:
 			if !(p.Min < p.Max) {
 				return nil, fmt.Errorf("encoder: continuous param %s needs min < max", p.Name)
 			}
-		case experiment.TypeDiscrete, experiment.TypeCategorical:
+		case TypeDiscrete, TypeCategorical:
 			if len(p.Values) < 2 {
 				return nil, fmt.Errorf("encoder: param %s needs ≥2 values", p.Name)
 			}
@@ -62,7 +61,7 @@ func (e *Encoder) Names() []string {
 }
 
 // Encode maps a string ParamVector to a normalized [0,1]^D vector.
-func (e *Encoder) Encode(v experiment.ParamVector) ([]float64, error) {
+func (e *Encoder) Encode(v ParamVector) ([]float64, error) {
 	out := make([]float64, len(e.specs))
 	for i, s := range e.specs {
 		val, ok := v[s.name]
@@ -79,27 +78,27 @@ func (e *Encoder) Encode(v experiment.ParamVector) ([]float64, error) {
 }
 
 // Decode maps a normalized [0,1]^D vector back to a string ParamVector.
-func (e *Encoder) Decode(x []float64) (experiment.ParamVector, error) {
+func (e *Encoder) Decode(x []float64) (ParamVector, error) {
 	if len(x) != len(e.specs) {
 		return nil, fmt.Errorf("decode: expected %d dims, got %d", len(e.specs), len(x))
 	}
-	out := make(experiment.ParamVector, len(e.specs))
+	out := make(ParamVector, len(e.specs))
 	for i, s := range e.specs {
-		out[s.name] = s.decode(clamp01(x[i]))
+		out[s.name] = s.decode(clampUnit(x[i]))
 	}
 	return out, nil
 }
 
-func (s *spec) encode(val string) (float64, error) {
+func (s *encSpec) encode(val string) (float64, error) {
 	switch s.typ {
-	case experiment.TypeContinuous:
+	case TypeContinuous:
 		f, err := strconv.ParseFloat(val, 64)
 		if err != nil {
 			return 0, err
 		}
-		return clamp01((f - s.min) / (s.max - s.min)), nil
-	case experiment.TypeDiscrete, experiment.TypeCategorical:
-		idx := indexOf(s.values, val)
+		return clampUnit((f - s.min) / (s.max - s.min)), nil
+	case TypeDiscrete, TypeCategorical:
+		idx := indexOfString(s.values, val)
 		if idx < 0 {
 			return 0, fmt.Errorf("value not in declared levels")
 		}
@@ -111,12 +110,12 @@ func (s *spec) encode(val string) (float64, error) {
 	return 0, fmt.Errorf("unsupported type")
 }
 
-func (s *spec) decode(u float64) string {
+func (s *encSpec) decode(u float64) string {
 	switch s.typ {
-	case experiment.TypeContinuous:
+	case TypeContinuous:
 		f := s.min + u*(s.max-s.min)
 		return strconv.FormatFloat(f, 'g', -1, 64)
-	case experiment.TypeDiscrete, experiment.TypeCategorical:
+	case TypeDiscrete, TypeCategorical:
 		if len(s.values) == 1 {
 			return s.values[0]
 		}
@@ -132,7 +131,7 @@ func (s *spec) decode(u float64) string {
 	return ""
 }
 
-func clamp01(u float64) float64 {
+func clampUnit(u float64) float64 {
 	if u < 0 {
 		return 0
 	}
@@ -145,7 +144,7 @@ func clamp01(u float64) float64 {
 	return u
 }
 
-func indexOf(values []string, v string) int {
+func indexOfString(values []string, v string) int {
 	for i, x := range values {
 		if x == v {
 			return i
