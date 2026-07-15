@@ -206,7 +206,7 @@ func (g *GaussianProcess) optimizeAndFactorize(Xd [][]float64, yd []float64) err
 		return g.negLogMarginalLikelihood(Xd, yd, theta)
 	}
 
-	rng := newLCG(g.opt.Seed)
+	rng := NewLCG(g.opt.Seed)
 	bestTheta := medianHeuristicTheta(D, yd)
 	bestVal := objective(bestTheta)
 	for s := 0; s < starts; s++ {
@@ -429,13 +429,13 @@ func medianHeuristicTheta(D int, _ []float64) []float64 {
 	return theta
 }
 
-func randomTheta(D int, rng *lcg) []float64 {
+func randomTheta(D int, rng *LCG) []float64 {
 	theta := make([]float64, D+2)
 	for d := range D {
-		theta[d] = rng.uniform(math.Log(1e-2), math.Log(1e1))
+		theta[d] = rng.Uniform(math.Log(1e-2), math.Log(1e1))
 	}
-	theta[D] = rng.uniform(math.Log(1e-3), math.Log(1e1))
-	theta[D+1] = rng.uniform(math.Log(1e-6), math.Log(1e-1))
+	theta[D] = rng.Uniform(math.Log(1e-3), math.Log(1e1))
+	theta[D+1] = rng.Uniform(math.Log(1e-6), math.Log(1e-1))
 	return theta
 }
 
