@@ -88,6 +88,39 @@ func (ps ParamSpace) Size() int {
 // Dim returns the number of parameter dimensions.
 func (ps ParamSpace) Dim() int { return len(ps.Params) }
 
+// IsDiscrete reports whether every parameter is discrete or categorical (no
+// continuous dimensions) — i.e. the full Cartesian space is finite and enumerable.
+func (ps ParamSpace) IsDiscrete() bool {
+	for _, p := range ps.Params {
+		if p.Type == TypeContinuous {
+			return false
+		}
+	}
+	return len(ps.Params) > 0
+}
+
+// AllVectors enumerates the full Cartesian product of a fully-discrete space.
+// Returns nil if the space has any continuous dimension or is empty. The order
+// is deterministic (last dimension varies fastest).
+func (ps ParamSpace) AllVectors() []ParamVector {
+	if !ps.IsDiscrete() {
+		return nil
+	}
+	out := []ParamVector{{}}
+	for _, p := range ps.Params {
+		var next []ParamVector
+		for _, v := range out {
+			for _, level := range p.Values {
+				cp := v.Copy()
+				cp[p.Name] = level
+				next = append(next, cp)
+			}
+		}
+		out = next
+	}
+	return out
+}
+
 // Normalize infers TypeUnspecified parameters and validates the space.
 //   - explicit Min/Max (and no Values) → Continuous
 //   - all Values parse as float → Discrete (sorted ascending by numeric value)

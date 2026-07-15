@@ -298,7 +298,7 @@ func topConfigs(obs []experiment.Observation, objective string, n int, best bool
 		}
 		out[i] = configSummary{
 			Vector: o.Vector, Metrics: o.Metrics, N: o.N,
-			CI: 1.96 * math.Sqrt(o.Variances[objective]/float64(nr)),
+			CI: analysis.TCritical(o.N-1) * math.Sqrt(o.Variances[objective]/float64(nr)),
 		}
 	}
 	return out
@@ -325,13 +325,13 @@ func buildText(in Inputs) string {
 	if in.Best.ExperimentID != 0 {
 		sb.WriteString("\n--- Best vs. indistinguishable peers ---\n")
 		sb.WriteString(fmt.Sprintf("  best: %s → %s=%s\n", in.Best.Vector.String(), in.Objective,
-			fmtMeanCI(in.Best.Mean, 1.96*in.Best.SE, in.Best.N)))
+			fmtMeanCI(in.Best.Mean, analysis.TCritical(in.Best.N-1)*in.Best.SE, in.Best.N)))
 		if len(in.Peers) == 0 {
 			sb.WriteString("  (no other config is statistically indistinguishable from the best)\n")
 		}
 		for _, p := range in.Peers {
 			sb.WriteString(fmt.Sprintf("  ~peer: %s → %s=%s\n", p.Vector.String(), in.Objective,
-				fmtMeanCI(p.Mean, 1.96*p.SE, p.N)))
+				fmtMeanCI(p.Mean, analysis.TCritical(p.N-1)*p.SE, p.N)))
 		}
 	}
 

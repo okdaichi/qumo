@@ -99,7 +99,7 @@ func TestObservations_ReplicateAggregation(t *testing.T) {
 	o := obs[0]
 	assert.Equal(t, 3, o.N)
 	assert.InDelta(t, 20.0, o.Metrics["m"], 1e-9)
-	assert.InDelta(t, 200.0/3.0, o.Variances["m"], 1e-9) // population variance of {10,20,30}
+	assert.InDelta(t, 100.0, o.Variances["m"], 1e-9) // sample variance (÷N-1) of {10,20,30}: (100+0+100)/2
 
 	// A failed replicate excludes the whole experiment when includeFailures=false.
 	e2 := &experiment.Experiment{RunID: run.ID, Vector: experiment.ParamVector{"w": "8"}, Phase: "lhs", CreatedAt: time.Now()}

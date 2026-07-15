@@ -33,7 +33,7 @@ func TestSuggestedNext_DistinctAndRanked(t *testing.T) {
 	require.NoError(t, err)
 
 	acq := model.NewPredictiveVariance() // pure exploration → picks uncertain points
-	sug := SuggestedNext(gp, enc, acq, 4, 12345)
+	sug := SuggestedNext(gp, enc, space, acq, nil, 4, 12345)
 	require.Len(t, sug, 4)
 
 	// All distinct vectors.

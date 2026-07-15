@@ -99,6 +99,7 @@ func (g *GaussianProcess) Hyperparameters() Hyperparameters {
 // signal variance, and noise by maximizing the log-marginal-likelihood via
 // multistart random search + a Nelder-Mead polish, and caches the Cholesky.
 func (g *GaussianProcess) Fit(X [][]float64, y []float64) error {
+	g.measuredNoise = nil // reset (a previous FitReplicated may have set it)
 	if len(X) == 0 || len(X) != len(y) {
 		return fmt.Errorf("gp: X and y length mismatch (X=%d y=%d)", len(X), len(y))
 	}

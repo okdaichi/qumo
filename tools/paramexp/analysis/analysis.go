@@ -488,10 +488,48 @@ func IndistinguishableFromBest(obs []experiment.Observation, objective string) (
 	for _, c := range cis[1:] {
 		// |mean_i - mean_best| <= z·sqrt(se_i² + se_best²)  ⇒ CIs overlap.
 		gap := math.Abs(c.Mean - best.Mean)
-		threshold := IndistZ * math.Sqrt(c.SE*c.SE+best.SE*best.SE)
+		threshold := TCritical(min(c.N, best.N)-1) * math.Sqrt(c.SE*c.SE+best.SE*best.SE)
 		if gap <= threshold {
 			peers = append(peers, c)
 		}
 	}
 	return best, peers
+}
+
+// tTable holds two-tailed 95% critical values (t_{0.975,df}) for small degrees
+// of freedom; beyond df=30 the normal approximation z≈1.96 is used.
+var tTable = map[int]float64{
+	1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571,
+	6: 2.447, 7: 2.365, 8: 2.306, 9: 2.262, 10: 2.228,
+	11: 2.201, 12: 2.179, 13: 2.160, 14: 2.145, 15: 2.131,
+	20: 2.086, 25: 2.060, 30: 2.042,
+}
+
+// TCritical returns the two-tailed 95% t-quantile for df degrees of freedom
+// (df ≤ 0 → normal z=1.96; df > 30 → 1.96; interpolated in between).
+func TCritical(df int) float64 {
+	if df <= 0 {
+		return 1.96
+	}
+	if df > 30 {
+		return 1.96
+	}
+	if v, ok := tTable[df]; ok {
+		return v
+	}
+	// Linear interpolation between nearest table entries.
+	var lo, hi int
+	for k := range tTable {
+		if k < df && k > lo {
+			lo = k
+		}
+		if k > df && (hi == 0 || k < hi) {
+			hi = k
+		}
+	}
+	if lo == 0 || hi == 0 {
+		return 1.96
+	}
+	tlo, thi := tTable[lo], tTable[hi]
+	return tlo + (thi-tlo)*float64(df-lo)/float64(hi-lo)
 }
