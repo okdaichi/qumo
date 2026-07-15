@@ -228,7 +228,12 @@ func BenchmarkRelayChain_FanoutSweep(b *testing.B) {
 	cert, pool := chainCert(b)
 	quicCfg := &quic.Config{EnableDatagrams: true, KeepAlivePeriod: 5 * time.Second, MaxIdleTimeout: 30 * time.Second, MaxIncomingUniStreams: 1 << 20, MaxIncomingStreams: 1 << 20}
 	const gap = 2 * time.Millisecond // ~500fps sustainable
-	const dur = 3 * time.Second
+	dur := 3 * time.Second
+	if d := os.Getenv("BENCH_DURATION"); d != "" {
+		if parsed, err := time.ParseDuration(d); err == nil {
+			dur = parsed
+		}
+	}
 	const sz = 1200
 
 	ks := parseIntListEnv("FANOUT_KS", []int{1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024})
