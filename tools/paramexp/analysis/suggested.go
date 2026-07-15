@@ -5,8 +5,6 @@
 package analysis
 
 import (
-	"sort"
-
 	"github.com/qumo-dev/qumo/tools/paramexp/experiment"
 	"github.com/qumo-dev/qumo/tools/paramexp/model"
 )
@@ -21,37 +19,29 @@ type Suggestion struct {
 	PredictedStd  float64                `json:"predicted_std"`
 }
 
-// SuggestedNext returns up to n distinct points maximizing acq that have not
-// been measured yet — the model's recommendation for where to sample next. The
-// caller constructs acq (e.g. via model.AcquisitionFor) with the current best.
-func SuggestedNext(gp *model.GaussianProcess, enc *experiment.Encoder, acq model.Acquisition, n int, seed uint64) []Suggestion {
+// SuggestedNext returns up to n unmeasured points maximizing acq. Observed
+// vectors are excluded; for discrete spaces all candidates are enumerated
+// (guaranteed distinct + novel). The caller constructs acq (e.g. via
+// model.AcquisitionFor) with the current best.
+func SuggestedNext(gp *model.GaussianProcess, enc *experiment.Encoder, space experiment.ParamSpace,
+	acq model.Acquisition, observed []experiment.ParamVector, n int, seed uint64) []Suggestion {
 	if gp == nil || enc == nil || n <= 0 {
 		return nil
 	}
-	dim := enc.Dim()
-	candidates := dim * 200
 	rng := model.NewLCG(seed)
-	exclude := make([][]float64, 0, n)
-	out := make([]Suggestion, 0, n)
-	for len(out) < n {
-		x, val := model.MaximizeAcquisition(gp, acq, dim, candidates, rng, exclude)
-		if x == nil {
-			break
-		}
-		vec, err := enc.Decode(x)
+	picks := model.SelectByAcquisition(gp, acq, enc, space, observed, n, rng)
+
+	out := make([]Suggestion, 0, len(picks))
+	for _, vec := range picks {
+		x, err := enc.Encode(vec)
 		if err != nil {
-			exclude = append(exclude, x)
 			continue
 		}
 		mean, std, _ := gp.Predict(x)
 		out = append(out, Suggestion{
-			Vector: vec, EncodedX: x, AcqValue: val,
+			Vector: vec, EncodedX: x, AcqValue: acq(gp, x),
 			PredictedMean: mean, PredictedStd: std,
 		})
-		exclude = append(exclude, x)
 	}
-	// Rank by acquisition value (each pick is an independent random-search argmax,
-	// so consecutive values aren't inherently monotone — sort for output).
-	sort.Slice(out, func(i, j int) bool { return out[i].AcqValue > out[j].AcqValue })
 	return out
 }

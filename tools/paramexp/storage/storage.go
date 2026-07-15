@@ -351,7 +351,7 @@ func aggregateMetrics(sets []experiment.MetricSet) (experiment.MetricSet, experi
 				d := v - mean
 				ss += d * d
 			}
-			vars[k] = ss / float64(n) // population variance, ≥0 by construction
+			vars[k] = ss / float64(n-1) // sample variance (÷N-1) for inference
 		}
 	}
 	return means, vars

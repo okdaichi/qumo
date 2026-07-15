@@ -387,7 +387,11 @@ func suggestedNext(gp *model.GaussianProcess, obs []experiment.Observation, enc 
 		}
 	}
 	acq := model.AcquisitionFor(cfg.BOAcquisition, best, cfg.BOXi, defaultKappa(cfg.BOKappa))
-	return analysis.SuggestedNext(gp, enc, acq, 5, 0xC0FFEE)
+	observed := make([]experiment.ParamVector, len(obs))
+	for i, o := range obs {
+		observed[i] = o.Vector
+	}
+	return analysis.SuggestedNext(gp, enc, cfg.Space, acq, observed, 5, 0xC0FFEE)
 }
 
 func defaultKappa(k float64) float64 {

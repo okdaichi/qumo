@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`tools/paramexp` post-merge review fixes (retro-review of #297/#298).** Six correctness bugs found by adversarial review of the merged code (same class as #294's GP-math bugs — CI-green but subtle math the tests asserted too little to catch):
+  - **Discrete-space selection (#298-1,2,3):** `SuggestedNext` could return duplicate configs and recommend already-measured points; `BayesianScheduler` could prematurely EOF in small discrete spaces (random-search argmax kept decoding to occupied cells). Both now use `model.SelectByAcquisition`, which enumerates the full discrete candidate set (guaranteed to find novel points if any remain) or random-searches continuous spaces with decoded-vector dedup.
+  - **Sample variance (#297-4):** `aggregateMetrics` used population variance (÷N) for inferential outputs (CIs, indistinguishable test, stability CV) — anti-conservative at small N (the replicate regime N=2–5). Switched to sample variance (÷N−1) and replaced the hardcoded z=1.96 with a `TCritical(df)` t-table (t₀.₉₇₅,df for df=1..30, z beyond). The "95% CI" labels now actually hold at small N.
+  - **Flaky-vector dominance (#297-5):** a config with only 1/N successful replicates got `Variances=0` → the GP treated it as near-noise-free and bent the surface through it (the *opposite* of "downweight high-variance"). `FitGP` now borrows the median noise of well-replicated points for N=1 configs.
+  - **`Fit` measuredNoise leak (#297-6):** `Fit` didn't reset `measuredNoise` (a `FitReplicated`→`Fit` reuse would apply the previous run's per-point noise to the new fit). Now resets at the top, matching `FitReplicated`.
+
 ### Added
 
 - **Relay performance-landscape sweep in CI (`bench-relay.yml`).** A new `paramexp` job runs the Bayesian-optimization sweep of relay tuning knobs (`example/relay/params.yaml`: ring size / frame / notify-timeout × fan-out K) nightly and on-demand. Each vector runs the integration fan-out bench via `bench.sh`; the GP + analysis produce a report (knees, importance, interactions, stability, suggested-next) answering "which settings serve stable high-performance large fan-out?" Uploads `paramexp_relay.db` + the report as the `relay-paramexp` artifact. `px_samples`/`px_replicates` workflow inputs tune the scale; the `bench.sh` harness is hardened (tolerant of failed/flaky vectors — degrades to a worst-case record instead of aborting the sweep).

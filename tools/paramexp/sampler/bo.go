@@ -75,49 +75,24 @@ func (s *BayesianScheduler) Next(ctx context.Context, st SchedulerState) ([]expe
 	best := bestObjective(st.Observations, st.Objective)
 	acq := model.AcquisitionFor(s.Acquisition, best, s.Xi, s.Kappa)
 
-	dim := st.Enc.Dim()
-	candidates := s.Candidates
-	if candidates < dim*200 {
-		candidates = dim * 200
-	}
 	batch := s.Batch
 	if batch < 1 {
 		batch = 1
 	}
 
-	// exclude: already-measured points + this round's picks (so the batch spreads
-	// out rather than clustering at the argmax).
-	exclude := make([][]float64, 0, len(st.Observations)+batch)
-	for _, o := range st.Observations {
-		if len(o.EncodedX) == dim {
-			exclude = append(exclude, o.EncodedX)
-		}
+	// Exclude already-measured vectors; SelectByAcquisition enumerates the
+	// discrete space (or random-searches continuous) and returns novel picks.
+	excludeVecs := make([]experiment.ParamVector, len(st.Observations))
+	for i, o := range st.Observations {
+		excludeVecs[i] = o.Vector
 	}
-
 	rng := model.NewLCG(s.Seed ^ uint64(s.round)*0x9e3779b97f4a7c15)
-	picks := make([]experiment.ParamVector, 0, batch)
-	// Retry on decode-level duplicates (in a discrete space the acquisition argmax
-	// may decode to an already-observed vector): exclude it and re-search, bounded
-	// so a saturated tiny space terminates rather than spinning.
-	maxAttempts := batch*4 + 8
-	for attempts := 0; len(picks) < batch && attempts < maxAttempts; attempts++ {
-		x, _ := model.MaximizeAcquisition(gp, acq, dim, candidates, rng, exclude)
-		if x == nil {
-			break
-		}
-		vec, err := st.Enc.Decode(x)
-		if err != nil || contains(picks, vec) || observedHas(st.Observations, vec) {
-			exclude = append(exclude, x) // skip + re-search
-			continue
-		}
-		picks = append(picks, vec)
-		exclude = append(exclude, x)
-	}
+	picks := model.SelectByAcquisition(gp, acq, st.Enc, st.Space, excludeVecs, batch, rng)
 
 	phase := fmt.Sprintf("bo-%d", s.round)
 	s.round++
 	if len(picks) == 0 {
-		return nil, "", io.EOF // nothing new to measure → done
+		return nil, "", io.EOF // no novel points remain → done
 	}
 	return picks, phase, nil
 }
