@@ -19,6 +19,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"runtime"
 	"strconv"
@@ -43,6 +44,7 @@ type scalabilityStats struct {
 	p95    time.Duration
 	p99    time.Duration
 	maxLat time.Duration
+	jitterMs float64 // sample stdev of per-group latencies (ms)
 	lossPct float64
 	fps     float64
 	mbps    float64
@@ -153,12 +155,29 @@ func fanoutSweepRun(tb testing.TB, cert tls.Certificate, pool *x509.CertPool, qu
 		fairness = (sum * sum) / (float64(K) * sumSq)
 	}
 
+	// Jitter: sample stdev of per-group latencies (ms).
+	var jitterMs float64
+	if len(allLats) > 1 {
+		var sum float64
+		for _, l := range allLats {
+			sum += l.Seconds() * 1000
+		}
+		meanMs := sum / float64(len(allLats))
+		var sqDiff float64
+		for _, l := range allLats {
+			d := l.Seconds()*1000 - meanMs
+			sqDiff += d * d
+		}
+		jitterMs = math.Sqrt(sqDiff / float64(len(allLats)-1))
+	}
+
 	return scalabilityStats{
 		K:      K,
 		min:    percentile(allLats, 0), p25: percentile(allLats, 25),
 		median: percentile(allLats, 50), p75: percentile(allLats, 75),
 		p95:    percentile(allLats, 95), p99: percentile(allLats, 99),
 		maxLat: percentile(allLats, 100),
+		jitterMs: jitterMs,
 		lossPct: lossPct, fps: fps, mbps: fps * float64(frameSize) * 8 / 1e6,
 		heapMB: heapMB, goros: goros, cpuMs: cpu.Seconds() * 1000,
 		fairness: fairness,
@@ -233,7 +252,7 @@ func BenchmarkRelayChain_FanoutSweep(b *testing.B) {
 				MedianMs: st.median.Seconds() * 1000, P75Ms: st.p75.Seconds() * 1000,
 				P95Ms: st.p95.Seconds() * 1000, P99Ms: st.p99.Seconds() * 1000, MaxMs: st.maxLat.Seconds() * 1000,
 				LossPct: st.lossPct, Fps: st.fps, Mbps: st.mbps, HeapMB: st.heapMB, Goros: st.goros, CpuMs: st.cpuMs,
-				Fairness: st.fairness,
+				Fairness: st.fairness, JitterMs: st.jitterMs,
 			})
 		})
 	}
