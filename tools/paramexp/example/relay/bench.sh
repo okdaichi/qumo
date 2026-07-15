@@ -45,9 +45,10 @@ loss="$(fval loss_pct)"; [ -n "$loss" ] || loss=100
 p99="$(fval p99_ms)";    [ -n "$p99" ] || p99=0
 mbps="$(fval mbps)";     [ -n "$mbps" ] || mbps=0
 fair="$(fval fairness)"; [ -n "$fair" ] || fair=0
+jit="$(fval jitter_ms)"; [ -n "$jit" ] || jit=0
 
 score="$(awk "BEGIN{printf \"%.4f\", ($mbps)*($fair)*(1-($loss)/100)}" 2>/dev/null)"
 [ -n "$score" ] || score=0
-printf '{"loss_pct":%s,"latency_p99_ms":%s,"mbps":%s,"fairness":%s,"score":%s}\n' \
-  "$loss" "$p99" "$mbps" "$fair" "$score"
+printf '{"loss_pct":%s,"latency_p99_ms":%s,"mbps":%s,"fairness":%s,"jitter_ms":%s,"score":%s}\n' \
+  "$loss" "$p99" "$mbps" "$fair" "$jit" "$score"
 exit 0

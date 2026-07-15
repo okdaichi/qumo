@@ -395,6 +395,7 @@ type benchResult struct {
 	Goros    int     `json:"goros,omitempty"`
 	CpuMs    float64 `json:"cpu_ms,omitempty"`
 	Fairness float64 `json:"fairness,omitempty"` // Jain's index, 0-1 (1=perfectly fair fan-out)
+	JitterMs  float64 `json:"jitter_ms,omitempty"`
 }
 
 func recordBench(tb testing.TB, r benchResult) {
