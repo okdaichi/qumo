@@ -10,11 +10,12 @@
 #
 # Must run from the qumo repo root (it cds there via git). Each vector is a full
 # integration benchmark, so the full sweep belongs on the nightly Linux bench job.
+#
+# This script is deliberately tolerant: a failed/missing measurement degrades to
+# a worst-case record rather than aborting, so one bad vector never corrupts the
+# exploration. (No `set -e`.)
 
-set -euo pipefail
-
-# Run from the qumo repo root regardless of where paramexp was invoked.
-cd "$(git rev-parse --show-toplevel)"
+cd "$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
 
 export RELAY_RING="${PARAM_RING:-8}"
 export RELAY_FRAME="${PARAM_FRAME:-1500}"
@@ -22,30 +23,31 @@ export RELAY_NOTIFY_TIMEOUT_MS="${PARAM_NOTIFY_MS:-1}"
 K="${PARAM_FANOUT_K:-16}"
 
 # BENCH_RESULTS_DIR must be absolute: `go test` runs the binary in the package dir.
-RESULTS="$(mktemp -d)"
+RESULTS="$(mktemp -d 2>/dev/null)" || exit 0
 trap 'rm -rf "$RESULTS"' EXIT
 export BENCH_RESULTS_DIR="$RESULTS"
 export FANOUT_KS="$K"
 
-# Run the single-K fan-out sweep. `|| true` so a pathological vector (OOM/timeout)
-# surfaces as a failed-metrics record instead of aborting the whole exploration.
+# Run the single-K fan-out sweep. Non-fatal: a failed run (OOM/timeout/flake)
+# surfaces as a missing record below → worst-case score 0, not an abort.
 go test -tags=integration -bench='RelayChain_FanoutSweep$' -benchtime=1x -cpu=1 \
-  -timeout=600s ./internal/relay/ >/dev/null 2>&1 || true
+  -timeout=600s ./internal/relay/ >/dev/null 2>&1
 
 # Extract the record for this K (config:"K=$K") and emit one JSON line.
-rec="$(grep -m1 "\"config\":\"K=$K\"" "$RESULTS/results.jsonl" 2>/dev/null || true)"
+rec="$(grep -m1 "\"config\":\"K=$K\"" "$RESULTS/results.jsonl" 2>/dev/null)"
 if [ -z "$rec" ]; then
-  # No record → treat as a total failure (paramexp will see it as worst-case).
   printf '{"loss_pct":100,"latency_p99_ms":0,"mbps":0,"fairness":0,"score":0}\n'
   exit 0
 fi
 
-fval() { echo "$rec" | grep -o "\"$1\":[0-9.]*" | head -1 | cut -d: -f2; }
-loss="${loss:-}"; loss="$(fval loss_pct)";   loss="${loss:-100}"
-p99="$(fval p99_ms)";                         p99="${p99:-0}"
-mbps="$(fval mbps)";                          mbps="${mbps:-0}"
-fair="$(fval fairness)";                      fair="${fair:-0}"
+fval() { echo "$rec" | grep -oE "\"$1\":[0-9.]+" | head -1 | cut -d: -f2 || true; }
+loss="$(fval loss_pct)"; [ -n "$loss" ] || loss=100
+p99="$(fval p99_ms)";    [ -n "$p99" ] || p99=0
+mbps="$(fval mbps)";     [ -n "$mbps" ] || mbps=0
+fair="$(fval fairness)"; [ -n "$fair" ] || fair=0
 
-score=$(awk "BEGIN{printf \"%.4f\", ($mbps)*($fair)*(1-($loss)/100)}")
+score="$(awk "BEGIN{printf \"%.4f\", ($mbps)*($fair)*(1-($loss)/100)}" 2>/dev/null)"
+[ -n "$score" ] || score=0
 printf '{"loss_pct":%s,"latency_p99_ms":%s,"mbps":%s,"fairness":%s,"score":%s}\n' \
   "$loss" "$p99" "$mbps" "$fair" "$score"
+exit 0

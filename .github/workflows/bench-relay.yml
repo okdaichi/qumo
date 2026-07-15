@@ -5,10 +5,17 @@ name: Relay Bench (nightly + on-demand)
 # the reconnect-storm churn characterization, and a long soak. Emits JSONL,
 # CSV + SVG plots, uploads as an artifact.
 #
+# A second job, `paramexp`, runs a Bayesian-optimization sweep of the relay's
+# tuning knobs (ring size / frame / notify-timeout × fan-out) — the scientific
+# landscape exploration. Each vector runs the same integration fan-out bench
+# via tools/paramexp/example/relay/bench.sh; the GP + analysis produce a report
+# (knees, importance, interactions, stability, suggested-next).
+#
 # Triggers:
-#   - schedule: nightly, 3h soak.
+#   - schedule: nightly, 3h soak + paramexp sweep.
 #   - workflow_dispatch: soak-duration choice (30m / 1h / 3h / 6h) — dispatch with
 #     6h when a release-grade soak is wanted (no separate release workflow).
+#     px_samples / px_replicates tune the paramexp sweep scale.
 #
 # Order is soak-first: the soak is the highest-value, time-bounded signal, so it
 # runs before the heavy K=128 sweep (which may OOM on a 2-core runner). The
@@ -29,6 +36,14 @@ on:
           - '1h'
           - '3h'
           - '6h'
+      px_samples:
+        description: "paramexp LHS seed count (relay landscape sweep)"
+        type: string
+        default: '12'
+      px_replicates:
+        description: "paramexp replicates per vector"
+        type: string
+        default: '3'
 
 permissions:
   contents: read
@@ -159,4 +174,58 @@ jobs:
           name: relay-bench-${{ github.event.inputs.soak_duration || 'nightly' }}
           path: |
             results/
+          if-no-files-found: warn
+
+  # Bayesian-optimization sweep of relay tuning knobs (ring/frame/notify × K).
+  # Independent of `full` (runs in parallel); each vector shells out to the same
+  # integration fan-out bench, so it needs the same UDP/FD headroom.
+  paramexp:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      PX_DIR: ${{ github.workspace }}/px-results
+    steps:
+      - name: Checkout
+        # SHA: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+
+      - name: Set up Go
+        # SHA: actions/setup-go@v6
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Raise UDP buffer limits
+        run: sudo sysctl -w net.core.rmem_max=16777216 net.core.wmem_max=16777216
+
+      # Build the paramexp CLI from its own module.
+      - name: Build paramexp
+        run: |
+          cd tools/paramexp
+          go build -o "$GITHUB_WORKSPACE/paramexp" ./cmd/paramexp
+
+      # The sweep runs from the repo root so bench.sh's `cd $(git rev-parse
+      # --show-toplevel)` + `go test ./internal/relay/` resolve. bench.sh (one
+      # fan-out run per vector) inherits this shell's FD limit.
+      - name: Sweep relay fan-out landscape (paramexp + Bayesian optimization)
+        run: |
+          ulimit -n 1048576 2>/dev/null || true
+          mkdir -p "$PX_DIR"
+          "$GITHUB_WORKSPACE/paramexp" explore \
+            --config tools/paramexp/example/relay/params.yaml \
+            --scheduler bo --acquisition ei \
+            --samples "${{ github.event.inputs.px_samples || '12' }}" \
+            --replicates "${{ github.event.inputs.px_replicates || '3' }}" \
+            --timeout 8m \
+            --db "$PX_DIR/paramexp_relay.db" \
+            --output "$PX_DIR/report"
+
+      - name: Upload paramexp results
+        if: always()
+        # SHA: actions/upload-artifact@v6
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: relay-paramexp
+          path: px-results/
           if-no-files-found: warn
