@@ -49,6 +49,7 @@ type Inputs struct {
 	Stability    []analysis.Stability   // per-config CV / unstable flag; may be nil
 	Best         analysis.ConfigCI      // best config (max objective mean) + its CI
 	Peers        []analysis.ConfigCI    // configs statistically indistinguishable from Best
+	Suggestions  []analysis.Suggestion  // GP-recommended next measurements; may be nil
 }
 
 // Generate writes the report directory.
@@ -104,6 +105,7 @@ func Generate(in Inputs) error {
 		Stability    []analysis.Stability     `json:"stability,omitempty"`
 		BestConfig   analysis.ConfigCI        `json:"best_config,omitempty"`
 		Peers        []analysis.ConfigCI      `json:"indistinguishable_peers,omitempty"`
+		Suggestions  []analysis.Suggestion    `json:"suggested_next,omitempty"`
 	}{
 		Objective:    in.Objective,
 		N:            len(in.Observations),
@@ -116,6 +118,7 @@ func Generate(in Inputs) error {
 		Stability:    in.Stability,
 		BestConfig:   in.Best,
 		Peers:        in.Peers,
+		Suggestions:  in.Suggestions,
 	}
 	b, err := json.MarshalIndent(summary, "", "  ")
 	if err != nil {
@@ -337,6 +340,16 @@ func buildText(in Inputs) string {
 		sb.WriteString("\n--- Unstable configurations (cv>0.15) ---\n")
 		for _, s := range unstable {
 			sb.WriteString(fmt.Sprintf("  %s → %s (cv=%.2f, n=%d)\n", s.Vector.String(), in.Objective, s.CV, s.N))
+		}
+	}
+
+	// Suggested next measurements: the GP's recommendation for where to sample
+	// next (most uncertain/promising unmeasured points).
+	if len(in.Suggestions) > 0 {
+		sb.WriteString("\n--- Suggested next measurements ---\n")
+		for _, s := range in.Suggestions {
+			sb.WriteString(fmt.Sprintf("  %s → predicted %s≈%.4g ± %.3g (acq=%.4g)\n",
+				s.Vector.String(), in.Objective, s.PredictedMean, s.PredictedStd, s.AcqValue))
 		}
 	}
 

@@ -243,6 +243,14 @@ type Config struct {
 	Timeout     time.Duration `yaml:"timeout"`     // per-run timeout (default 10m)
 	MaxAttempts int          `yaml:"max_attempts"` // retry count (default 1)
 	Replicates  int          `yaml:"replicates"`   // runs per parameter vector (default 1)
+	Scheduler   string       `yaml:"scheduler"`    // "static" (default) | "bo"
+	// Bayesian-optimization knobs (flat keys; the line-oriented YAML parser has
+	// no nesting). Applied when Scheduler == "bo".
+	BORounds      int     `yaml:"bo_rounds"`
+	BOBatch       int     `yaml:"bo_batch"`
+	BOAcquisition string  `yaml:"bo_acquisition"` // ei (default) | ucb | variance
+	BOKappa       float64 `yaml:"bo_kappa"`       // UCB exploration
+	BOXi          float64 `yaml:"bo_xi"`          // EI exploration beyond best
 }
 
 // ParseConfig reads a minimal YAML config (see example/params.yaml). No YAML
@@ -274,6 +282,9 @@ func ParseConfig(path string) (*Config, error) {
 	}
 	if cfg.Replicates < 1 {
 		cfg.Replicates = 1
+	}
+	if cfg.Scheduler == "" {
+		cfg.Scheduler = "static"
 	}
 	if err := cfg.Space.Normalize(); err != nil {
 		return nil, err
@@ -369,6 +380,22 @@ func parseYAML(src string, cfg *Config) error {
 			if n > 0 {
 				cfg.Replicates = n
 			}
+		case strings.HasPrefix(line, "scheduler:"):
+			cfg.Scheduler = trimQuote(strings.TrimSpace(strings.TrimPrefix(line, "scheduler:")))
+		case strings.HasPrefix(line, "bo_rounds:"):
+			if n := parseInt(trimQuote(strings.TrimSpace(strings.TrimPrefix(line, "bo_rounds:")))); n > 0 {
+				cfg.BORounds = n
+			}
+		case strings.HasPrefix(line, "bo_batch:"):
+			if n := parseInt(trimQuote(strings.TrimSpace(strings.TrimPrefix(line, "bo_batch:")))); n > 0 {
+				cfg.BOBatch = n
+			}
+		case strings.HasPrefix(line, "bo_acquisition:"):
+			cfg.BOAcquisition = trimQuote(strings.TrimSpace(strings.TrimPrefix(line, "bo_acquisition:")))
+		case strings.HasPrefix(line, "bo_kappa:"):
+			cfg.BOKappa, _ = strconv.ParseFloat(trimQuote(strings.TrimSpace(strings.TrimPrefix(line, "bo_kappa:"))), 64)
+		case strings.HasPrefix(line, "bo_xi:"):
+			cfg.BOXi, _ = strconv.ParseFloat(trimQuote(strings.TrimSpace(strings.TrimPrefix(line, "bo_xi:"))), 64)
 		}
 	}
 	return nil

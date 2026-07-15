@@ -66,6 +66,8 @@ func explore(args []string) {
 	timeout := fs.Duration("timeout", 0, "per-run timeout (overrides config)")
 	maxAttempts := fs.Int("max-attempts", 0, "retry attempts per run (overrides config)")
 	replicates := fs.Int("replicates", 0, "runs per parameter vector (overrides config)")
+	scheduler := fs.String("scheduler", "", "static (default) | bo (Bayesian optimization)")
+	acquisition := fs.String("acquisition", "", "BO acquisition: ei (default) | ucb | variance")
 	fs.Parse(args)
 
 	if *configPath == "" {
@@ -103,6 +105,12 @@ func explore(args []string) {
 	if *replicates > 0 {
 		cfg.Replicates = *replicates
 	}
+	if *scheduler != "" {
+		cfg.Scheduler = *scheduler
+	}
+	if *acquisition != "" {
+		cfg.BOAcquisition = *acquisition
+	}
 
 	enc, err := experiment.NewEncoder(cfg.Space)
 	if err != nil {
@@ -127,7 +135,27 @@ func explore(args []string) {
 	log.Printf("runner: %s (timeout=%s, attempts=%d)", cfg.Runner, cfg.Timeout, cfg.MaxAttempts)
 
 	execRunner := runner.NewExecRunner(cfg.Runner, cfg.Timeout, cfg.MaxAttempts)
-	sched := &sampler.StaticScheduler{LHSn: cfg.Samples, AdaptiveRounds: cfg.Adaptive, AdaptiveN: 5}
+	var sched sampler.Scheduler
+	switch cfg.Scheduler {
+	case "bo":
+		kappa := cfg.BOKappa
+		if kappa <= 0 {
+			kappa = 2.0
+		}
+		rounds := cfg.BORounds
+		if rounds <= 0 {
+			rounds = 5
+		}
+		sched = &sampler.BayesianScheduler{
+			LHSn: cfg.Samples, Rounds: rounds, Batch: cfg.BOBatch,
+			Acquisition: cfg.BOAcquisition, Kappa: kappa, Xi: cfg.BOXi,
+			Seed: 0x1234567, // deterministic; could be config-driven
+		}
+		log.Printf("scheduler: bayesian optimization (acquisition=%s, rounds=%d, batch=%d)",
+			acqName(cfg.BOAcquisition), rounds, max1(cfg.BOBatch))
+	default:
+		sched = &sampler.StaticScheduler{LHSn: cfg.Samples, AdaptiveRounds: cfg.Adaptive, AdaptiveN: 5}
+	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -315,13 +343,18 @@ func generateReport(store *storage.Storage, cfg *experiment.Config, enc *experim
 	}
 
 	// GP surrogate fit (best-effort; surfaces/sensitivity skipped on failure).
-	gp, sens := fitGP(obs, enc, cfg.Objective)
+	gp := fitGP(obs, cfg.Objective)
 	if gp != nil {
 		hp := gp.Hyperparameters()
+		sens := analysis.GPSensitivity(gp, enc.Names())
 		log.Printf("  GP fit: %s", fmtLengthScales(enc.Names(), hp.LengthScales))
 		in.Sensitivity = sens
 		in.Surfaces = report.BuildSurfaces(gp, cfg.Space, 21)
 		in.Contour = report.BuildContour(gp, cfg.Space, sens, 13)
+		in.Suggestions = suggestedNext(gp, obs, enc, cfg)
+		if len(in.Suggestions) > 0 {
+			log.Printf("  suggested next: %d point(s) (acquisition=%s)", len(in.Suggestions), acqName(cfg.BOAcquisition))
+		}
 	}
 
 	log.Println("=== Generating report ===")
@@ -332,46 +365,43 @@ func generateReport(store *storage.Storage, cfg *experiment.Config, enc *experim
 	log.Printf("report written to %s/", cfg.Output)
 }
 
-// fitGP builds X / yMean / yVar from aggregated observations and fits the GP on
-// the objective. When replicates provide per-point variance it fits the
-// heteroscedastic FitReplicated (measured per-point noise); otherwise Fit.
-// Returns (nil, nil) if there is too little data or the fit fails.
-func fitGP(obs []experiment.Observation, enc *experiment.Encoder, objective string) (*model.GaussianProcess, []analysis.Sensitivity) {
-	var X [][]float64
-	var yMean, yVar []float64
-	replicated := false
-	for _, o := range obs {
-		if len(o.EncodedX) == 0 {
-			continue
-		}
-		v, ok := o.Metrics[objective]
-		if !ok {
-			continue
-		}
-		X = append(X, o.EncodedX)
-		yMean = append(yMean, v)
-		vv := o.Variances[objective]
-		if o.N > 1 {
-			vv /= float64(o.N) // variance of the mean
-			replicated = true
-		}
-		yVar = append(yVar, vv)
-	}
-	if len(X) < 4 || enc == nil {
-		return nil, nil
-	}
-	gp := model.NewGP(model.Options{})
-	var err error
-	if replicated {
-		err = gp.FitReplicated(X, yMean, yVar)
-	} else {
-		err = gp.Fit(X, yMean)
-	}
+// fitGP fits the GP on the objective via the shared model.FitGP (heteroscedastic
+// when replicates carry variance). Returns nil on too-few data or failure.
+func fitGP(obs []experiment.Observation, objective string) *model.GaussianProcess {
+	gp, err := model.FitGP(obs, objective, model.Options{})
 	if err != nil {
 		log.Printf("  GP fit skipped: %v", err)
-		return nil, nil
+		return nil
 	}
-	return gp, analysis.GPSensitivity(gp, enc.Names())
+	return gp
+}
+
+// suggestedNext returns the model's recommended next measurements under the
+// configured acquisition (the brief's "what should we measure next").
+func suggestedNext(gp *model.GaussianProcess, obs []experiment.Observation, enc *experiment.Encoder, cfg *experiment.Config) []analysis.Suggestion {
+	best := 0.0
+	first := true
+	for _, o := range obs {
+		if v, ok := o.Metrics[cfg.Objective]; ok && (first || v > best) {
+			best, first = v, false
+		}
+	}
+	acq := model.AcquisitionFor(cfg.BOAcquisition, best, cfg.BOXi, defaultKappa(cfg.BOKappa))
+	return analysis.SuggestedNext(gp, enc, acq, 5, 0xC0FFEE)
+}
+
+func defaultKappa(k float64) float64 {
+	if k <= 0 {
+		return 2.0
+	}
+	return k
+}
+
+func acqName(s string) string {
+	if s == "" {
+		return "ei"
+	}
+	return s
 }
 
 func countUnstable(stab []analysis.Stability) int {
