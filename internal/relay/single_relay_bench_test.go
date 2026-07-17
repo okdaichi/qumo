@@ -45,34 +45,16 @@ func BenchmarkRelayChain_FanoutSingleRelay(b *testing.B) {
 			dur = parsed
 		}
 	}
+	const gap = 2 * time.Millisecond
 	const sz = 1200
-	// groupInterval: gap BETWEEN groups. Each MoQ group opens a fresh QUIC
-	// uni-stream, so this is the stream open/close rate per subscriber. 2ms = 500
-	// groups/s (the original pathological stress workload). Real video ≈ 1–5/s.
-	groupInterval := 2 * time.Millisecond
-	if v := envIntDef("GROUP_INTERVAL_MS", 0); v > 0 {
-		groupInterval = time.Duration(v) * time.Millisecond
-	}
-	// framesPerGroup + frameGap hold byte throughput constant while varying
-	// stream churn: 500 groups/s×1frame and 10 groups/s×50frames both move
-	// ~500 frames/s, but the latter opens 50× fewer streams.
-	framesPerGroup := 1
-	if v := envIntDef("FRAMES_PER_GROUP", 0); v > 0 {
-		framesPerGroup = v
-	}
-	frameGap := time.Duration(0)
-	if v := envIntDef("FRAME_GAP_MS", 0); v > 0 {
-		frameGap = time.Duration(v) * time.Millisecond
-	}
 
 	ks := parseIntListEnv("FANOUT_KS", []int{1, 2, 4, 8, 16, 32, 64})
-	log.Printf("\n=== Single-Relay Fan-out (groupInterval=%s, frames/group=%d, frameGap=%s, size=%dB, dur=%s, K=%v) ===",
-		groupInterval, framesPerGroup, frameGap, sz, dur, ks)
+	log.Printf("\n=== Single-Relay Fan-out (gap=%s, size=%dB, dur=%s, K=%v) ===", gap, sz, dur, ks)
 	log.Printf("%-6s %-8s %-8s %-8s %-8s %-10s %-8s %-6s", "K", "med", "p95", "p99", "loss%", "fps", "heapMB", "goros")
 
 	for _, K := range ks {
 		b.Run(fmt.Sprintf("K=%d", K), func(b *testing.B) {
-			st := singleRelayFanoutRun(b, cert, pool, quicCfg, K, sz, groupInterval, framesPerGroup, frameGap, dur)
+			st := singleRelayFanoutRun(b, cert, pool, quicCfg, K, sz, gap, dur)
 			b.ReportMetric(st.median.Seconds()*1000, "med_ms")
 			b.ReportMetric(st.p99.Seconds()*1000, "p99_ms")
 			b.ReportMetric(st.lossPct, "loss%")
@@ -86,7 +68,7 @@ func BenchmarkRelayChain_FanoutSingleRelay(b *testing.B) {
 }
 
 // singleRelayFanoutRun: one publisher → one relay → K direct subscribers.
-func singleRelayFanoutRun(tb testing.TB, cert tls.Certificate, pool *x509.CertPool, quicCfg *quic.Config, K int, frameSize int, groupInterval time.Duration, framesPerGroup int, frameGap, duration time.Duration) scalabilityStats {
+func singleRelayFanoutRun(tb testing.TB, cert tls.Certificate, pool *x509.CertPool, quicCfg *quic.Config, K int, frameSize int, gap, duration time.Duration) scalabilityStats {
 	tb.Helper()
 	if v := envIntDef("RELAY_NOTIFY_TIMEOUT_MS", 0); v > 0 {
 		NotifyTimeout = time.Duration(v) * time.Millisecond
@@ -101,51 +83,26 @@ func singleRelayFanoutRun(tb testing.TB, cert tls.Certificate, pool *x509.CertPo
 	defer runCancel()
 
 	var sentCounter uint64
-	var pub publisherTimings
-	pubDone := make(chan struct{})
 	pubMux := moqt.NewTrackMux(moqt.NewHopID())
 	pubMux.PublishFunc(runCtx, chainBroadcastPath, func(tw *moqt.TrackWriter) {
-		defer close(pubDone)
 		defer tw.Close()
 		payload := make([]byte, frameSize)
 		for {
 			if runCtx.Err() != nil {
 				return
 			}
-			// Time the publisher-side group/stream open. OpenGroup blocks on the
-			// peer's MAX_STREAMS; a large value means the relay isn't granting
-			// streams (unlikely here — relay sets MaxIncomingUniStreams=1<<20).
-			tOpen := time.Now()
+			atomic.AddUint64(&sentCounter, 1)
+			binary.BigEndian.PutUint64(payload[8:16], uint64(time.Now().UnixNano()))
 			gw, err := tw.OpenGroup(runCtx)
 			if err != nil {
 				return
 			}
-			pub.openGroup = append(pub.openGroup, time.Since(tOpen))
-			for i := 0; i < framesPerGroup; i++ {
-				if runCtx.Err() != nil {
-					_ = gw.Close()
-					return
-				}
-				binary.BigEndian.PutUint64(payload[8:16], uint64(time.Now().UnixNano()))
-				fr := moqt.NewFrame(frameSize)
-				_, _ = fr.Write(payload)
-				// Time WriteFrame (= stream.Write). If this blocks into the ms
-				// range, the relay's receive side is reading slowly and QUIC flow
-				// control is backpressuring the publisher — i.e. the publisher→relay
-				// latency is sender-side blocking, not downstream transport.
-				tW := time.Now()
-				_ = gw.WriteFrame(fr)
-				pub.writeFrame = append(pub.writeFrame, time.Since(tW))
-				atomic.AddUint64(&sentCounter, 1) // per frame: keeps loss = frame-loss (recv counts frames)
-				if frameGap > 0 {
-					time.Sleep(frameGap)
-				}
-			}
-			tClose := time.Now()
+			fr := moqt.NewFrame(frameSize)
+			_, _ = fr.Write(payload)
+			_ = gw.WriteFrame(fr)
 			_ = gw.Close()
-			pub.closeGroup = append(pub.closeGroup, time.Since(tClose))
-			if groupInterval > 0 {
-				time.Sleep(groupInterval)
+			if gap > 0 {
+				time.Sleep(gap)
 			}
 		}
 	})
@@ -205,29 +162,15 @@ func singleRelayFanoutRun(tb testing.TB, cert tls.Certificate, pool *x509.CertPo
 		fairness = (sum * sum) / (float64(K) * sumSq)
 	}
 
-	st := scalabilityStats{
-		K:   K,
-		min: percentile(allLats, 0), p25: percentile(allLats, 25),
+	return scalabilityStats{
+		K:      K,
+		min:    percentile(allLats, 0), p25: percentile(allLats, 25),
 		median: percentile(allLats, 50), p75: percentile(allLats, 75),
 		p95: percentile(allLats, 95), p99: percentile(allLats, 99), maxLat: percentile(allLats, 100),
 		lossPct: lossPct, fps: fps, mbps: fps * float64(frameSize) * 8 / 1e6,
 		heapMB: heapMB, goros: goros, cpuMs: cpu.Seconds() * 1000,
 		fairness: fairness,
 	}
-	// Per-stage latency decomposition (no-op/empty in the default build; rich
-	// under -tags instrument). EndToEnd is the payload-timestamp latency (allLats);
-	// Residual isolates the quic-go sendQueue→syscall drain.
-	logStageLatency(tb, relay, stageSnapshot{
-		N: len(allLats), P50: st.median, P95: st.p95, P99: st.p99, Max: st.maxLat,
-	})
-	// Publisher-side blocking report. Wait for the publisher goroutine to finish
-	// (it returns when runCtx expires at `duration`) so pub is safe to read.
-	select {
-	case <-pubDone:
-	case <-time.After(duration + 3*time.Second):
-	}
-	reportPublisherTimings(tb, pub)
-	return st
 }
 
 // subscribeAndRead dials a relay, subscribes, reads groups until timeout,
@@ -262,70 +205,4 @@ func subscribeAndRead(tb testing.TB, addr string, pool *x509.CertPool, timeout t
 		}
 	}
 	return lats
-}
-
-// logStageLatency prints the per-stage latency decomposition from the relay's
-// collector. Prints nothing in the default build (stageLatency returns nil); rich
-// under -tags instrument. EndToEnd (e2e) is the payload-embedded publish→read
-// latency; Residual = EndToEnd.P50 − the stage P50s, isolating the quic-go
-// sendQueue→syscall drain (plus wire + subscriber read, ~0 on loopback).
-func logStageLatency(tb testing.TB, relay *Server, e2e stageSnapshot) {
-	tb.Helper()
-	r := relay.stageLatency()
-	if r == nil {
-		return
-	}
-	r.EndToEnd = e2e
-	r.Residual = e2e.P50 - (r.Transit.P50 + r.Ingress.P50 + r.Residence.P50 + r.Egress.P50 + r.Enqueue.P50)
-
-	type row struct {
-		name string
-		s    stageSnapshot
-	}
-	rows := []row{
-		{"transit   pub->relay", r.Transit},
-		{"ingress(A) clone+publish", r.Ingress},
-		{"resid(R)  ring->egress", r.Residence},
-		{"egress(C) WriteFrame", r.Egress},
-		{"enqueue(D) quic-go", r.Enqueue},
-		{"end2end   publish->read", r.EndToEnd},
-	}
-	log.Printf("[stages] per-stage latency (auto ns/µs/ms):")
-	for _, rr := range rows {
-		log.Printf("[stages]   %-26s n=%-8d p50=%-12v p95=%-12v p99=%-12v max=%-12v",
-			rr.name, rr.s.N, rr.s.P50, rr.s.P95, rr.s.P99, rr.s.Max)
-	}
-	log.Printf("[stages]   %-26s          p50=%v   [= e2e.p50 - sum(stage p50); the sendQueue->syscall drain]",
-		"residual", r.Residual)
-}
-
-// publisherTimings records publisher-side OpenGroup/WriteFrame/Close durations —
-// the sender-side backpressure signal that splits the publisher→relay transit
-// into "publisher blocking" vs "downstream transport/relay-receive". Single
-// publisher goroutine; only read after pubDone is closed.
-type publisherTimings struct {
-	openGroup  []time.Duration
-	writeFrame []time.Duration
-	closeGroup []time.Duration
-}
-
-// reportPublisherTimings prints the publisher-side blocking distribution. A large
-// WriteFrame p50/p99 means the relay receive side is reading slowly and QUIC flow
-// control is backpressuring the publisher (sender-side blocking). A small
-// WriteFrame with large transit means the delay is downstream of the hand-off.
-func reportPublisherTimings(tb testing.TB, pub publisherTimings) {
-	tb.Helper()
-	if len(pub.writeFrame) == 0 {
-		return
-	}
-	log.Printf("[pub] publisher-side blocking (sender backpressure):")
-	log.Printf("[pub]   %-22s n=%-8d p50=%-12v p95=%-12v p99=%-12v max=%-12v",
-		"OpenGroup(MAX_STREAMS)", len(pub.openGroup),
-		percentile(pub.openGroup, 50), percentile(pub.openGroup, 95), percentile(pub.openGroup, 99), percentile(pub.openGroup, 100))
-	log.Printf("[pub]   %-22s n=%-8d p50=%-12v p95=%-12v p99=%-12v max=%-12v",
-		"WriteFrame(flow ctrl)", len(pub.writeFrame),
-		percentile(pub.writeFrame, 50), percentile(pub.writeFrame, 95), percentile(pub.writeFrame, 99), percentile(pub.writeFrame, 100))
-	log.Printf("[pub]   %-22s n=%-8d p50=%-12v p95=%-12v p99=%-12v max=%-12v",
-		"Close", len(pub.closeGroup),
-		percentile(pub.closeGroup, 50), percentile(pub.closeGroup, 95), percentile(pub.closeGroup, 99), percentile(pub.closeGroup, 100))
 }
