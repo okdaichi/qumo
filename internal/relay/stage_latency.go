@@ -32,8 +32,8 @@ func newStageCollector() *stageCollector { return &stageCollector{} }
 // empty, so the compiler elides the whole thing and no time.Now fires.
 func (c *stageCollector) now() time.Time { return time.Time{} }
 
-func (c *stageCollector) ingress(time.Time)  {}
-func (c *stageCollector) egress(time.Time)   {}
+func (c *stageCollector) ingress(time.Time)          {}
+func (c *stageCollector) egress(time.Time)           {}
 func (c *stageCollector) residence(time.Time, int64) {}
 
 // transit records the publisher WriteFrame → relay-arrival latency by reading the
@@ -49,6 +49,6 @@ func (gc *groupCache) stampArrival(*stageCollector) {}
 // under //go:build instrument.
 func applyStageTracer(*quic.Config, *stageCollector) {}
 
-// StageLatency returns the per-stage latency report, or nil when instrumentation
+// stageLatency returns the per-stage latency report, or nil when instrumentation
 // is disabled (default build). Callers must nil-check before reading fields.
-func (s *Server) StageLatency() *StageReport { return nil }
+func (s *Server) stageLatency() *stageReport { return nil }

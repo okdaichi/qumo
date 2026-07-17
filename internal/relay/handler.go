@@ -322,7 +322,7 @@ type trackManager struct {
 	pool      *FramePool
 
 	// stages is the Server's shared per-stage latency collector, threaded to each
-	// distributor so a node's stages aggregate into one Server.StageLatency report.
+	// distributor so a node's stages aggregate into one Server.stageLatency report.
 	// nil for managers constructed directly in tests; newTrackDistributor falls
 	// back to a standalone collector then. No-op type in the default build.
 	stages *stageCollector

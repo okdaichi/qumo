@@ -157,7 +157,7 @@ type groupRing struct {
 	// stages records per-stage latencies for fill/reserve. Defaulted in
 	// newGroupRing so it is never nil (tests construct rings directly); the
 	// distributor overwrites it with the Server's shared collector so a node's
-	// stages aggregate into one Server.StageLatency report. No-op in the default
+	// stages aggregate into one Server.stageLatency report. No-op in the default
 	// build.
 	stages *stageCollector
 }

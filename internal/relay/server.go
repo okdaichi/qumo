@@ -49,7 +49,7 @@ type Server struct {
 
 	// stages is the per-stage latency instrumentation collector. Resolved in
 	// init() to a no-op (default build) or real (//go:build instrument) collector;
-	// the benchmark sets it explicitly so Server.StageLatency aggregates this
+	// the benchmark sets it explicitly so Server.stageLatency aggregates this
 	// node's stages into one report. No-op in the default build.
 	stages *stageCollector
 
@@ -150,7 +150,7 @@ func (s *Server) init() {
 
 		// Resolve the per-stage latency collector (no-op in the default build;
 		// real under //go:build instrument). The benchmark may set this before
-		// ListenAndServe to read Server.StageLatency.
+		// ListenAndServe to read Server.stageLatency.
 		if s.stages == nil {
 			s.stages = newStageCollector()
 		}

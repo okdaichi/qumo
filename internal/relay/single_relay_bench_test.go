@@ -206,8 +206,8 @@ func singleRelayFanoutRun(tb testing.TB, cert tls.Certificate, pool *x509.CertPo
 	}
 
 	st := scalabilityStats{
-		K:      K,
-		min:    percentile(allLats, 0), p25: percentile(allLats, 25),
+		K:   K,
+		min: percentile(allLats, 0), p25: percentile(allLats, 25),
 		median: percentile(allLats, 50), p75: percentile(allLats, 75),
 		p95: percentile(allLats, 95), p99: percentile(allLats, 99), maxLat: percentile(allLats, 100),
 		lossPct: lossPct, fps: fps, mbps: fps * float64(frameSize) * 8 / 1e6,
@@ -217,14 +217,14 @@ func singleRelayFanoutRun(tb testing.TB, cert tls.Certificate, pool *x509.CertPo
 	// Per-stage latency decomposition (no-op/empty in the default build; rich
 	// under -tags instrument). EndToEnd is the payload-timestamp latency (allLats);
 	// Residual isolates the quic-go sendQueue→syscall drain.
-	logStageLatency(tb, relay, StageSnapshot{
+	logStageLatency(tb, relay, stageSnapshot{
 		N: len(allLats), P50: st.median, P95: st.p95, P99: st.p99, Max: st.maxLat,
 	})
 	// Publisher-side blocking report. Wait for the publisher goroutine to finish
 	// (it returns when runCtx expires at `duration`) so pub is safe to read.
 	select {
 	case <-pubDone:
-	case <-time.After(duration + 3 * time.Second):
+	case <-time.After(duration + 3*time.Second):
 	}
 	reportPublisherTimings(tb, pub)
 	return st
@@ -265,13 +265,13 @@ func subscribeAndRead(tb testing.TB, addr string, pool *x509.CertPool, timeout t
 }
 
 // logStageLatency prints the per-stage latency decomposition from the relay's
-// collector. Prints nothing in the default build (StageLatency returns nil); rich
+// collector. Prints nothing in the default build (stageLatency returns nil); rich
 // under -tags instrument. EndToEnd (e2e) is the payload-embedded publish→read
 // latency; Residual = EndToEnd.P50 − the stage P50s, isolating the quic-go
 // sendQueue→syscall drain (plus wire + subscriber read, ~0 on loopback).
-func logStageLatency(tb testing.TB, relay *Server, e2e StageSnapshot) {
+func logStageLatency(tb testing.TB, relay *Server, e2e stageSnapshot) {
 	tb.Helper()
-	r := relay.StageLatency()
+	r := relay.stageLatency()
 	if r == nil {
 		return
 	}
@@ -280,7 +280,7 @@ func logStageLatency(tb testing.TB, relay *Server, e2e StageSnapshot) {
 
 	type row struct {
 		name string
-		s    StageSnapshot
+		s    stageSnapshot
 	}
 	rows := []row{
 		{"transit   pub->relay", r.Transit},

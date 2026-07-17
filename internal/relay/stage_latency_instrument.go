@@ -2,7 +2,7 @@
 
 // Instrumented implementation of per-stage relay latency collection. Compiled only
 // with -tags=instrument. Records per-frame / per-group latencies into sharded,
-// capped accumulators and surfaces them via Server.StageLatency. Signatures MUST
+// capped accumulators and surfaces them via Server.stageLatency. Signatures MUST
 // match stage_latency.go (the !instrument no-op build) exactly.
 //
 // CAVEAT: this build perturbs throughput (per-frame time.Now + sharded accumulator
@@ -69,13 +69,13 @@ func (gc *groupCache) stampArrival(c *stageCollector) {
 // captures qlog.PacketSent into the collector's enqueue histogram.
 func applyStageTracer(*quic.Config, *stageCollector) {}
 
-// StageLatency returns the per-stage latency report aggregated across all
+// stageLatency returns the per-stage latency report aggregated across all
 // distributors that stamped into this Server's collector.
-func (s *Server) StageLatency() *StageReport {
+func (s *Server) stageLatency() *stageReport {
 	if s.stages == nil {
 		return nil
 	}
-	return &StageReport{
+	return &stageReport{
 		Transit:   s.stages.transitH.snapshot(),
 		Ingress:   s.stages.ingressH.snapshot(),
 		Residence: s.stages.residenceH.snapshot(),
@@ -116,7 +116,7 @@ func (h *stageHistogram) observe(d time.Duration) {
 	s.mu.Unlock()
 }
 
-func (h *stageHistogram) snapshot() StageSnapshot {
+func (h *stageHistogram) snapshot() stageSnapshot {
 	merged := newStageHDR()
 	for i := range h.shards {
 		s := &h.shards[i]
@@ -127,9 +127,9 @@ func (h *stageHistogram) snapshot() StageSnapshot {
 		s.mu.Unlock()
 	}
 	if merged.TotalCount() == 0 {
-		return StageSnapshot{}
+		return stageSnapshot{}
 	}
-	return StageSnapshot{
+	return stageSnapshot{
 		N:   int(merged.TotalCount()),
 		P50: time.Duration(merged.ValueAtPercentile(50)),
 		P95: time.Duration(merged.ValueAtPercentile(95)),

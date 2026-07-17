@@ -57,3 +57,9 @@ linters:
       # later via Drain or context.AfterFunc; gosec cannot trace cross-function ownership.
       - linters: [gosec]
         text: "G118"
+      # Per-stage latency instrumentation: stage_latency*.go default-build no-op stubs
+      # are only called under -tags integration[,instrument]; `unused` flags them in
+      # the default build as a false positive of the dual-file build-tag pattern (the
+      # real implementations live in stage_latency_instrument.go).
+      - linters: [unused]
+        path: "internal/relay/stage_latency.*\\.go"
