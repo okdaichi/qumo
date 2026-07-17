@@ -174,7 +174,7 @@ func isBetterRoute(candidate, current RouteStats) (bool, rejectionReason) {
 	return false, rejectionInferiorRTT
 }
 
-func newRelayHandler(ann *moqt.Announcement, sess *moqt.Session, nodeID string, broadSess *broadcastSession, cacheSize int, pool *FramePool) *relayHandler {
+func newRelayHandler(ann *moqt.Announcement, sess *moqt.Session, nodeID string, broadSess *broadcastSession, cacheSize int, pool *FramePool, stages *stageCollector) *relayHandler {
 	if sess == nil {
 		panic("relay: session must not be nil")
 	}
@@ -183,10 +183,12 @@ func newRelayHandler(ann *moqt.Announcement, sess *moqt.Session, nodeID string, 
 	}
 
 	ctx, cancel := context.WithCancel(sess.Context())
+	tm := newTrackManager(cacheSize, pool)
+	tm.stages = stages
 	h := &relayHandler{
 		announcement: ann,
 		session:      sess,
-		tracks:       newTrackManager(cacheSize, pool),
+		tracks:       tm,
 		nodeID:       nodeID,
 		broadSession: broadSess,
 		ctx:          ctx,
@@ -318,6 +320,12 @@ type trackManager struct {
 	// package defaults so a minimally-constructed Server (e.g. tests) works.
 	cacheSize int
 	pool      *FramePool
+
+	// stages is the Server's shared per-stage latency collector, threaded to each
+	// distributor so a node's stages aggregate into one Server.StageLatency report.
+	// nil for managers constructed directly in tests; newTrackDistributor falls
+	// back to a standalone collector then. No-op type in the default build.
+	stages *stageCollector
 }
 
 func newTrackManager(cacheSize int, pool *FramePool) *trackManager {
@@ -368,9 +376,20 @@ type trackDistributor struct {
 	subscribers []chan struct{}
 
 	done chan struct{} // closed when ingest returns
+
+	// stages is this distributor's per-stage latency collector (the Server's
+	// shared collector in production, a standalone one for test distributors).
+	// No-op type in the default build.
+	stages *stageCollector
 }
 
 func newTrackDistributor(manager *trackManager, trackID string, broadSess *broadcastSession) *trackDistributor {
+	// Fall back to a standalone collector for test-constructed managers (which
+	// skip newRelayHandler); production threads the Server's shared collector.
+	stages := manager.stages
+	if stages == nil {
+		stages = newStageCollector()
+	}
 	d := &trackDistributor{
 		trackID:           trackID,
 		ring:              newGroupRing(manager.cacheSize, manager.pool),
@@ -381,7 +400,11 @@ func newTrackDistributor(manager *trackManager, trackID string, broadSess *broad
 		session:           broadSess,
 		fillSem:           make(chan struct{}, maxGroupFillsInFlightOrPanic()),
 		done:              make(chan struct{}),
+		stages:            stages,
 	}
+	// Share the distributor's collector with its ring (used by fill/reserve) and
+	// deliverGroup (egress/residence), so all of a node's stages land in one report.
+	d.ring.stages = stages
 	go d.pollCacheDepth()
 	return d
 }
@@ -515,13 +538,21 @@ func (d *trackDistributor) deliverGroup(tw *moqt.TrackWriter, twCtx context.Cont
 
 	start := time.Now()
 	frameIdx := 0
+	// Stage R: ring residence — how long this group sat in the ring before egress
+	// began delivering it. The dominant relay-internal queue indicator under load.
+	// No-op in the default build.
+	d.stages.residence(start, cache.ingressArrivalNs.Load())
 
 	for {
 		frame := cache.next(frameIdx)
 		if frame != nil {
+			// Stage C: per-frame gw.WriteFrame service time (bytes handed to
+			// gomoqt/quic-go). No-op in the default build.
+			t0 := d.stages.now()
 			if err := gw.WriteFrame(frame); err != nil {
 				return true
 			}
+			d.stages.egress(t0)
 			n := frame.Len()
 			d.egressCounter.Add(float64(n))
 			if d.session != nil {

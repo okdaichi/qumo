@@ -133,6 +133,11 @@ func spinRelay(tb testing.TB, nodeID, addr string, cert tls.Certificate, pool *x
 	if v := envIntDef("RELAY_FRAME", 0); v > 0 {
 		cfg.FrameCapacity = v
 	}
+	// Per-stage latency instrumentation: a fresh collector for this relay, plus
+	// (Phase 2, //go:build instrument) a quic-go tracer wired to it. No-op in the
+	// default build; the benchmark reads s.StageLatency() under -tags instrument.
+	stages := newStageCollector()
+	applyStageTracer(quicCfg, stages)
 	s := &Server{
 		MOQServer: &moqt.Server{Addr: addr, TLSConfig: &tls.Config{
 			Certificates: []tls.Certificate{cert}, NextProtos: []string{moqt.NextProtoMOQ}, MinVersion: tls.VersionTLS13,
@@ -144,6 +149,7 @@ func spinRelay(tb testing.TB, nodeID, addr string, cert tls.Certificate, pool *x
 		// re-floods the announcement and hits "duplicated broadcast path".
 		TrackMux: moqt.NewTrackMux(moqt.NewHopID()),
 	}
+	s.stages = stages
 	go func() { _ = s.ListenAndServe() }()
 	tb.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)

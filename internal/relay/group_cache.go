@@ -38,6 +38,12 @@ type groupCache struct {
 	refCount atomic.Int32
 	evicted  atomic.Bool
 	released atomic.Bool
+
+	// ingressArrivalNs is the group's arrival time (UnixNano), stamped in reserve
+	// and read in deliverGroup to measure ring-residence latency. Only written/
+	// read under //go:build instrument (via stampArrival); zero otherwise. Atomic
+	// so the cross-goroutine reserve→deliverGroup read is race-free.
+	ingressArrivalNs atomic.Int64
 }
 
 // newGroupCache allocates a groupCache whose frames snapshot is an empty slice with
@@ -132,6 +138,7 @@ func newGroupRing(size int, pool *FramePool) *groupRing {
 		caches: make([]atomic.Pointer[groupCache], size),
 		pool:   pool,
 		size:   size,
+		stages: newStageCollector(),
 	}
 	ring.gcPool.New = func() any {
 		return newGroupCache(0, MaxFramesPerGroup)
@@ -146,6 +153,13 @@ type groupRing struct {
 	size   int
 	pos    atomic.Uint64
 	gcPool sync.Pool
+
+	// stages records per-stage latencies for fill/reserve. Defaulted in
+	// newGroupRing so it is never nil (tests construct rings directly); the
+	// distributor overwrites it with the Server's shared collector so a node's
+	// stages aggregate into one Server.StageLatency report. No-op in the default
+	// build.
+	stages *stageCollector
 }
 
 // reserve atomically allocates a ring slot for seq and returns the new cache.
@@ -161,6 +175,9 @@ func (ring *groupRing) reserve(seq moqt.GroupSequence) *groupCache {
 	// Reinitialize content state so the read contract does not depend on
 	// releaseCache having cleaned up: publish a fresh empty snapshot.
 	cache.resetForReuse()
+	// Stamp the group's ingress-arrival time for ring-residence latency (no-op
+	// in the default build).
+	cache.stampArrival(ring.stages)
 
 	idx := int(ring.pos.Add(1) % uint64(ring.size))
 
@@ -187,7 +204,14 @@ func (ring *groupRing) fill(group frameSource, cache *groupCache, onFrame func(n
 	for frame := range group.Frames(buf) {
 		frameCount++
 		n := frame.Len()
+		// Ingress transport: publisher WriteFrame → relay arrival, read from the
+		// payload publish timestamp. No-op in the default build.
+		ring.stages.transit(frame.Body())
+		// Stage A: per-frame clone + RCU-publish service time (no-op in the
+		// default build; time.Now is inside now/ingress so it is elided there).
+		t0 := ring.stages.now()
 		cache.append(frame, ring.pool)
+		ring.stages.ingress(t0)
 		if onFrame != nil {
 			onFrame(n)
 		}

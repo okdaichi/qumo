@@ -47,6 +47,12 @@ type Server struct {
 	// DefaultFramePool when unset, so a minimally-constructed Server still works).
 	framePool *FramePool
 
+	// stages is the per-stage latency instrumentation collector. Resolved in
+	// init() to a no-op (default build) or real (//go:build instrument) collector;
+	// the benchmark sets it explicitly so Server.StageLatency aggregates this
+	// node's stages into one report. No-op in the default build.
+	stages *stageCollector
+
 	webtransportHandler *moqt.WebTransportHandler
 	statusHandler       *statusHandler
 	initOnce            sync.Once
@@ -140,6 +146,13 @@ func (s *Server) init() {
 		// explicit value mints a right-sized pool shared across tracks.
 		if s.framePool == nil {
 			s.framePool = resolveFramePool(s.Config)
+		}
+
+		// Resolve the per-stage latency collector (no-op in the default build;
+		// real under //go:build instrument). The benchmark may set this before
+		// ListenAndServe to read Server.StageLatency.
+		if s.stages == nil {
+			s.stages = newStageCollector()
 		}
 
 		if s.connected == nil {
@@ -442,7 +455,7 @@ func (s *Server) serveSession(sess *moqt.Session, requireAuth bool) {
 		}
 
 		handler := newRelayHandler(ann, sess, s.Config.NodeID, broadSess,
-			s.Config.GroupCacheSize, s.framePool)
+			s.Config.GroupCacheSize, s.framePool, s.stages)
 
 		// Route selection: only replace an existing active handler if the new
 		// route is strictly better. The decision and the TrackMux install are
