@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"os"
 	"runtime"
 	"sync"
 	"time"
@@ -13,8 +14,29 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
-// Optimized timeout for best CPU/latency tradeoff (based on benchmarks)
-var NotifyTimeout = 1 * time.Millisecond
+// NotifyTimeout is the egress wait's poll-fallback interval. It is a SAFETY NET,
+// not the delivery mechanism: new data is delivered via the per-frame broadcast()
+// notify (group_cache.go fill), which fires reliably whenever a frame is appended.
+// The timer only backstops a subscriber that parked in a window where no notify
+// is coming (e.g. it fell behind the ring and is waiting for the head to advance).
+//
+// It was previously 1ms — a value that, with N subscribers each parked here, costs
+// N timer-wheel entries firing 1000x/sec regardless of media rate (~5M spurious
+// wakeups/sec at the ~5K-session ceiling), which dominated the scheduler/selectgo
+// profile. Since the notify path already covers every real delivery, the fallback
+// can be far coarser. Env-overridable so the capacity benchmark can sweep it and
+// confirm the CPU-vs-tail-latency knee empirically rather than baking an
+// unmeasured constant.
+var NotifyTimeout = envNotifyTimeout()
+
+func envNotifyTimeout() time.Duration {
+	if v := os.Getenv("RELAY_NOTIFY_TIMEOUT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 100 * time.Millisecond
+}
 
 // DrainTimeout is the grace period given to a displaced relayHandler before
 // its upstream context is cancelled. During this window existing subscribers

@@ -552,8 +552,14 @@ func TestTrackDistributor_MemoryBehavior(t *testing.T) {
 
 // TestTrackDistributor_Timeout tests timeout behavior
 func TestTrackDistributor_Timeout(t *testing.T) {
-	t.Run("verify_timeout_constant", func(t *testing.T) {
-		assert.Equal(t, 1*time.Millisecond, NotifyTimeout, "Expected NotifyTimeout to be 1ms")
+	t.Run("default is a coarse safety-net, not the 1ms poll", func(t *testing.T) {
+		// NotifyTimeout is a fallback, not the delivery path (per-frame broadcast
+		// is). It must be positive and coarse enough that N parked subscribers do
+		// not each fire a 1ms timer. We assert the contract (coarse), not an exact
+		// magic number.
+		assert.Positive(t, NotifyTimeout, "NotifyTimeout must be positive")
+		assert.GreaterOrEqual(t, NotifyTimeout, 10*time.Millisecond,
+			"NotifyTimeout should be a coarse safety net, not a 1ms hot poll")
 	})
 }
 
@@ -715,13 +721,23 @@ func TestTrackDistributor_NotificationDelivery(t *testing.T) {
 	})
 }
 
-// TestTrackDistributor_NotifyTimeout tests the NotifyTimeout constant
+// TestTrackDistributor_NotifyTimeout verifies the env override and the
+// coarse-fallback contract.
 func TestTrackDistributor_NotifyTimeout(t *testing.T) {
-	assert.Greater(t, NotifyTimeout, time.Duration(0), "NotifyTimeout should be positive")
+	assert.Positive(t, NotifyTimeout, "NotifyTimeout should be positive")
 
-	// Verify it's the optimized value from benchmarks
-	expectedTimeout := 1 * time.Millisecond
-	assert.Equal(t, expectedTimeout, NotifyTimeout, "NotifyTimeout should be optimal value")
+	t.Run("env override", func(t *testing.T) {
+		t.Setenv("RELAY_NOTIFY_TIMEOUT", "250ms")
+		assert.Equal(t, 250*time.Millisecond, envNotifyTimeout())
+	})
+	t.Run("invalid env falls back to default", func(t *testing.T) {
+		t.Setenv("RELAY_NOTIFY_TIMEOUT", "not-a-duration")
+		assert.Equal(t, 100*time.Millisecond, envNotifyTimeout())
+	})
+	t.Run("negative env rejected", func(t *testing.T) {
+		t.Setenv("RELAY_NOTIFY_TIMEOUT", "-5ms")
+		assert.Equal(t, 100*time.Millisecond, envNotifyTimeout())
+	})
 }
 
 // ============================================================================
