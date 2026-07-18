@@ -70,9 +70,6 @@ func BenchmarkRelayChain_FanoutSingleRelay(b *testing.B) {
 // singleRelayFanoutRun: one publisher → one relay → K direct subscribers.
 func singleRelayFanoutRun(tb testing.TB, cert tls.Certificate, pool *x509.CertPool, quicCfg *quic.Config, K int, frameSize int, gap, duration time.Duration) scalabilityStats {
 	tb.Helper()
-	if v := envIntDef("RELAY_NOTIFY_TIMEOUT_MS", 0); v > 0 {
-		NotifyTimeout = time.Duration(v) * time.Millisecond
-	}
 
 	relay := spinRelay(tb, "relay", chainFreeAddr(tb), cert, pool, quicCfg)
 	relayAddr := relay.MOQServer.Addr
@@ -163,8 +160,8 @@ func singleRelayFanoutRun(tb testing.TB, cert tls.Certificate, pool *x509.CertPo
 	}
 
 	return scalabilityStats{
-		K:      K,
-		min:    percentile(allLats, 0), p25: percentile(allLats, 25),
+		K:   K,
+		min: percentile(allLats, 0), p25: percentile(allLats, 25),
 		median: percentile(allLats, 50), p75: percentile(allLats, 75),
 		p95: percentile(allLats, 95), p99: percentile(allLats, 99), maxLat: percentile(allLats, 100),
 		lossPct: lossPct, fps: fps, mbps: fps * float64(frameSize) * 8 / 1e6,

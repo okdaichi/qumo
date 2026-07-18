@@ -180,14 +180,15 @@ func (ring *groupRing) reserve(seq moqt.GroupSequence) *groupCache {
 // for different groups.
 //
 // onFrame is called per frame (not per group) on purpose: it drives both
-// per-frame byte accounting AND the subscriber wakeup. Egress waits on the
-// wakeup at two points — between groups and, for a group whose frames trickle
-// in over time, between frames within the group (deliverGroup). Per-frame
-// wakeup is what delivers each trickled frame immediately; collapsing it to a
-// per-group wakeup would make intra-group frames wait for the poll timer. The
-// wakeup is cheap (a non-blocking send that mostly hits the buffered channel's
-// default branch), so the reliable per-frame notify is what lets NotifyTimeout
-// be a pure safety net rather than the primary delivery mechanism.
+// per-frame byte accounting AND the subscriber wakeup (broadcast). Egress waits
+// for a wakeup at two points — between groups and, for a group whose frames
+// trickle in over time, between frames within the group (deliverGroup). The
+// per-frame wakeup is what delivers each trickled frame immediately; it is the
+// sole delivery mechanism (the egress wait has no poll-timer fallback — see the
+// egress wait comment and TestRelayChain_NotifyTimeoutNotLoadBearing), so
+// collapsing it to a per-group wakeup would stall intra-group frames. The wakeup
+// is cheap: a non-blocking send that mostly hits the buffered channel's default
+// branch.
 func (ring *groupRing) fill(group frameSource, cache *groupCache, onFrame func(n int)) {
 	buf := ring.pool.Get()
 	defer ring.pool.Put(buf)
