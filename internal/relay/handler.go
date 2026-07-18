@@ -13,9 +13,6 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
-// Optimized timeout for best CPU/latency tradeoff (based on benchmarks)
-var NotifyTimeout = 1 * time.Millisecond
-
 // DrainTimeout is the grace period given to a displaced relayHandler before
 // its upstream context is cancelled. During this window existing subscribers
 // can finish reading in-flight groups before the upstream subscription stops.
@@ -416,15 +413,6 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 		last--
 	}
 
-	timer := time.NewTimer(NotifyTimeout)
-	if !timer.Stop() {
-		select {
-		case <-timer.C:
-		default:
-		}
-	}
-	defer timer.Stop()
-
 	for {
 		latest := d.ring.head()
 
@@ -444,7 +432,7 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 			}
 
 			if cache := d.ring.get(last); cache != nil {
-				if d.deliverGroup(tw, twCtx, cache, timer, notify) {
+				if d.deliverGroup(tw, twCtx, cache, notify) {
 					return
 				}
 				// Delivered a group; immediately try the next one.
@@ -461,17 +449,22 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 		// WriteFrame erroring on the same stream reset. Without converging here, a
 		// fell-behind/cache-miss spin could blind-loop past cancellation and pin
 		// gomoqt's stream-handler WaitGroup, hanging Server.Shutdown/Close (#286).
-		timer.Reset(NotifyTimeout)
+		//
+		// No poll-timer fallback: the per-frame broadcast() notify (group_cache.go
+		// fill) wakes egress for every real delivery — a new group advances the ring
+		// head synchronously in reserve() and then broadcasts, the notify channel is
+		// cap-1 buffered and subscribed before this loop (no enter-select race), and
+		// egress re-reads head() fresh each iteration (level-triggered, so coalesced
+		// signals never lose data). Guarded by TestRelayChain_NotifyOnlyDelivery
+		// (delivery is complete and prompt with no poll fallback).
 		select {
 		case <-notify:
-			// New group available, retry immediately
-		case <-timer.C:
-			// Timeout fallback
+			// New group/frame available, retry immediately.
 		case <-d.done:
-			// Distributor shut down (upstream ended)
+			// Distributor shut down (upstream ended).
 			return
 		case <-twCtx.Done():
-			// Client disconnected or relay shutdown
+			// Client disconnected or relay shutdown.
 			return
 		}
 	}
@@ -481,7 +474,7 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 // returns true if the egress loop should exit — the subscribe stream was closed
 // or cancelled (OpenGroupAt/WriteFrame error, twCtx.Done, or d.done) — or false
 // if the group was delivered completely and the loop should advance to the next.
-func (d *trackDistributor) deliverGroup(tw *moqt.TrackWriter, twCtx context.Context, cache *groupCache, timer *time.Timer, notify <-chan struct{}) bool {
+func (d *trackDistributor) deliverGroup(tw *moqt.TrackWriter, twCtx context.Context, cache *groupCache, notify <-chan struct{}) bool {
 	gw, err := tw.OpenGroupAt(twCtx, cache.seq)
 	if err != nil {
 		d.ring.decrRef(cache)
@@ -514,13 +507,13 @@ func (d *trackDistributor) deliverGroup(tw *moqt.TrackWriter, twCtx context.Cont
 			break
 		}
 
-		// Wait for more frames
-		timer.Reset(NotifyTimeout)
+		// Wait for the next frame of this still-filling (trickle) group. The
+		// per-frame broadcast() notify delivers each appended frame; no poll
+		// fallback is needed (see egress's wait comment). Cancellation converges
+		// here via d.done / twCtx.Done().
 		select {
 		case <-notify:
-			// New frame may be available
-		case <-timer.C:
-			// Poll timeout
+			// New frame may be available.
 		case <-d.done:
 			return true
 		case <-twCtx.Done():

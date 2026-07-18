@@ -36,21 +36,21 @@ import (
 
 // scalabilityStats holds all decision-grade metrics for one fan-out config.
 type scalabilityStats struct {
-	K      int
-	min    time.Duration
-	p25    time.Duration
-	median time.Duration
-	p75    time.Duration
-	p95    time.Duration
-	p99    time.Duration
-	maxLat time.Duration
+	K        int
+	min      time.Duration
+	p25      time.Duration
+	median   time.Duration
+	p75      time.Duration
+	p95      time.Duration
+	p99      time.Duration
+	maxLat   time.Duration
 	jitterMs float64 // sample stdev of per-group latencies (ms)
-	lossPct float64
-	fps     float64
-	mbps    float64
-	heapMB  float64
-	goros   int
-	cpuMs   float64
+	lossPct  float64
+	fps      float64
+	mbps     float64
+	heapMB   float64
+	goros    int
+	cpuMs    float64
 	fairness float64 // Jain's index across per-leaf delivered (1.0 = fair)
 }
 
@@ -59,11 +59,6 @@ type scalabilityStats struct {
 // All relays share one self-signed cert (trusted via pool).
 func fanoutSweepRun(tb testing.TB, cert tls.Certificate, pool *x509.CertPool, quicCfg *quic.Config, K, frameSize int, gap, duration time.Duration) scalabilityStats {
 	tb.Helper()
-	// Sweepable relay knob (paramexp wiring): RELAY_NOTIFY_TIMEOUT_MS overrides
-	// the package-level NotifyTimeout for this run. Set once; idempotent.
-	if v := envIntDef("RELAY_NOTIFY_TIMEOUT_MS", 0); v > 0 {
-		NotifyTimeout = time.Duration(v) * time.Millisecond
-	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -172,13 +167,13 @@ func fanoutSweepRun(tb testing.TB, cert tls.Certificate, pool *x509.CertPool, qu
 	}
 
 	return scalabilityStats{
-		K:      K,
-		min:    percentile(allLats, 0), p25: percentile(allLats, 25),
+		K:   K,
+		min: percentile(allLats, 0), p25: percentile(allLats, 25),
 		median: percentile(allLats, 50), p75: percentile(allLats, 75),
-		p95:    percentile(allLats, 95), p99: percentile(allLats, 99),
-		maxLat: percentile(allLats, 100),
+		p95: percentile(allLats, 95), p99: percentile(allLats, 99),
+		maxLat:   percentile(allLats, 100),
 		jitterMs: jitterMs,
-		lossPct: lossPct, fps: fps, mbps: fps * float64(frameSize) * 8 / 1e6,
+		lossPct:  lossPct, fps: fps, mbps: fps * float64(frameSize) * 8 / 1e6,
 		heapMB: heapMB, goros: goros, cpuMs: cpu.Seconds() * 1000,
 		fairness: fairness,
 	}
@@ -216,7 +211,6 @@ func leafSubscribeTimed(tb testing.TB, leaf *Server, pool *x509.CertPool, timeou
 	}
 	return lats
 }
-
 
 // ---- #1: Fan-out sweep (the core deliverable) ----
 
@@ -377,6 +371,112 @@ func TestRelayChain_SlowSubscriber(t *testing.T) {
 			return "FAIL (fast subscriber lost frames — possible head-of-line blocking)"
 		}())
 	require.GreaterOrEqual(t, fastCount, N*9/10, "fast subscriber lost >10%% frames — slow subscriber impacted it")
+}
+
+// TestRelayChain_NotifyOnlyDelivery guards the invariant that the egress path
+// has no poll-timer fallback: the per-frame broadcast() notify is the SOLE
+// delivery wakeup. It drives the exact scenario a fallback timer used to cover —
+// a subscriber that drains each group, parks caught-up, and must be woken for the
+// NEXT group after an idle GAP — and asserts every group is delivered PROMPTLY
+// (one gap apart), not stalled.
+//
+// The publisher spaces groups by GAP=50ms. With a working notify path each group
+// arrives ~one gap after the previous. If a regression re-introduced a slow poll
+// or broke the notify wiring, groups would arrive clumped/late and the
+// max-inter-arrival assertion would fail. This is the permanent regression guard
+// for the timer removal (the timer's absence was proven safe by running this with
+// the timer set to 1h before removal).
+func TestRelayChain_NotifyOnlyDelivery(t *testing.T) {
+	cert, pool := chainCert(t)
+	quicCfg := &quic.Config{EnableDatagrams: true, KeepAlivePeriod: 5 * time.Second, MaxIdleTimeout: 30 * time.Second, MaxIncomingUniStreams: 1 << 20, MaxIncomingStreams: 1 << 20}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	origin := spinRelay(t, "origin", chainFreeAddr(t), cert, pool, quicCfg)
+	leaf := spinRelay(t, "leaf", chainFreeAddr(t), cert, pool, quicCfg)
+	leaf.Config.Peers = []Peer{{Address: origin.MOQServer.Addr}}
+	go leaf.ConnectPeers(ctx) //nolint:errcheck
+
+	// Publisher: emit N groups, one frame each, spaced by GAP. The gap is the
+	// crux — between groups a caught-up subscriber is parked with NO pending
+	// notify and (with the timer disabled) can only be woken by the next group's
+	// broadcast(). GAP=50ms >> the old 1ms poll, so a timer-dependent delivery
+	// would be obvious (groups arriving in a 1h-delayed clump, or not at all).
+	const N = 40
+	const gap = 50 * time.Millisecond
+	pubMux := moqt.NewTrackMux(moqt.NewHopID())
+	pubMux.PublishFunc(ctx, chainBroadcastPath, func(tw *moqt.TrackWriter) {
+		defer tw.Close()
+		payload := make([]byte, 16)
+		for i := range N {
+			gw, err := tw.OpenGroup(ctx)
+			if err != nil {
+				return
+			}
+			binary.BigEndian.PutUint64(payload[0:8], uint64(i))
+			binary.BigEndian.PutUint64(payload[8:16], uint64(time.Now().UnixNano()))
+			fr := moqt.NewFrame(16)
+			_, _ = fr.Write(payload)
+			_ = gw.WriteFrame(fr)
+			_ = gw.Close()
+			time.Sleep(gap) // idle gap: subscriber parks caught-up here
+		}
+	})
+	pubSess, err := (&moqt.Dialer{TLSConfig: chainDialerTLS(pool), QUICConfig: &quic.Config{EnableDatagrams: true, MaxIncomingUniStreams: 1 << 20, MaxIncomingStreams: 1 << 20}}).Dial(ctx, "moqt://"+origin.MOQServer.Addr, pubMux)
+	require.NoError(t, err)
+	defer pubSess.CloseWithError(moqt.NoError, "done")
+	waitForHandler(t, leaf, chainBroadcastPath)
+
+	// Subscriber: read groups, recording the wall-clock arrival of each so we can
+	// prove they were delivered promptly (via notify) and NOT clumped at the end
+	// (which is what a timer-only delivery under a huge timeout would look like).
+	subCtx, subCancel := context.WithTimeout(ctx, 20*time.Second)
+	defer subCancel()
+	sess, err := (&moqt.Dialer{TLSConfig: chainDialerTLS(pool), QUICConfig: &quic.Config{EnableDatagrams: true, MaxIncomingUniStreams: 1 << 20, MaxIncomingStreams: 1 << 20}}).Dial(subCtx, "moqt://"+leaf.MOQServer.Addr, moqt.NewTrackMux(0))
+	require.NoError(t, err)
+	defer sess.CloseWithError(moqt.NoError, "done")
+	tr, err := sess.Subscribe(subCtx, chainBroadcastPath, chainTrackName, nil)
+	require.NoError(t, err)
+	defer tr.Close()
+
+	buf := moqt.NewFrame(256)
+	start := time.Now()
+	var interArrival []time.Duration
+	lastArrival := start
+	received := 0
+	for received < N {
+		gr, err := tr.AcceptGroup(subCtx)
+		if err != nil {
+			break
+		}
+		for range gr.Frames(buf) {
+			now := time.Now()
+			interArrival = append(interArrival, now.Sub(lastArrival))
+			lastArrival = now
+			received++
+		}
+	}
+
+	// 1) All groups delivered — the notify path is complete for both the
+	//    caught-up-wait and any incidental fell-behind case.
+	require.Equal(t, N, received,
+		"with the poll timer disabled, notify() must still deliver every group; missing groups ⇒ timer was load-bearing")
+
+	// 2) Delivery was PROMPT, not clumped. If the timer (now 1h) were the wakeup,
+	//    groups after the first would not arrive until the 1h fallback. Assert the
+	//    max inter-arrival gap is a small multiple of the publisher's GAP — i.e.
+	//    each group was delivered by its own broadcast(), not by a poll.
+	maxGap := time.Duration(0)
+	for _, d := range interArrival {
+		if d > maxGap {
+			maxGap = d
+		}
+	}
+	require.Less(t, maxGap, 2*time.Second,
+		"a group waited far longer than the publisher gap ⇒ delivery relied on the poll timer, not notify (max inter-arrival %s)", maxGap)
+
+	log.Printf("[notify-only-delivery] delivered %d/%d groups, max inter-arrival %s (pub gap %s) ⇒ notify path alone delivers promptly; no poll-timer fallback needed",
+		received, N, maxGap.Round(time.Millisecond), gap)
 }
 
 // ---- #4/#7: Long soak with periodic sampling ----

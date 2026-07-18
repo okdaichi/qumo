@@ -550,13 +550,6 @@ func TestTrackDistributor_MemoryBehavior(t *testing.T) {
 	})
 }
 
-// TestTrackDistributor_Timeout tests timeout behavior
-func TestTrackDistributor_Timeout(t *testing.T) {
-	t.Run("verify_timeout_constant", func(t *testing.T) {
-		assert.Equal(t, 1*time.Millisecond, NotifyTimeout, "Expected NotifyTimeout to be 1ms")
-	})
-}
-
 // TestTrackDistributor_RaceConditions tests for race conditions
 func TestTrackDistributor_RaceConditions(t *testing.T) {
 	t.Run("concurrent_subscribe_and_broadcast", func(t *testing.T) {
@@ -713,15 +706,6 @@ func TestTrackDistributor_NotificationDelivery(t *testing.T) {
 			require.Fail(t, "did not receive notification from buffer")
 		}
 	})
-}
-
-// TestTrackDistributor_NotifyTimeout tests the NotifyTimeout constant
-func TestTrackDistributor_NotifyTimeout(t *testing.T) {
-	assert.Greater(t, NotifyTimeout, time.Duration(0), "NotifyTimeout should be positive")
-
-	// Verify it's the optimized value from benchmarks
-	expectedTimeout := 1 * time.Millisecond
-	assert.Equal(t, expectedTimeout, NotifyTimeout, "NotifyTimeout should be optimal value")
 }
 
 // ============================================================================
