@@ -13,6 +13,14 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
+// defaultGroupTimeout bounds how long OpenGroupAt may block waiting for a QUIC
+// stream slot (MAX_STREAMS backpressure). When the peer can't accept a new
+// stream within this window, the group is dropped rather than blocking the
+// egress goroutine indefinitely. Should be generous enough to absorb normal
+// scheduling jitter (GC pauses, ACK round-trips) — 30ms ≈ one frame at 30fps
+// or ~15 group intervals at 500fps.
+var defaultGroupTimeout = 30 * time.Millisecond
+
 // DrainTimeout is the grace period given to a displaced relayHandler before
 // its upstream context is cancelled. During this window existing subscribers
 // can finish reading in-flight groups before the upstream subscription stops.
@@ -475,9 +483,24 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 // or cancelled (OpenGroupAt/WriteFrame error, twCtx.Done, or d.done) — or false
 // if the group was delivered completely and the loop should advance to the next.
 func (d *trackDistributor) deliverGroup(tw *moqt.TrackWriter, twCtx context.Context, cache *groupCache, notify <-chan struct{}) bool {
-	gw, err := tw.OpenGroupAt(twCtx, cache.seq)
+	// OpenGroupAt opens a new QUIC uni-stream per group. gomoqt's OpenUniStreamSync
+	// blocks when the peer's MAX_STREAMS limit is reached — this is the designed
+	// backpressure. A deadline-bearing context bounds the block: if the peer can't
+	// accept a new stream within the timeout, the group is dropped (MoQ semi-reliable).
+	// Without a deadline, OpenGroupAt blocks indefinitely, pinning the egress
+	// goroutine and accumulating stream objects until the ring evicts everything.
+	openCtx, cancel := context.WithTimeout(twCtx, defaultGroupTimeout)
+	defer cancel()
+	gw, err := tw.OpenGroupAt(openCtx, cache.seq)
 	if err != nil {
 		d.ring.decrRef(cache)
+		if errors.Is(err, context.DeadlineExceeded) {
+			// Backpressure: peer's MAX_STREAMS is exhausted. Drop this group
+			// (MoQ semi-reliable) and continue to the next.
+			metricSubscriberSkipsTotal.Inc()
+			return false
+		}
+		// Non-timeout error (connection closed, session dead): terminate egress.
 		return true
 	}
 	defer gw.Close()
