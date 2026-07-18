@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`internal/relay` egress poll fallback `NotifyTimeout` 1ms → 100ms (env `RELAY_NOTIFY_TIMEOUT`).** The subscriber egress wait-select (`egress`/`deliverGroup`) used a 1ms poll fallback, so every parked subscriber goroutine fired a timer 1000×/sec regardless of media rate — ~5M spurious wakeups/sec at the ~5K-session ceiling, the dominant `selectgo`/timer cost in prior scheduler profiles (and it is relay code, not quic-go). The 1ms poll was never the delivery path: the per-frame `broadcast()` notify (`groupRing.fill`) already wakes egress reliably whenever a frame is appended; the timer only backstops a subscriber parked with no notify coming (fell behind the ring window). Raising the fallback to 100ms is behavior-preserving (same frames, same order — only the idle poll rate changes) and cuts idle wakeups **~70–100×** (new `BenchmarkEgressWait_IdleWakeups`: 1ms→640–702 vs 100ms→6.8–9.2 wakeups/goroutine/sec). Per-frame notify is deliberately kept — it delivers trickle-filled intra-group frames immediately, so a per-group notify was *not* adopted. Reduces CPU/scheduler pressure and tail latency under load at a given N; it does **not** raise the memory-bound session ceiling (per-conn goroutine-stack memory, quic-go). The two tests that asserted `NotifyTimeout == 1ms` (an unmeasured constant baked as a test) now assert the coarse-fallback contract + env override.
+
 ### Fixed
 
 - **`tools/paramexp` post-merge review fixes (retro-review of #297/#298).** Six correctness bugs found by adversarial review of the merged code (same class as #294's GP-math bugs — CI-green but subtle math the tests asserted too little to catch):
