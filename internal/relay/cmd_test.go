@@ -197,3 +197,29 @@ func TestParseRelayArgs(t *testing.T) {
 		})
 	}
 }
+
+func TestGCPercent(t *testing.T) {
+	cases := map[string]struct {
+		gogc      string
+		relayGOGC string
+		wantPct   int
+		wantApply bool
+	}{
+		"nothing set → relay default":   {gogc: "", relayGOGC: "", wantPct: defaultRelayGOGC, wantApply: true},
+		"GOGC set → do not stomp":       {gogc: "50", relayGOGC: "", wantPct: 0, wantApply: false},
+		"GOGC set wins over RELAY_GOGC": {gogc: "50", relayGOGC: "800", wantPct: 0, wantApply: false},
+		"RELAY_GOGC valid → use it":     {gogc: "", relayGOGC: "800", wantPct: 800, wantApply: true},
+		"RELAY_GOGC invalid → default":  {gogc: "", relayGOGC: "notanint", wantPct: defaultRelayGOGC, wantApply: true},
+		"RELAY_GOGC zero → default":     {gogc: "", relayGOGC: "0", wantPct: defaultRelayGOGC, wantApply: true},
+		"RELAY_GOGC negative → default": {gogc: "", relayGOGC: "-5", wantPct: defaultRelayGOGC, wantApply: true},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			pct, apply := gcPercent(tc.gogc, tc.relayGOGC)
+			assert.Equal(t, tc.wantApply, apply)
+			if tc.wantApply {
+				assert.Equal(t, tc.wantPct, pct)
+			}
+		})
+	}
+}
