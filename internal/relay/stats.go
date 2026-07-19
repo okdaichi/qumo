@@ -2,11 +2,20 @@ package relay
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/qumo-dev/gomoqt/moqt"
 	"github.com/qumo-dev/gomoqt/transport"
 )
+
+// statsSamplerInterval is the period at which the server-wide sampler refreshes
+// every connection, session, and track-depth gauge. It matches the shortest of
+// the previous per-entity poll intervals (cache depth was 10s; conn/session
+// were 30s). Sampling everything on the same tick is simpler and strictly more
+// responsive, at negligible cost — one sweep over the registries is a handful
+// of cheap gauge writes per entity.
+const statsSamplerInterval = 10 * time.Second
 
 // connStatsProvider is satisfied by native QUIC connections (quic.Connection)
 // but not by WebTransport sessions. It mirrors the unexported
@@ -15,73 +24,141 @@ type connStatsProvider interface {
 	ConnectionStats() transport.ConnectionStats
 }
 
-// pollConnStats polls QUIC connection-level statistics for an inbound
-// native-QUIC connection and updates Prometheus gauges until ctx is cancelled.
-func pollConnStats(ctx context.Context, provider connStatsProvider, addr string) {
-	defer func() {
-		metricConnSmoothedRTT.DeleteLabelValues(addr)
-		metricConnPacketLossRate.DeleteLabelValues(addr)
-	}()
+// sessionStatsProvider is satisfied by *moqt.Session.
+type sessionStatsProvider interface {
+	Stats() moqt.SessionStats
+}
 
-	poll := func() {
-		stats := provider.ConnectionStats()
-		if stats.SmoothedRTT > 0 {
-			metricConnSmoothedRTT.WithLabelValues(addr).Set(float64(stats.SmoothedRTT.Milliseconds()))
-		}
-		if stats.PacketsSent > 0 {
-			lossRate := float64(stats.PacketsLost) / float64(stats.PacketsSent)
-			metricConnPacketLossRate.WithLabelValues(addr).Set(lossRate)
-		}
+// statsSampler consolidates all periodic Prometheus sampling into a single
+// server-wide goroutine, replacing the previous per-connection, per-session,
+// and per-track poller goroutines (pollConnStats/pollSessionStats/
+// pollCacheDepth). At high fan-out — tens of thousands of concurrent sessions —
+// those per-entity goroutines were a dominant GC cost: each carries a stack the
+// garbage collector must scan on every cycle, and ~2 stats goroutines per
+// session plus one per track added up to hundreds of thousands of stacks. A
+// single sampler that sweeps registries each tick removes that stack-scan load;
+// entities register on start and deregister on teardown.
+//
+// All methods are safe on a nil receiver so that a minimally-constructed Server
+// and standalone trackDistributors (used in tests) can skip sampling without
+// call-site guards.
+type statsSampler struct {
+	conns    sync.Map // addr string -> connStatsProvider
+	sessions sync.Map // addr string -> sessionStatsProvider
+	tracks   sync.Map // trackID string -> *trackDistributor
+}
+
+func (s *statsSampler) addConn(addr string, p connStatsProvider) {
+	if s == nil {
+		return
 	}
-	poll() // immediate first sample
+	s.conns.Store(addr, p)
+}
 
-	ticker := time.NewTicker(30 * time.Second)
+func (s *statsSampler) removeConn(addr string) {
+	if s == nil {
+		return
+	}
+	s.conns.Delete(addr)
+	metricConnSmoothedRTT.DeleteLabelValues(addr)
+	metricConnPacketLossRate.DeleteLabelValues(addr)
+}
+
+func (s *statsSampler) addSession(addr string, p sessionStatsProvider) {
+	if s == nil {
+		return
+	}
+	s.sessions.Store(addr, p)
+}
+
+func (s *statsSampler) removeSession(addr string) {
+	if s == nil {
+		return
+	}
+	s.sessions.Delete(addr)
+	metricSessionRTTMilliseconds.DeleteLabelValues(addr)
+	metricSessionEstimatedBitrate.DeleteLabelValues(addr)
+	// The per-addr RTT histogram series was never cleaned up by the old
+	// per-session poller (it deleted only the two gauges), leaking one series
+	// per departed session. Deregistration is the right place to drop it.
+	metricSessionRTTHistogram.DeleteLabelValues(addr)
+}
+
+func (s *statsSampler) addTrack(trackID string, d *trackDistributor) {
+	if s == nil {
+		return
+	}
+	s.tracks.Store(trackID, d)
+}
+
+func (s *statsSampler) removeTrack(trackID string) {
+	if s == nil {
+		return
+	}
+	s.tracks.Delete(trackID)
+	metricBufferDepthGroups.DeleteLabelValues(trackID)
+}
+
+// run drives the single sampling loop until ctx is cancelled.
+func (s *statsSampler) run(ctx context.Context) {
+	if s == nil {
+		return
+	}
+	ticker := time.NewTicker(statsSamplerInterval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			poll()
+			s.sample()
 		}
 	}
 }
 
-// sessionStatsProvider is satisfied by *moqt.Session.
-type sessionStatsProvider interface {
-	Stats() moqt.SessionStats
-	Context() context.Context
+// sample refreshes every registered gauge once. The registries are swept
+// independently; a concurrent register/deregister is safe (sync.Map) and simply
+// takes effect on the next tick.
+func (s *statsSampler) sample() {
+	if s == nil {
+		return
+	}
+	s.conns.Range(func(k, v any) bool {
+		sampleConnStats(v.(connStatsProvider), k.(string))
+		return true
+	})
+	s.sessions.Range(func(k, v any) bool {
+		sampleSessionStats(v.(sessionStatsProvider), k.(string))
+		return true
+	})
+	s.tracks.Range(func(k, v any) bool {
+		v.(*trackDistributor).sampleCacheDepth()
+		return true
+	})
 }
 
-// pollSessionStats periodically samples MoQT-level session statistics (RTT and
-// estimated bitrate) and updates Prometheus gauges. It exits when the session
-// context is cancelled.
-func pollSessionStats(sess sessionStatsProvider, addr string) {
-	defer func() {
-		metricSessionRTTMilliseconds.DeleteLabelValues(addr)
-		metricSessionEstimatedBitrate.DeleteLabelValues(addr)
-	}()
-
-	poll := func() {
-		stats := sess.Stats()
-		if stats.RTT > 0 {
-			metricSessionRTTMilliseconds.WithLabelValues(addr).Set(float64(stats.RTT.Milliseconds()))
-			metricSessionRTTHistogram.WithLabelValues(addr).Observe(stats.RTT.Seconds())
-		}
-		if stats.EstimatedBitrate > 0 {
-			metricSessionEstimatedBitrate.WithLabelValues(addr).Set(float64(stats.EstimatedBitrate))
-		}
+// sampleConnStats writes one snapshot of a native-QUIC connection's stats to the
+// per-addr gauges. It is the unit of work the sampler performs per conn.
+func sampleConnStats(p connStatsProvider, addr string) {
+	stats := p.ConnectionStats()
+	if stats.SmoothedRTT > 0 {
+		metricConnSmoothedRTT.WithLabelValues(addr).Set(float64(stats.SmoothedRTT.Milliseconds()))
 	}
-	poll() // immediate first sample
+	if stats.PacketsSent > 0 {
+		lossRate := float64(stats.PacketsLost) / float64(stats.PacketsSent)
+		metricConnPacketLossRate.WithLabelValues(addr).Set(lossRate)
+	}
+}
 
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-sess.Context().Done():
-			return
-		case <-ticker.C:
-			poll()
-		}
+// sampleSessionStats writes one snapshot of a MoQT session's stats (RTT and
+// estimated bitrate) to the per-addr gauges and RTT histogram.
+func sampleSessionStats(p sessionStatsProvider, addr string) {
+	stats := p.Stats()
+	if stats.RTT > 0 {
+		metricSessionRTTMilliseconds.WithLabelValues(addr).Set(float64(stats.RTT.Milliseconds()))
+		metricSessionRTTHistogram.WithLabelValues(addr).Observe(stats.RTT.Seconds())
+	}
+	if stats.EstimatedBitrate > 0 {
+		metricSessionEstimatedBitrate.WithLabelValues(addr).Set(float64(stats.EstimatedBitrate))
 	}
 }

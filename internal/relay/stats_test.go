@@ -3,7 +3,6 @@ package relay
 import (
 	"context"
 	"testing"
-	"testing/synctest"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -47,7 +46,7 @@ func (m *mockConnStatsProvider) ConnectionStats() transport.ConnectionStats {
 	return m.stats
 }
 
-func TestPollConnStats(t *testing.T) {
+func TestSampleConnStats(t *testing.T) {
 	addr := "192.0.2.1:1234"
 	provider := &mockConnStatsProvider{
 		stats: transport.ConnectionStats{
@@ -56,35 +55,53 @@ func TestPollConnStats(t *testing.T) {
 			PacketsLost: 5,
 		},
 	}
+	t.Cleanup(func() {
+		metricConnSmoothedRTT.DeleteLabelValues(addr)
+		metricConnPacketLossRate.DeleteLabelValues(addr)
+	})
 
-	// pollConnStats runs an immediate first sample then blocks on its ticker /
-	// context, deleting its Prometheus series on ctx cancel. Both the first
-	// sample and the deferred cleanup race a fixed wall-clock sleep, so run the
-	// poller in a synctest bubble where its lifecycle is deterministic. Per the
-	// project's go-test guidance (§8), timer/scheduling tests use synctest.
-	synctest.Test(t, func(t *testing.T) {
-		ctx, cancel := context.WithCancel(t.Context())
-		defer cancel()
+	// sampleConnStats is a single synchronous snapshot — the sampler goroutine
+	// calls it once per tick, so it needs no timers or bubble to exercise.
+	sampleConnStats(provider, addr)
 
-		go pollConnStats(ctx, provider, addr)
+	assert.Equal(t, 42.0, testutil.ToFloat64(metricConnSmoothedRTT.WithLabelValues(addr)))
+	assert.Equal(t, 0.05, testutil.ToFloat64(metricConnPacketLossRate.WithLabelValues(addr)))
+}
 
-		// The poller has run its immediate first sample and is now durably
-		// blocked on the ticker/context select.
-		synctest.Wait()
+// TestStatsSampler_ConnLifecycle exercises register → sample → deregister for a
+// native-QUIC connection through the shared sampler, asserting the series is
+// gone after removeConn (the cleanup that used to live in the poller's defer).
+func TestStatsSampler_ConnLifecycle(t *testing.T) {
+	addr := "192.0.2.9:1234"
+	s := &statsSampler{}
+	provider := &mockConnStatsProvider{
+		stats: transport.ConnectionStats{SmoothedRTT: 7 * time.Millisecond, PacketsSent: 10, PacketsLost: 1},
+	}
 
-		assert.Equal(t, 42.0, testutil.ToFloat64(metricConnSmoothedRTT.WithLabelValues(addr)))
-		assert.Equal(t, 0.05, testutil.ToFloat64(metricConnPacketLossRate.WithLabelValues(addr)))
+	s.addConn(addr, provider)
+	s.sample()
+	assert.Equal(t, 7.0, testutil.ToFloat64(metricConnSmoothedRTT.WithLabelValues(addr)))
 
-		cancel()
+	s.removeConn(addr)
+	assert.False(t, metricHasLabelValue(t, metricConnSmoothedRTT, addr),
+		"conn RTT series for %s should be deleted after removeConn", addr)
+	assert.False(t, metricHasLabelValue(t, metricConnPacketLossRate, addr),
+		"conn loss-rate series for %s should be deleted after removeConn", addr)
+}
 
-		// The poller observes ctx.Done, runs its deferred DeleteLabelValues,
-		// and exits — so its own addr series is gone.
-		synctest.Wait()
-
-		assert.False(t, metricHasLabelValue(t, metricConnSmoothedRTT, addr),
-			"conn RTT series for %s should be deleted after cancel", addr)
-		assert.False(t, metricHasLabelValue(t, metricConnPacketLossRate, addr),
-			"conn loss-rate series for %s should be deleted after cancel", addr)
+// TestStatsSampler_NilSafe verifies every sampler method (and the sweep) is a
+// no-op on a nil receiver, so a Server or trackDistributor built without a
+// sampler never panics.
+func TestStatsSampler_NilSafe(t *testing.T) {
+	var s *statsSampler
+	assert.NotPanics(t, func() {
+		s.addConn("a", nil)
+		s.removeConn("a")
+		s.addSession("a", nil)
+		s.removeSession("a")
+		s.addTrack("t", nil)
+		s.removeTrack("t")
+		s.sample()
 	})
 }
 
@@ -101,37 +118,47 @@ func (m *mockSessionStatsProvider) Context() context.Context {
 	return m.ctx
 }
 
-func TestPollSessionStats(t *testing.T) {
+func TestSampleSessionStats(t *testing.T) {
 	addr := "192.0.2.2:4321"
-
-	synctest.Test(t, func(t *testing.T) {
-		ctx, cancel := context.WithCancel(t.Context())
-		defer cancel()
-
-		provider := &mockSessionStatsProvider{
-			stats: moqt.SessionStats{
-				RTT:              85 * time.Millisecond,
-				EstimatedBitrate: 1500000,
-			},
-			ctx: ctx,
-		}
-
-		go pollSessionStats(provider, addr)
-
-		// Immediate first sample collected, then blocked on ticker/session ctx.
-		synctest.Wait()
-
-		assert.Equal(t, 85.0, testutil.ToFloat64(metricSessionRTTMilliseconds.WithLabelValues(addr)))
-		assert.Equal(t, 1500000.0, testutil.ToFloat64(metricSessionEstimatedBitrate.WithLabelValues(addr)))
-
-		cancel()
-
-		// Deferred DeleteLabelValues has run for this addr.
-		synctest.Wait()
-
-		assert.False(t, metricHasLabelValue(t, metricSessionRTTMilliseconds, addr),
-			"session RTT series for %s should be deleted after cancel", addr)
-		assert.False(t, metricHasLabelValue(t, metricSessionEstimatedBitrate, addr),
-			"session bitrate series for %s should be deleted after cancel", addr)
+	provider := &mockSessionStatsProvider{
+		stats: moqt.SessionStats{
+			RTT:              85 * time.Millisecond,
+			EstimatedBitrate: 1500000,
+		},
+	}
+	t.Cleanup(func() {
+		metricSessionRTTMilliseconds.DeleteLabelValues(addr)
+		metricSessionEstimatedBitrate.DeleteLabelValues(addr)
+		metricSessionRTTHistogram.DeleteLabelValues(addr)
 	})
+
+	sampleSessionStats(provider, addr)
+
+	assert.Equal(t, 85.0, testutil.ToFloat64(metricSessionRTTMilliseconds.WithLabelValues(addr)))
+	assert.Equal(t, 1500000.0, testutil.ToFloat64(metricSessionEstimatedBitrate.WithLabelValues(addr)))
+}
+
+// TestStatsSampler_SessionLifecycle exercises register → sample → deregister for
+// a session, asserting removeSession drops all three series — including the RTT
+// histogram, which the old per-session poller leaked (it deleted only the two
+// gauges).
+func TestStatsSampler_SessionLifecycle(t *testing.T) {
+	addr := "192.0.2.3:5555"
+	s := &statsSampler{}
+	provider := &mockSessionStatsProvider{
+		stats: moqt.SessionStats{RTT: 12 * time.Millisecond, EstimatedBitrate: 900000},
+	}
+
+	s.addSession(addr, provider)
+	s.sample()
+	assert.Equal(t, 12.0, testutil.ToFloat64(metricSessionRTTMilliseconds.WithLabelValues(addr)))
+	assert.Equal(t, 900000.0, testutil.ToFloat64(metricSessionEstimatedBitrate.WithLabelValues(addr)))
+
+	s.removeSession(addr)
+	assert.False(t, metricHasLabelValue(t, metricSessionRTTMilliseconds, addr),
+		"session RTT series for %s should be deleted after removeSession", addr)
+	assert.False(t, metricHasLabelValue(t, metricSessionEstimatedBitrate, addr),
+		"session bitrate series for %s should be deleted after removeSession", addr)
+	assert.False(t, metricHasLabelValue(t, metricSessionRTTHistogram, addr),
+		"session RTT histogram series for %s should be deleted after removeSession", addr)
 }

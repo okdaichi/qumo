@@ -1131,7 +1131,7 @@ func TestTrackDistributor_ProcessGroup_SemaphoreLimitsConcurrency(t *testing.T) 
 		MaxGroupFillsInFlight = limit
 
 		dist := newTrackDistributor(newTrackManager(0, nil), "test/sem", nil)
-		t.Cleanup(func() { close(dist.done) }) // stop pollCacheDepth
+		t.Cleanup(func() { close(dist.done) }) // release egress waiters
 		require.Equal(t, limit, cap(dist.fillSem), "fillSem capacity must equal MaxGroupFillsInFlight")
 
 		ctx, cancel := context.WithCancel(context.Background())
@@ -1203,7 +1203,7 @@ func TestTrackDistributor_ProcessGroup_CtxCancelUnblocks(t *testing.T) {
 		MaxGroupFillsInFlight = 1
 
 		dist := newTrackDistributor(newTrackManager(0, nil), "test/cancel", nil)
-		t.Cleanup(func() { close(dist.done) }) // stop pollCacheDepth
+		t.Cleanup(func() { close(dist.done) }) // release egress waiters
 
 		ctx, cancel := context.WithCancel(context.Background())
 

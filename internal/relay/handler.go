@@ -171,7 +171,7 @@ func isBetterRoute(candidate, current RouteStats) (bool, rejectionReason) {
 	return false, rejectionInferiorRTT
 }
 
-func newRelayHandler(ann *moqt.Announcement, sess *moqt.Session, nodeID string, broadSess *broadcastSession, cacheSize int, pool *FramePool) *relayHandler {
+func newRelayHandler(ann *moqt.Announcement, sess *moqt.Session, nodeID string, broadSess *broadcastSession, cacheSize int, pool *FramePool, sampler *statsSampler) *relayHandler {
 	if sess == nil {
 		panic("relay: session must not be nil")
 	}
@@ -179,11 +179,14 @@ func newRelayHandler(ann *moqt.Announcement, sess *moqt.Session, nodeID string, 
 		return nil
 	}
 
+	tracks := newTrackManager(cacheSize, pool)
+	tracks.sampler = sampler
+
 	ctx, cancel := context.WithCancel(sess.Context())
 	h := &relayHandler{
 		announcement: ann,
 		session:      sess,
-		tracks:       newTrackManager(cacheSize, pool),
+		tracks:       tracks,
 		nodeID:       nodeID,
 		broadSession: broadSess,
 		ctx:          ctx,
@@ -315,6 +318,13 @@ type trackManager struct {
 	// package defaults so a minimally-constructed Server (e.g. tests) works.
 	cacheSize int
 	pool      *FramePool
+
+	// sampler is the server-wide stats sampler each distributor registers with
+	// so its ring depth is refreshed on the shared sampling tick (replacing a
+	// per-distributor pollCacheDepth goroutine). nil is valid — its methods are
+	// nil-safe — so a manager built without a Server (tests) simply skips depth
+	// sampling. Set by newRelayHandler.
+	sampler *statsSampler
 }
 
 func newTrackManager(cacheSize int, pool *FramePool) *trackManager {
@@ -379,30 +389,22 @@ func newTrackDistributor(manager *trackManager, trackID string, broadSess *broad
 		fillSem:           make(chan struct{}, maxGroupFillsInFlightOrPanic()),
 		done:              make(chan struct{}),
 	}
-	go d.pollCacheDepth()
+	manager.sampler.addTrack(d.trackID, d)
 	return d
 }
 
-func (d *trackDistributor) pollCacheDepth() {
-	defer metricBufferDepthGroups.DeleteLabelValues(d.trackID)
-
-	ticker := time.NewTicker(10 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-d.done:
-			return
-		case <-ticker.C:
-			head := d.ring.head()
-			earliest := d.ring.earliestAvailable()
-			depth := 0
-			if head >= earliest {
-				depth = int(head - earliest + 1)
-			}
-			metricBufferDepthGroups.WithLabelValues(d.trackID).Set(float64(depth))
-		}
+// sampleCacheDepth refreshes the ring-depth gauge once. It is invoked by the
+// server-wide statsSampler on each tick; the per-track poller goroutine it
+// replaced is gone (see statsSampler). The metric series is deleted when the
+// distributor deregisters (statsSampler.removeTrack), called from ingest.
+func (d *trackDistributor) sampleCacheDepth() {
+	head := d.ring.head()
+	earliest := d.ring.earliestAvailable()
+	depth := 0
+	if head >= earliest {
+		depth = int(head - earliest + 1)
 	}
+	metricBufferDepthGroups.WithLabelValues(d.trackID).Set(float64(depth))
 }
 
 func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
@@ -575,6 +577,7 @@ func (d *trackDistributor) unsubscribe(ch chan struct{}) {
 
 func (d *trackDistributor) ingest(ctx context.Context, src *moqt.TrackReader) {
 	defer d.manager.remove(d.trackID, d)
+	defer d.manager.sampler.removeTrack(d.trackID)
 	defer close(d.done)
 
 	// wg tracks in-flight fill goroutines so we can wait for them before
