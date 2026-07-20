@@ -17,15 +17,16 @@ import (
 // groupCache tests
 // ============================================================================
 
-// snapshot returns a copy of the group's current frames for test assertions.
-// Production reads go through next(), which Loads a single slot inline; this
-// whole-group copy exists only for tests, so it lives here rather than in the
-// production file. A reserved-but-not-yet-Stored slot appears as a nil entry.
-func (gc *groupCache) snapshot() []*moqt.Frame {
+// collectFrames returns all frames currently in the group, for test assertions.
+// It is a free function, not a method on groupCache, so test-only scaffolding
+// does not leak into the production type's API. It reads through the production
+// path (next), so tests exercise the same read code production uses; a
+// reserved-but-not-yet-stored slot reads back as nil.
+func collectFrames(gc *groupCache) []*moqt.Frame {
 	n := int(gc.count.Load())
 	out := make([]*moqt.Frame, n)
-	for i := range out {
-		out[i] = gc.slots[i].Load()
+	for i := range n {
+		out[i] = gc.next(i)
 	}
 	return out
 }
@@ -37,8 +38,8 @@ func TestGroupCache_Append(t *testing.T) {
 	frame.Write([]byte("test data"))
 	gc.append(frame, DefaultFramePool)
 
-	require.Len(t, gc.snapshot(), 1)
-	assert.NotSame(t, frame, gc.snapshot()[0], "frame should be cloned")
+	require.Len(t, collectFrames(gc), 1)
+	assert.NotSame(t, frame, collectFrames(gc)[0], "frame should be cloned")
 }
 
 func TestGroupCache_Append_ClonesData(t *testing.T) {
@@ -51,7 +52,7 @@ func TestGroupCache_Append_ClonesData(t *testing.T) {
 	original.Reset()
 	original.Write([]byte("modified"))
 
-	cached := gc.snapshot()[0]
+	cached := collectFrames(gc)[0]
 	assert.NotEqual(t, 0, cached.Len(), "cached frame should retain original data")
 }
 
@@ -64,7 +65,7 @@ func TestGroupCache_Append_Multiple(t *testing.T) {
 		gc.append(f, DefaultFramePool)
 	}
 
-	assert.Len(t, gc.snapshot(), 5)
+	assert.Len(t, collectFrames(gc), 5)
 }
 
 func TestGroupCache_Next(t *testing.T) {
@@ -118,7 +119,7 @@ func TestGroupCache_ConcurrentAppend(t *testing.T) {
 	}
 	wg.Wait()
 
-	assert.Len(t, gc.snapshot(), goroutines*appendsPerGoroutine)
+	assert.Len(t, collectFrames(gc), goroutines*appendsPerGoroutine)
 }
 
 func TestGroupCache_IsComplete(t *testing.T) {
