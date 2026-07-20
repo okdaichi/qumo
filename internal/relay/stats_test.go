@@ -1,7 +1,8 @@
 package relay
 
 import (
-	"context"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -68,9 +69,9 @@ func TestSampleConnStats(t *testing.T) {
 	assert.Equal(t, 0.05, testutil.ToFloat64(metricConnPacketLossRate.WithLabelValues(addr)))
 }
 
-// TestStatsSampler_ConnLifecycle exercises register → sample → deregister for a
-// native-QUIC connection through the shared sampler, asserting the series is
-// gone after removeConn (the cleanup that used to live in the poller's defer).
+// TestStatsSampler_ConnLifecycle exercises register → sample → deregister → reap
+// for a native-QUIC connection. removeConn only queues the deletion; the series
+// is dropped by reapDeleted (which the run loop calls after each sweep).
 func TestStatsSampler_ConnLifecycle(t *testing.T) {
 	addr := "192.0.2.9:1234"
 	s := &statsSampler{}
@@ -83,10 +84,36 @@ func TestStatsSampler_ConnLifecycle(t *testing.T) {
 	assert.Equal(t, 7.0, testutil.ToFloat64(metricConnSmoothedRTT.WithLabelValues(addr)))
 
 	s.removeConn(addr)
+	s.reapDeleted()
 	assert.False(t, metricHasLabelValue(t, metricConnSmoothedRTT, addr),
-		"conn RTT series for %s should be deleted after removeConn", addr)
+		"conn RTT series for %s should be deleted after removeConn+reap", addr)
 	assert.False(t, metricHasLabelValue(t, metricConnPacketLossRate, addr),
-		"conn loss-rate series for %s should be deleted after removeConn", addr)
+		"conn loss-rate series for %s should be deleted after removeConn+reap", addr)
+}
+
+// TestStatsSampler_ReapSkipsReRegistered verifies the reap is a no-op when the
+// same addr was re-registered before the reap ran (ephemeral-port reuse): the
+// new owner's series must survive.
+func TestStatsSampler_ReapSkipsReRegistered(t *testing.T) {
+	addr := "192.0.2.10:1234"
+	s := &statsSampler{}
+	t.Cleanup(func() {
+		metricConnSmoothedRTT.DeleteLabelValues(addr)
+		metricConnPacketLossRate.DeleteLabelValues(addr)
+	})
+	provider := &mockConnStatsProvider{
+		stats: transport.ConnectionStats{SmoothedRTT: 5 * time.Millisecond, PacketsSent: 10, PacketsLost: 1},
+	}
+
+	// Old conn departs (queues a reap), then a new conn reuses the same addr and
+	// is sampled — all before the reap runs.
+	s.removeConn(addr)
+	s.addConn(addr, provider)
+	s.sample()
+	s.reapDeleted()
+
+	assert.True(t, metricHasLabelValue(t, metricConnSmoothedRTT, addr),
+		"re-registered conn series for %s must survive the stale reap", addr)
 }
 
 // TestStatsSampler_NilSafe verifies every sampler method (and the sweep) is a
@@ -102,20 +129,16 @@ func TestStatsSampler_NilSafe(t *testing.T) {
 		s.addTrack("t", nil)
 		s.removeTrack("t")
 		s.sample()
+		s.reapDeleted()
 	})
 }
 
 type mockSessionStatsProvider struct {
 	stats moqt.SessionStats
-	ctx   context.Context
 }
 
 func (m *mockSessionStatsProvider) Stats() moqt.SessionStats {
 	return m.stats
-}
-
-func (m *mockSessionStatsProvider) Context() context.Context {
-	return m.ctx
 }
 
 func TestSampleSessionStats(t *testing.T) {
@@ -155,10 +178,57 @@ func TestStatsSampler_SessionLifecycle(t *testing.T) {
 	assert.Equal(t, 900000.0, testutil.ToFloat64(metricSessionEstimatedBitrate.WithLabelValues(addr)))
 
 	s.removeSession(addr)
+	s.reapDeleted()
 	assert.False(t, metricHasLabelValue(t, metricSessionRTTMilliseconds, addr),
-		"session RTT series for %s should be deleted after removeSession", addr)
+		"session RTT series for %s should be deleted after removeSession+reap", addr)
 	assert.False(t, metricHasLabelValue(t, metricSessionEstimatedBitrate, addr),
-		"session bitrate series for %s should be deleted after removeSession", addr)
+		"session bitrate series for %s should be deleted after removeSession+reap", addr)
 	assert.False(t, metricHasLabelValue(t, metricSessionRTTHistogram, addr),
-		"session RTT histogram series for %s should be deleted after removeSession", addr)
+		"session RTT histogram series for %s should be deleted after removeSession+reap", addr)
+}
+
+// TestStatsSampler_ConcurrentSampleAndDeregister is the regression guard for the
+// resurrection race: with sampling on one goroutine and deregistration on
+// others, a series deleted inline would be re-created by a concurrent Set and
+// leak. Because deletion is deferred onto the sampler goroutine (reapDeleted),
+// after a final sweep+reap every departed series must be gone. Run under -race.
+func TestStatsSampler_ConcurrentSampleAndDeregister(t *testing.T) {
+	s := &statsSampler{}
+	const n = 200
+	addrs := make([]string, n)
+	for i := range addrs {
+		addr := fmt.Sprintf("198.51.100.1:%d", 10000+i)
+		addrs[i] = addr
+		s.addSession(addr, &mockSessionStatsProvider{stats: moqt.SessionStats{RTT: 10 * time.Millisecond}})
+	}
+	t.Cleanup(func() {
+		for _, addr := range addrs {
+			metricSessionRTTMilliseconds.DeleteLabelValues(addr)
+			metricSessionEstimatedBitrate.DeleteLabelValues(addr)
+			metricSessionRTTHistogram.DeleteLabelValues(addr)
+		}
+	})
+
+	var wg sync.WaitGroup
+	// One goroutine sweeps repeatedly (the sampler's role); others deregister.
+	wg.Go(func() {
+		for range 50 {
+			s.sample()
+			s.reapDeleted()
+		}
+	})
+	for _, addr := range addrs {
+		wg.Go(func() {
+			s.removeSession(addr)
+		})
+	}
+	wg.Wait()
+
+	// All entities departed; a final sweep+reap must clear every series.
+	s.sample()
+	s.reapDeleted()
+	for _, addr := range addrs {
+		assert.False(t, metricHasLabelValue(t, metricSessionRTTMilliseconds, addr),
+			"session RTT series for %s must not survive deregistration", addr)
+	}
 }

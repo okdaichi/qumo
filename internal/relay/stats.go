@@ -42,10 +42,48 @@ type sessionStatsProvider interface {
 // All methods are safe on a nil receiver so that a minimally-constructed Server
 // and standalone trackDistributors (used in tests) can skip sampling without
 // call-site guards.
+//
+// Metric-series deletion is deferred, not done inline in the deregister methods.
+// The sampler writes a series with WithLabelValues(...).Set from its own
+// goroutine; if a deregister called DeleteLabelValues concurrently, the sampler
+// could re-create ("resurrect") the just-deleted series and leak it. So
+// deregistration only removes the entry from its registry (so it stops being
+// sampled) and enqueues a reap closure; reapDeleted() runs those closures on the
+// sampler goroutine right after each sweep, where they cannot interleave a Set.
 type statsSampler struct {
 	conns    sync.Map // addr string -> connStatsProvider
 	sessions sync.Map // addr string -> sessionStatsProvider
 	tracks   sync.Map // trackID string -> *trackDistributor
+
+	// reap holds label-deletion closures queued by deregistration and applied on
+	// the sampler goroutine after each sweep (see reapDeleted). A mutex-guarded
+	// slice rather than a channel, so deregistration never blocks and a burst of
+	// teardowns can never drop a deletion.
+	reapMu sync.Mutex
+	reap   []func()
+}
+
+// queueReap enqueues fn to run on the sampler goroutine after the next sweep.
+func (s *statsSampler) queueReap(fn func()) {
+	s.reapMu.Lock()
+	s.reap = append(s.reap, fn)
+	s.reapMu.Unlock()
+}
+
+// reapDeleted applies and clears all queued reap closures. It must run on the
+// sampler goroutine (called from run after sample) so metric deletions never
+// race the sampler's own Set writes.
+func (s *statsSampler) reapDeleted() {
+	if s == nil {
+		return
+	}
+	s.reapMu.Lock()
+	batch := s.reap
+	s.reap = nil
+	s.reapMu.Unlock()
+	for _, fn := range batch {
+		fn()
+	}
 }
 
 func (s *statsSampler) addConn(addr string, p connStatsProvider) {
@@ -60,8 +98,16 @@ func (s *statsSampler) removeConn(addr string) {
 		return
 	}
 	s.conns.Delete(addr)
-	metricConnSmoothedRTT.DeleteLabelValues(addr)
-	metricConnPacketLossRate.DeleteLabelValues(addr)
+	s.queueReap(func() {
+		// Skip if addr was re-registered before the reap ran (ephemeral-port
+		// reuse): the new owner keeps the series. The Load is safe here because
+		// reapDeleted runs on the sampler goroutine.
+		if _, ok := s.conns.Load(addr); ok {
+			return
+		}
+		metricConnSmoothedRTT.DeleteLabelValues(addr)
+		metricConnPacketLossRate.DeleteLabelValues(addr)
+	})
 }
 
 func (s *statsSampler) addSession(addr string, p sessionStatsProvider) {
@@ -76,12 +122,17 @@ func (s *statsSampler) removeSession(addr string) {
 		return
 	}
 	s.sessions.Delete(addr)
-	metricSessionRTTMilliseconds.DeleteLabelValues(addr)
-	metricSessionEstimatedBitrate.DeleteLabelValues(addr)
-	// The per-addr RTT histogram series was never cleaned up by the old
-	// per-session poller (it deleted only the two gauges), leaking one series
-	// per departed session. Deregistration is the right place to drop it.
-	metricSessionRTTHistogram.DeleteLabelValues(addr)
+	s.queueReap(func() {
+		if _, ok := s.sessions.Load(addr); ok {
+			return // re-registered before reap; new owner keeps the series
+		}
+		metricSessionRTTMilliseconds.DeleteLabelValues(addr)
+		metricSessionEstimatedBitrate.DeleteLabelValues(addr)
+		// The per-addr RTT histogram series was never cleaned up by the old
+		// per-session poller (it deleted only the two gauges), leaking one series
+		// per departed session. Deregistration is the right place to drop it.
+		metricSessionRTTHistogram.DeleteLabelValues(addr)
+	})
 }
 
 func (s *statsSampler) addTrack(trackID string, d *trackDistributor) {
@@ -96,14 +147,24 @@ func (s *statsSampler) removeTrack(trackID string) {
 		return
 	}
 	s.tracks.Delete(trackID)
-	metricBufferDepthGroups.DeleteLabelValues(trackID)
+	s.queueReap(func() {
+		if _, ok := s.tracks.Load(trackID); ok {
+			return // re-registered before reap; new owner keeps the series
+		}
+		metricBufferDepthGroups.DeleteLabelValues(trackID)
+	})
 }
 
-// run drives the single sampling loop until ctx is cancelled.
+// run drives the single sampling loop until ctx is cancelled. Each tick samples
+// every registered entity, then reaps the series of entities that deregistered
+// since the last tick — both on this goroutine, so deletion never races a Set.
 func (s *statsSampler) run(ctx context.Context) {
 	if s == nil {
 		return
 	}
+	// Flush any deletions still queued at shutdown so departed series don't
+	// linger if the process outlives this server.
+	defer s.reapDeleted()
 	ticker := time.NewTicker(statsSamplerInterval)
 	defer ticker.Stop()
 	for {
@@ -112,6 +173,7 @@ func (s *statsSampler) run(ctx context.Context) {
 			return
 		case <-ticker.C:
 			s.sample()
+			s.reapDeleted()
 		}
 	}
 }

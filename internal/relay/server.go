@@ -360,8 +360,10 @@ func (s *Server) markUnconnected(addr string) {
 	defer s.connectedMu.Unlock()
 	delete(s.connected, addr)
 	metricPeersConnected.Dec()
-	metricSessionRTTMilliseconds.DeleteLabelValues(addr)
-	metricSessionEstimatedBitrate.DeleteLabelValues(addr)
+	// The per-addr session RTT/bitrate series are reaped by the stats sampler
+	// when the peer session deregisters (serveSession's removeSession). Deleting
+	// them here as well would race the sampler's Set writes (resurrecting the
+	// series), so peer-metric cleanup is left to the sampler.
 }
 
 func (s *Server) maintainPeer(ctx context.Context, peer Peer) {
