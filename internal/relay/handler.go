@@ -360,6 +360,12 @@ type trackDistributor struct {
 	egressCounter     prometheus.Counter
 	deliveryHistogram prometheus.Observer
 
+	// sampler is the distributor's own reference to the server-wide stats sampler
+	// (copied from the manager at construction), so registration/deregistration
+	// doesn't reach through manager.sampler. nil is valid — its methods are
+	// nil-safe.
+	sampler *statsSampler
+
 	// session is non-nil when backend metering is active for this broadcast.
 	session *broadcastSession
 
@@ -382,11 +388,12 @@ func newTrackDistributor(manager *trackManager, trackID string, broadSess *broad
 		ingressCounter:    metricRelayIngressBytesTotal.WithLabelValues(trackID),
 		egressCounter:     metricRelayEgressBytesTotal.WithLabelValues(trackID),
 		deliveryHistogram: metricGroupDeliveryHistogram.WithLabelValues(trackID),
+		sampler:           manager.sampler,
 		session:           broadSess,
 		fillSem:           make(chan struct{}, maxGroupFillsInFlightOrPanic()),
 		done:              make(chan struct{}),
 	}
-	manager.sampler.addTrack(d.trackID, d)
+	d.sampler.addTrack(d.trackID, d)
 	return d
 }
 
@@ -574,7 +581,7 @@ func (d *trackDistributor) unsubscribe(ch chan struct{}) {
 
 func (d *trackDistributor) ingest(ctx context.Context, src *moqt.TrackReader) {
 	defer d.manager.remove(d.trackID, d)
-	defer d.manager.sampler.removeTrack(d.trackID)
+	defer d.sampler.removeTrack(d.trackID)
 	defer close(d.done)
 
 	// wg tracks in-flight fill goroutines so we can wait for them before
