@@ -25,7 +25,7 @@ const MaxFramesPerGroup = 256
 
 type groupCache struct {
 	// slots is a fixed, pre-allocated backing array of per-frame atomic pointers
-	// (length >= MaxFramesPerGroup), reused across group generations via the
+	// (length exactly MaxFramesPerGroup), reused across group generations via the
 	// ring's gcPool — never reallocated on the append path. Together with count
 	// it forms a lock-free append-only vector: append reserves a slot by
 	// CAS-incrementing count (the published length), then Stores its clone into
@@ -72,7 +72,7 @@ func newGroupCache(seq moqt.GroupSequence) *groupCache {
 // through this; production reads go through next(), which Loads a single slot
 // inline. A reserved-but-not-yet-Stored slot appears as a nil entry.
 func (gc *groupCache) snapshot() []*moqt.Frame {
-	n := min(int(gc.count.Load()), len(gc.slots))
+	n := int(gc.count.Load())
 	out := make([]*moqt.Frame, n)
 	for i := range out {
 		out[i] = gc.slots[i].Load()
@@ -85,7 +85,7 @@ func (gc *groupCache) snapshot() []*moqt.Frame {
 // ring.reserve init and releaseCache). It reuses the backing array — no
 // allocation — unlike the previous scheme, which allocated a fresh slice.
 func (gc *groupCache) resetForReuse() {
-	n := min(int(gc.count.Load()), len(gc.slots))
+	n := int(gc.count.Load())
 	for i := range n {
 		gc.slots[i].Store(nil)
 	}
@@ -145,10 +145,12 @@ func (gc *groupCache) append(f *moqt.Frame, pool *FramePool) {
 
 // next returns the frame at the given index, or nil if the index is out of range
 // or its slot has been reserved but not yet stored. Lock-free: one atomic load of
-// count to bound the index, then one atomic load of the slot. Slots are only ever
-// published through atomics, so this is data-race-free under the Go memory model.
+// count to bound the index, then one atomic load of the slot. count never exceeds
+// len(slots) (capped in append), so index < count implies index is in range.
+// Slots are only ever published through atomics, so this is data-race-free under
+// the Go memory model.
 func (gc *groupCache) next(index int) *moqt.Frame {
-	if index < 0 || index >= int(gc.count.Load()) || index >= len(gc.slots) {
+	if index < 0 || index >= int(gc.count.Load()) {
 		return nil
 	}
 	return gc.slots[index].Load()
@@ -186,7 +188,7 @@ func (ring *groupRing) reserve(seq moqt.GroupSequence) *groupCache {
 	cache.evicted.Store(false)
 	cache.released.Store(false)
 	// Reinitialize content state so the read contract does not depend on
-	// releaseCache having cleaned up: publish a fresh empty snapshot.
+	// releaseCache having cleaned up: clear the slots and reset count to 0.
 	cache.resetForReuse()
 
 	idx := int(ring.pos.Add(1) % uint64(ring.size))
@@ -273,7 +275,7 @@ func (ring *groupRing) releaseCache(gc *groupCache) {
 	// No lock: releaseCache runs at most once (released CAS above) and only when
 	// refCount == 0, so no reader is observing this cache. Return each stored
 	// frame to the pool, then clear the slots for reuse.
-	n := min(int(gc.count.Load()), len(gc.slots))
+	n := int(gc.count.Load())
 	for i := range n {
 		if f := gc.slots[i].Load(); f != nil {
 			ring.pool.Put(f)
