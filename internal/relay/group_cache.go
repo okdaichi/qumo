@@ -144,6 +144,29 @@ func (gc *groupCache) next(index int) *moqt.Frame {
 	return gc.slots[index].Load()
 }
 
+// frames yields the group's frames in order for use with range-over-func. When
+// the next frame is not yet available it consults wait: for a still-filling
+// (trickle) group wait should block until more frames may be ready and return
+// true, or return false to stop iteration (e.g. the subscriber cancelled).
+// Iteration also ends once the group is complete. groupCache owns frame ordering
+// and completion; the caller owns the wakeup/cancellation policy via wait.
+func (gc *groupCache) frames(wait func() bool) iter.Seq[*moqt.Frame] {
+	return func(yield func(*moqt.Frame) bool) {
+		for i := 0; ; {
+			if frame := gc.next(i); frame != nil {
+				if !yield(frame) {
+					return
+				}
+				i++
+				continue
+			}
+			if gc.isComplete() || !wait() {
+				return
+			}
+		}
+	}
+}
+
 func newGroupRing(size int, pool *FramePool) *groupRing {
 	ring := &groupRing{
 		caches: make([]atomic.Pointer[groupCache], size),
