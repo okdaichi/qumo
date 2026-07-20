@@ -70,7 +70,7 @@ func BenchmarkGroupCache_ReadFanOut(b *testing.B) {
 		b.Run(fmt.Sprintf("%dr", readers), func(b *testing.B) {
 			gc := newGroupCache(1, MaxFramesPerGroup)
 			pool := NewFramePool(DefaultNewFrameCapacity)
-			for i := 0; i < 120; i++ {
+			for range 120 {
 				gc.append(frame, pool)
 			}
 			b.ResetTimer()
@@ -98,7 +98,7 @@ func BenchmarkGroupCache_Next_HitRate(b *testing.B) {
 	frame.Write([]byte("test"))
 
 	// Pre-populate with 100 frames
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		gc.append(frame, pool)
 	}
 
@@ -135,7 +135,7 @@ func BenchmarkGroupCache_ConcurrentAppendAndNext(b *testing.B) {
 		var wg sync.WaitGroup
 		wg.Add(writers + readers)
 
-		for w := 0; w < writers; w++ {
+		for range writers {
 			go func() {
 				defer wg.Done()
 				for i := 0; i < b.N/writers; i++ {
@@ -149,7 +149,7 @@ func BenchmarkGroupCache_ConcurrentAppendAndNext(b *testing.B) {
 			}()
 		}
 
-		for r := 0; r < readers; r++ {
+		for range readers {
 			go func() {
 				defer wg.Done()
 				for i := 0; i < b.N/readers; i++ {
@@ -241,9 +241,7 @@ func BenchmarkTrackDistributor_Broadcast(b *testing.B) {
 	// case it helps), so both states are swept. The drained drain runs inside
 	// the timed loop but is invariant across base/PR, so it cancels in a delta.
 	for _, state := range []string{"drained", "full"} {
-		state := state
 		for _, tt := range tests {
-			tt := tt
 			b.Run(state+"/"+tt.name, func(b *testing.B) {
 				dist := &trackDistributor{}
 
@@ -390,9 +388,7 @@ func BenchmarkLockPressure_GroupCache(b *testing.B) {
 			// Writers: work scales with b.N (previously a fixed iteration
 			// count made ns/op meaningless and ignored b.N).
 			for w := 0; w < tt.writers; w++ {
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
+				wg.Go(func() {
 					for i := 0; i < b.N/tt.writers; i++ {
 						gc.append(frame, pool)
 						// groupCache.append grows frames without bound; trim
@@ -402,18 +398,16 @@ func BenchmarkLockPressure_GroupCache(b *testing.B) {
 							gc.resetForReuse()
 						}
 					}
-				}()
+				})
 			}
 
 			// Readers: work scales with b.N, divided across readers.
 			for r := 0; r < tt.readers; r++ {
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
+				wg.Go(func() {
 					for i := 0; i < b.N/tt.readers; i++ {
 						_ = gc.next(i % 10)
 					}
-				}()
+				})
 			}
 
 			wg.Wait()
@@ -440,14 +434,12 @@ func BenchmarkLockPressure_TrackDistributor_Subscribe(b *testing.B) {
 
 			var wg sync.WaitGroup
 			for g := 0; g < tt.count; g++ {
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
+				wg.Go(func() {
 					for i := 0; i < b.N/tt.count; i++ {
 						ch := dist.subscribe()
 						dist.unsubscribe(ch)
 					}
-				}()
+				})
 			}
 
 			wg.Wait()
