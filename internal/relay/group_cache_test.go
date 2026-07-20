@@ -17,6 +17,19 @@ import (
 // groupCache tests
 // ============================================================================
 
+// snapshot returns a copy of the group's current frames for test assertions.
+// Production reads go through next(), which Loads a single slot inline; this
+// whole-group copy exists only for tests, so it lives here rather than in the
+// production file. A reserved-but-not-yet-Stored slot appears as a nil entry.
+func (gc *groupCache) snapshot() []*moqt.Frame {
+	n := int(gc.count.Load())
+	out := make([]*moqt.Frame, n)
+	for i := range out {
+		out[i] = gc.slots[i].Load()
+	}
+	return out
+}
+
 func TestGroupCache_Append(t *testing.T) {
 	gc := newGroupCache(1)
 

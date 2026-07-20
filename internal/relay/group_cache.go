@@ -68,18 +68,6 @@ func newGroupCache(seq moqt.GroupSequence) *groupCache {
 	}
 }
 
-// snapshot returns a copy of the group's current frames. Tests inspect contents
-// through this; production reads go through next(), which Loads a single slot
-// inline. A reserved-but-not-yet-Stored slot appears as a nil entry.
-func (gc *groupCache) snapshot() []*moqt.Frame {
-	n := int(gc.count.Load())
-	out := make([]*moqt.Frame, n)
-	for i := range out {
-		out[i] = gc.slots[i].Load()
-	}
-	return out
-}
-
 // resetForReuse clears the slot array and count so the cache can be reused for a
 // new group generation. Called only on a cache that no reader can observe (during
 // ring.reserve init and releaseCache). It reuses the backing array — no
