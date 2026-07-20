@@ -72,10 +72,7 @@ func newGroupCache(seq moqt.GroupSequence) *groupCache {
 // through this; production reads go through next(), which Loads a single slot
 // inline. A reserved-but-not-yet-Stored slot appears as a nil entry.
 func (gc *groupCache) snapshot() []*moqt.Frame {
-	n := int(gc.count.Load())
-	if n > len(gc.slots) {
-		n = len(gc.slots)
-	}
+	n := min(int(gc.count.Load()), len(gc.slots))
 	out := make([]*moqt.Frame, n)
 	for i := range out {
 		out[i] = gc.slots[i].Load()
@@ -88,11 +85,8 @@ func (gc *groupCache) snapshot() []*moqt.Frame {
 // ring.reserve init and releaseCache). It reuses the backing array — no
 // allocation — unlike the previous scheme, which allocated a fresh slice.
 func (gc *groupCache) resetForReuse() {
-	n := int(gc.count.Load())
-	if n > len(gc.slots) {
-		n = len(gc.slots)
-	}
-	for i := 0; i < n; i++ {
+	n := min(int(gc.count.Load()), len(gc.slots))
+	for i := range n {
 		gc.slots[i].Store(nil)
 	}
 	gc.count.Store(0)
@@ -279,11 +273,8 @@ func (ring *groupRing) releaseCache(gc *groupCache) {
 	// No lock: releaseCache runs at most once (released CAS above) and only when
 	// refCount == 0, so no reader is observing this cache. Return each stored
 	// frame to the pool, then clear the slots for reuse.
-	n := int(gc.count.Load())
-	if n > len(gc.slots) {
-		n = len(gc.slots)
-	}
-	for i := 0; i < n; i++ {
+	n := min(int(gc.count.Load()), len(gc.slots))
+	for i := range n {
 		if f := gc.slots[i].Load(); f != nil {
 			ring.pool.Put(f)
 		}
