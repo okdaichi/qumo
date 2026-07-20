@@ -56,17 +56,15 @@ type groupCache struct {
 	released atomic.Bool
 }
 
-// newGroupCache allocates a groupCache with a pre-sized slot backing array.
-// frameCap is a hint; the array is always at least MaxFramesPerGroup long so
-// that append (which is hard-limited to MaxFramesPerGroup) can never index out
-// of range. All construction goes through here or through groupRing.gcPool.New.
-func newGroupCache(seq moqt.GroupSequence, frameCap int) *groupCache {
-	if frameCap < MaxFramesPerGroup {
-		frameCap = MaxFramesPerGroup
-	}
+// newGroupCache allocates a groupCache whose slot backing array is exactly
+// MaxFramesPerGroup long. That is the only correct size: append is hard-limited
+// to MaxFramesPerGroup frames, so the array never needs to be larger (extra
+// slots would be dead) and must not be smaller (append would index out of
+// range). All construction goes through here or through groupRing.gcPool.New.
+func newGroupCache(seq moqt.GroupSequence) *groupCache {
 	return &groupCache{
 		seq:   seq,
-		slots: make([]atomic.Pointer[moqt.Frame], frameCap),
+		slots: make([]atomic.Pointer[moqt.Frame], MaxFramesPerGroup),
 	}
 }
 
@@ -169,7 +167,7 @@ func newGroupRing(size int, pool *FramePool) *groupRing {
 		size:   size,
 	}
 	ring.gcPool.New = func() any {
-		return newGroupCache(0, MaxFramesPerGroup)
+		return newGroupCache(0)
 	}
 	return ring
 }

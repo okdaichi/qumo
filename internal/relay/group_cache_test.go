@@ -18,7 +18,7 @@ import (
 // ============================================================================
 
 func TestGroupCache_Append(t *testing.T) {
-	gc := newGroupCache(1, 0)
+	gc := newGroupCache(1)
 
 	frame := moqt.NewFrame(100)
 	frame.Write([]byte("test data"))
@@ -29,7 +29,7 @@ func TestGroupCache_Append(t *testing.T) {
 }
 
 func TestGroupCache_Append_ClonesData(t *testing.T) {
-	gc := newGroupCache(1, 0)
+	gc := newGroupCache(1)
 
 	original := moqt.NewFrame(100)
 	original.Write([]byte("original"))
@@ -43,7 +43,7 @@ func TestGroupCache_Append_ClonesData(t *testing.T) {
 }
 
 func TestGroupCache_Append_Multiple(t *testing.T) {
-	gc := newGroupCache(1, 0)
+	gc := newGroupCache(1)
 
 	for range 5 {
 		f := moqt.NewFrame(100)
@@ -55,7 +55,7 @@ func TestGroupCache_Append_Multiple(t *testing.T) {
 }
 
 func TestGroupCache_Next(t *testing.T) {
-	gc := newGroupCache(1, 0)
+	gc := newGroupCache(1)
 	for range 3 {
 		frame := moqt.NewFrame(100)
 		gc.append(frame, DefaultFramePool)
@@ -86,7 +86,7 @@ func TestGroupCache_Next(t *testing.T) {
 }
 
 func TestGroupCache_ConcurrentAppend(t *testing.T) {
-	gc := newGroupCache(1, 0)
+	gc := newGroupCache(1)
 
 	const goroutines = 10
 	const appendsPerGoroutine = 20 // Stay under MaxFramesPerGroup (256)
@@ -109,7 +109,7 @@ func TestGroupCache_ConcurrentAppend(t *testing.T) {
 }
 
 func TestGroupCache_IsComplete(t *testing.T) {
-	gc := newGroupCache(1, 0)
+	gc := newGroupCache(1)
 
 	assert.False(t, gc.isComplete(), "should not be complete before markComplete")
 	gc.markComplete()
@@ -169,7 +169,7 @@ func TestGroupRing_EarliestAvailable_AtBoundary(t *testing.T) {
 func TestGroupRing_Get(t *testing.T) {
 	ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
 
-	testCache := newGroupCache(5, 0)
+	testCache := newGroupCache(5)
 	idx := uint64(5) % uint64(ring.size)
 	ring.caches[idx].Store(testCache)
 
@@ -209,7 +209,7 @@ func TestGroupRing_ConcurrentAccess(t *testing.T) {
 	for i := range 10 {
 		go func(id int) {
 			for j := range 100 {
-				cache := newGroupCache(moqt.GroupSequence(id*100 + j), 0)
+				cache := newGroupCache(moqt.GroupSequence(id*100 + j))
 				idx := (id*100 + j) % ring.size
 				ring.caches[idx].Store(cache)
 				ring.pos.Add(1)
@@ -549,7 +549,7 @@ func TestGroupRing_Fill_WaitGroupBlocksDone(t *testing.T) {
 // ============================================================================
 
 func BenchmarkGroupCache_Append(b *testing.B) {
-	gc := newGroupCache(1, b.N)
+	gc := newGroupCache(1)
 	frame := moqt.NewFrame(1500)
 	frame.Write(make([]byte, 1000))
 
@@ -560,7 +560,7 @@ func BenchmarkGroupCache_Append(b *testing.B) {
 }
 
 func BenchmarkGroupCache_Next(b *testing.B) {
-	gc := newGroupCache(1, 100)
+	gc := newGroupCache(1)
 	for range 100 {
 		frame := moqt.NewFrame(1500)
 		gc.append(frame, DefaultFramePool)
@@ -575,7 +575,7 @@ func BenchmarkGroupCache_Next(b *testing.B) {
 func BenchmarkGroupRing_Get(b *testing.B) {
 	ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
 	for i := range ring.size {
-		cache := newGroupCache(moqt.GroupSequence(i), 0)
+		cache := newGroupCache(moqt.GroupSequence(i))
 		ring.caches[i].Store(cache)
 	}
 
