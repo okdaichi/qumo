@@ -18,7 +18,7 @@ func newBenchHandler(path moqt.BroadcastPath) *relayHandler {
 	return &relayHandler{
 		announcement: ann,
 		session:      &moqt.Session{},
-		tracks:       newTrackManager(0, nil),
+		tracks:       newTrackManager(0, nil, nil),
 		nodeID:       "bench",
 		ctx:          hctx,
 		cancel:       hcancel,

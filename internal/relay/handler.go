@@ -179,14 +179,11 @@ func newRelayHandler(ann *moqt.Announcement, sess *moqt.Session, nodeID string, 
 		return nil
 	}
 
-	tracks := newTrackManager(cacheSize, pool)
-	tracks.sampler = sampler
-
 	ctx, cancel := context.WithCancel(sess.Context())
 	h := &relayHandler{
 		announcement: ann,
 		session:      sess,
-		tracks:       tracks,
+		tracks:       newTrackManager(cacheSize, pool, sampler),
 		nodeID:       nodeID,
 		broadSession: broadSess,
 		ctx:          ctx,
@@ -323,18 +320,18 @@ type trackManager struct {
 	// so its ring depth is refreshed on the shared sampling tick (replacing a
 	// per-distributor pollCacheDepth goroutine). nil is valid — its methods are
 	// nil-safe — so a manager built without a Server (tests) simply skips depth
-	// sampling. Set by newRelayHandler.
+	// sampling.
 	sampler *statsSampler
 }
 
-func newTrackManager(cacheSize int, pool *FramePool) *trackManager {
+func newTrackManager(cacheSize int, pool *FramePool, sampler *statsSampler) *trackManager {
 	if cacheSize <= 0 {
 		cacheSize = DefaultGroupCacheSize
 	}
 	if pool == nil {
 		pool = DefaultFramePool
 	}
-	return &trackManager{cacheSize: cacheSize, pool: pool}
+	return &trackManager{cacheSize: cacheSize, pool: pool, sampler: sampler}
 }
 
 func (tm *trackManager) load(trackID string) (*trackDistributor, bool) {

@@ -35,7 +35,7 @@ func runEgressFanout(b *testing.B, nSubs int, withCounters bool) {
 	b.Helper()
 
 	trackID := fmt.Sprintf("bench-egress-%d-%d", nSubs, time.Now().UnixNano())
-	dist := newTrackDistributor(newTrackManager(0, nil), trackID, newBroadcastSession(""))
+	dist := newTrackDistributor(newTrackManager(0, nil, nil), trackID, newBroadcastSession(""))
 	defer close(dist.done)
 
 	// Pre-fill one complete group so cache.next(i) is always a hit. Frame size

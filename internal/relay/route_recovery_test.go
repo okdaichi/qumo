@@ -21,7 +21,7 @@ func newRecoveryHandler(t *testing.T, ctx context.Context, path string) (*relayH
 	h := &relayHandler{
 		announcement: ann,
 		session:      &moqt.Session{},
-		tracks:       newTrackManager(0, nil),
+		tracks:       newTrackManager(0, nil, nil),
 		nodeID:       "test-node",
 		ctx:          hctx,
 		cancel:       hcancel,

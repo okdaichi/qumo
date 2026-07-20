@@ -23,7 +23,7 @@ func newTestRelayHandler(ctx context.Context) *relayHandler {
 	return &relayHandler{
 		announcement: ann,
 		session:      sess,
-		tracks:       newTrackManager(0, nil),
+		tracks:       newTrackManager(0, nil, nil),
 		nodeID:       "test-node",
 		ctx:          ctx,
 		cancel:       cancel,
@@ -35,7 +35,7 @@ func TestTrackDistributor_ByteCounters(t *testing.T) {
 	nodeID := fmt.Sprintf("node-%d", time.Now().UnixNano())
 	trackID := "[" + nodeID + "]/live/cam1/video"
 
-	dist := newTrackDistributor(newTrackManager(0, nil), trackID, nil)
+	dist := newTrackDistributor(newTrackManager(0, nil, nil), trackID, nil)
 	defer close(dist.done)
 
 	// Verify the counters are wired to the correct Prometheus metric+label.
@@ -731,7 +731,7 @@ func TestTrackDistributor_GroupRingIntegration(t *testing.T) {
 
 // TestTrackDistributor_DoneChannel tests that the done channel is closed when ingest stops
 func TestTrackDistributor_DoneChannel(t *testing.T) {
-	dist := newTrackDistributor(newTrackManager(0, nil), "[test-node]/test/test", nil)
+	dist := newTrackDistributor(newTrackManager(0, nil, nil), "[test-node]/test/test", nil)
 
 	// done should not be closed initially
 	select {
@@ -844,7 +844,7 @@ func TestRelayHandler_SingleflightDedup(t *testing.T) {
 	h := newTestRelayHandler(t.Context()) // nil session for test
 
 	// Pre-populate a distributor in the cache
-	existing := newTrackDistributor(newTrackManager(0, nil), "[test-node]/test/video", nil)
+	existing := newTrackDistributor(newTrackManager(0, nil, nil), "[test-node]/test/video", nil)
 	defer close(existing.done) // Cleanup goroutine
 	h.tracks.store("[test-node]/test/video", existing)
 
@@ -1056,7 +1056,7 @@ func TestTrackDistributor_MeteringIngress(t *testing.T) {
 	trackID := "[" + nodeID + "]/live/test/video"
 
 	sess := newBroadcastSession("tok-ingress")
-	dist := newTrackDistributor(newTrackManager(0, nil), trackID, sess)
+	dist := newTrackDistributor(newTrackManager(0, nil, nil), trackID, sess)
 	t.Cleanup(func() { close(dist.done) })
 
 	payload := []byte("hello-world") // 11 bytes
@@ -1084,7 +1084,7 @@ func TestTrackDistributor_MeteringEgress(t *testing.T) {
 	trackID := "[" + nodeID + "]/live/test/video"
 
 	sess := newBroadcastSession("tok-egress")
-	dist := newTrackDistributor(newTrackManager(0, nil), trackID, sess)
+	dist := newTrackDistributor(newTrackManager(0, nil, nil), trackID, sess)
 	t.Cleanup(func() { close(dist.done) })
 
 	// Simulate the egress byte-counting path directly via the session methods,
@@ -1104,7 +1104,7 @@ func TestTrackDistributor_MeteringEgress(t *testing.T) {
 // TestTrackDistributor_MeteringNilSession verifies that processGroup and the
 // egress path do not panic when no broadcastSession is attached.
 func TestTrackDistributor_MeteringNilSession(t *testing.T) {
-	dist := newTrackDistributor(newTrackManager(0, nil), "nil-session/test", nil)
+	dist := newTrackDistributor(newTrackManager(0, nil, nil), "nil-session/test", nil)
 	t.Cleanup(func() { close(dist.done) })
 
 	src := &fakeFrameSource{frames: [][]byte{[]byte("frame")}}
@@ -1130,7 +1130,7 @@ func TestTrackDistributor_ProcessGroup_SemaphoreLimitsConcurrency(t *testing.T) 
 		t.Cleanup(func() { MaxGroupFillsInFlight = orig })
 		MaxGroupFillsInFlight = limit
 
-		dist := newTrackDistributor(newTrackManager(0, nil), "test/sem", nil)
+		dist := newTrackDistributor(newTrackManager(0, nil, nil), "test/sem", nil)
 		t.Cleanup(func() { close(dist.done) }) // release egress waiters
 		require.Equal(t, limit, cap(dist.fillSem), "fillSem capacity must equal MaxGroupFillsInFlight")
 
@@ -1202,7 +1202,7 @@ func TestTrackDistributor_ProcessGroup_CtxCancelUnblocks(t *testing.T) {
 		t.Cleanup(func() { MaxGroupFillsInFlight = orig })
 		MaxGroupFillsInFlight = 1
 
-		dist := newTrackDistributor(newTrackManager(0, nil), "test/cancel", nil)
+		dist := newTrackDistributor(newTrackManager(0, nil, nil), "test/cancel", nil)
 		t.Cleanup(func() { close(dist.done) }) // release egress waiters
 
 		ctx, cancel := context.WithCancel(context.Background())
@@ -1330,7 +1330,7 @@ func TestRelayHandler_Alive_CancelledContext(t *testing.T) {
 	h := &relayHandler{
 		announcement: ann,
 		session:      sess,
-		tracks:       newTrackManager(0, nil),
+		tracks:       newTrackManager(0, nil, nil),
 		ctx:          ctx,
 		cancel:       cancel,
 	}
@@ -1352,7 +1352,7 @@ func TestRelayHandler_Alive_RetractedAnnouncement(t *testing.T) {
 	h := &relayHandler{
 		announcement: ann,
 		session:      sess,
-		tracks:       newTrackManager(0, nil),
+		tracks:       newTrackManager(0, nil, nil),
 		ctx:          ctx,
 		cancel:       cancel,
 	}

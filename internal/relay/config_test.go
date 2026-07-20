@@ -30,7 +30,7 @@ func TestNewTrackManager_DefaultResolution(t *testing.T) {
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			tm := newTrackManager(tc.cacheSize, tc.pool)
+			tm := newTrackManager(tc.cacheSize, tc.pool, nil)
 			assert.Equal(t, tc.wantSize, tm.cacheSize, "cacheSize not resolved")
 			assert.Same(t, tc.wantPool, tm.pool, "pool not resolved")
 		})
