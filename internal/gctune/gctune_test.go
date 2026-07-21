@@ -28,11 +28,12 @@ func TestResolve(t *testing.T) {
 			wantSource:    gctune.SourceGOGC,
 			wantEffective: -1,
 		},
-		"GOGC wins over RELAY_GOGC": {
+		"GOGC shadows RELAY_GOGC → no-op + warn (surfaced, not silent)": {
 			env:           gctune.Env{GOGC: "50", RelayGOGC: "800"},
 			wantApply:     false,
 			wantSource:    gctune.SourceGOGC,
 			wantEffective: -1,
+			wantWarn:      true,
 		},
 		"RELAY_GOGC valid → apply it": {
 			env:           gctune.Env{RelayGOGC: "800"},

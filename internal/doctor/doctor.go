@@ -13,9 +13,13 @@ import (
 )
 
 // Run executes `qumo doctor`, writing the report to stdout. It is read-only and
-// changes no configuration. Any positional args (a future section filter) are
-// accepted but currently ignored — only the GC section exists.
+// changes no configuration. It currently takes no arguments and rejects any, so
+// a typo or stray flag gets feedback rather than a silently-ignored full report
+// (a section filter like `doctor gc` is a future addition).
 func Run(args []string) error {
+	if len(args) > 0 {
+		return fmt.Errorf("doctor takes no arguments (got %q); it reports all sections", args)
+	}
 	return report(os.Stdout, gctune.EnvFromOS())
 }
 

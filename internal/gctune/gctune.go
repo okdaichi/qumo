@@ -111,10 +111,18 @@ func (p Plan) EffectivePercent() int {
 //     (100) stays in place. An invalid RELAY_GOGC additionally warns.
 func Resolve(env Env) Plan {
 	if env.GOGC != "" {
-		return Plan{
+		plan := Plan{
 			Source: SourceGOGC,
 			Reason: "GOGC is set; the Go runtime already honors it and the relay never overrides an explicit operator choice.",
 		}
+		if env.RelayGOGC != "" {
+			// Surface the shadowed override so an operator who set RELAY_GOGC
+			// isn't left wondering why tuning had no effect — this warning shows
+			// up both at startup (Apply) and in `qumo doctor`.
+			plan.Warnings = append(plan.Warnings,
+				"RELAY_GOGC "+strconv.Quote(env.RelayGOGC)+" ignored because GOGC "+strconv.Quote(env.GOGC)+" is set (GOGC takes precedence)")
+		}
+		return plan
 	}
 	if env.RelayGOGC != "" {
 		n, err := strconv.Atoi(env.RelayGOGC)

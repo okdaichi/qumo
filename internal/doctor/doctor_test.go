@@ -21,9 +21,9 @@ func TestReport(t *testing.T) {
 			env:         gctune.Env{RelayGOGC: "800"},
 			wantContain: []string{"RELAY_GOGC  = 800", "800%", "source: RELAY_GOGC"},
 		},
-		"GOGC owns it → runtime-controlled, no relay override": {
+		"GOGC owns it → runtime-controlled, shadowed RELAY_GOGC surfaced": {
 			env:         gctune.Env{GOGC: "150", RelayGOGC: "800"},
-			wantContain: []string{"GOGC=150 (runtime-controlled)", "source: GOGC", "never overrides"},
+			wantContain: []string{"GOGC=150 (runtime-controlled)", "source: GOGC", "never overrides", "RELAY_GOGC \"800\" ignored because GOGC \"150\" is set"},
 		},
 		"invalid RELAY_GOGC → warning + falls back to default": {
 			env:         gctune.Env{RelayGOGC: "notanint"},
@@ -44,4 +44,9 @@ func TestReport(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRun_RejectsArgs(t *testing.T) {
+	// A stray topic/flag must get feedback, not a silently-ignored full report.
+	assert.Error(t, Run([]string{"gc"}))
 }
