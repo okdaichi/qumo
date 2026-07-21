@@ -25,6 +25,7 @@ import (
 	"github.com/quic-go/quic-go"
 	"github.com/qumo-dev/gomoqt/moqt"
 	"github.com/qumo-dev/qumo/internal/cors"
+	"github.com/qumo-dev/qumo/internal/gctune"
 )
 
 // sanitizeLog strips CR and LF from s to prevent log injection.
@@ -73,6 +74,8 @@ func Run(args []string) error {
 		}
 		return err
 	}
+
+	gctune.Apply()
 
 	addr := envOr("RELAY_ADDR", ":4433")
 	certFile := envOr("CERT_FILE", "certs/server.crt")
