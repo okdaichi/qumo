@@ -7,7 +7,7 @@ import (
 
 // BenchmarkNext_Serial compares serial next() calls with baseline vs lockless
 func BenchmarkNext_Serial(b *testing.B) {
-	gc := newGroupCache(1, 100)
+	gc := newGroupCache(1)
 
 	pool := NewFramePool(DefaultNewFrameCapacity)
 	frame := moqt.NewFrame(DefaultNewFrameCapacity)

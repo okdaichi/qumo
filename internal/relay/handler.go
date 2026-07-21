@@ -507,41 +507,38 @@ func (d *trackDistributor) deliverGroup(tw *moqt.TrackWriter, twCtx context.Cont
 	defer d.ring.decrRef(cache)
 
 	start := time.Now()
-	frameIdx := 0
 
-	for {
-		frame := cache.next(frameIdx)
-		if frame != nil {
-			if err := gw.WriteFrame(frame); err != nil {
-				return true
-			}
-			n := frame.Len()
-			d.egressCounter.Add(float64(n))
-			if d.session != nil {
-				d.session.addEgress(int64(n))
-			}
-			frameIdx++
-			continue
-		}
-
-		// No more frames available right now
-		if cache.isComplete() {
-			// Group is complete, move to next group
-			break
-		}
-
-		// Wait for the next frame of this still-filling (trickle) group. The
-		// per-frame broadcast() notify delivers each appended frame; no poll
-		// fallback is needed (see egress's wait comment). Cancellation converges
-		// here via d.done / twCtx.Done().
+	// wait blocks for the next trickled frame of a still-filling group, woken by
+	// the per-frame broadcast() notify (the sole wakeup — no poll fallback; see
+	// the egress wait comment). It returns false on cancellation (subscriber gone
+	// or distributor shut down), which ends the iteration; cancelled records that
+	// so we return the right egress verdict below.
+	cancelled := false
+	wait := func() bool {
 		select {
 		case <-notify:
-			// New frame may be available.
-		case <-d.done:
 			return true
+		case <-d.done:
+			cancelled = true
+			return false
 		case <-twCtx.Done():
+			cancelled = true
+			return false
+		}
+	}
+
+	for frame := range cache.frames(wait) {
+		if err := gw.WriteFrame(frame); err != nil {
 			return true
 		}
+		n := frame.Len()
+		d.egressCounter.Add(float64(n))
+		if d.session != nil {
+			d.session.addEgress(int64(n))
+		}
+	}
+	if cancelled {
+		return true
 	}
 
 	d.deliveryHistogram.Observe(time.Since(start).Seconds())

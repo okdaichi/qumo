@@ -68,7 +68,7 @@ func BenchmarkGroupCache_ReadFanOut(b *testing.B) {
 	frame.Write([]byte("fanout"))
 	for _, readers := range []int{1, 10, 50, 100, 200, 500} {
 		b.Run(fmt.Sprintf("%dr", readers), func(b *testing.B) {
-			gc := newGroupCache(1, MaxFramesPerGroup)
+			gc := newGroupCache(1)
 			pool := NewFramePool(DefaultNewFrameCapacity)
 			for range 120 {
 				gc.append(frame, pool)
@@ -91,7 +91,7 @@ func BenchmarkGroupCache_ReadFanOut(b *testing.B) {
 }
 
 func BenchmarkGroupCache_Next_HitRate(b *testing.B) {
-	gc := newGroupCache(1, 0)
+	gc := newGroupCache(1)
 
 	pool := NewFramePool(DefaultNewFrameCapacity)
 	frame := moqt.NewFrame(DefaultNewFrameCapacity)
@@ -122,7 +122,7 @@ func BenchmarkGroupCache_ConcurrentAppendAndNext(b *testing.B) {
 
 	b.Run("10writers_10readers", func(b *testing.B) {
 		pool := NewFramePool(DefaultNewFrameCapacity)
-		gc := newGroupCache(1, framesCap)
+		gc := newGroupCache(1)
 		frame := moqt.NewFrame(DefaultNewFrameCapacity)
 		frame.Write([]byte("test data"))
 
@@ -324,7 +324,7 @@ func BenchmarkMemAllocs_GroupCache_Append(b *testing.B) {
 	const framesCap = 4096
 
 	pool := NewFramePool(DefaultNewFrameCapacity)
-	gc := newGroupCache(1, framesCap)
+	gc := newGroupCache(1)
 
 	frame := moqt.NewFrame(DefaultNewFrameCapacity)
 	frame.Write([]byte("test"))
@@ -375,7 +375,7 @@ func BenchmarkLockPressure_GroupCache(b *testing.B) {
 	for _, tt := range tests {
 		b.Run(tt.name, func(b *testing.B) {
 			pool := NewFramePool(DefaultNewFrameCapacity)
-			gc := newGroupCache(1, framesCap)
+			gc := newGroupCache(1)
 
 			frame := moqt.NewFrame(DefaultNewFrameCapacity)
 			frame.Write([]byte("test"))
