@@ -17,22 +17,42 @@ type frameSource interface {
 
 const DefaultGroupCacheSize = 8
 
-// MaxFramesPerGroup is the maximum number of frames allowed in a single group cache.
-// It bounds growth and bounds the per-append work of the copy-on-write publish (see
-// append): each append copies the current snapshot, so building an N-frame group is
-// O(N^2) pointer copies. 256 keeps that trivial while leaving headroom over a
-// typical ~120-frame (60fps x 2s) video group or a larger A/V group.
+// MaxFramesPerGroup is the maximum number of frames allowed in a single group
+// cache. It bounds growth and sizes the per-cache backing array (see groupCache).
+// 256 leaves headroom over a typical ~120-frame (60fps x 2s) video group or a
+// larger A/V group.
 const MaxFramesPerGroup = 256
 
 type groupCache struct {
-	// frames holds the group's frames as an immutable snapshot published via
-	// atomic.Pointer (RCU / copy-on-write). append builds a new slice and
-	// CAS-publishes it; readers Load a snapshot and read it without any lock.
-	// Because a published snapshot is never mutated in place, reads are
-	// data-race-free under the Go memory model (the previous len-publishing scheme
-	// raced on the slice header). Memory is reclaimed at group granularity by the
-	// ring/pool, never by shrinking a live snapshot.
-	frames   atomic.Pointer[[]*moqt.Frame]
+	// slots is a fixed, pre-allocated backing array of per-frame atomic pointers
+	// (length exactly MaxFramesPerGroup), reused across group generations via the
+	// ring's gcPool — never reallocated on the append path. Together with count
+	// it forms a lock-free append-only vector: append reserves a slot by
+	// CAS-incrementing count (the published length), then Stores its clone into
+	// that slot; next Loads a slot. This replaces the former
+	// atomic.Pointer[[]*Frame] copy-on-write scheme, which rebuilt the whole
+	// snapshot on every append — O(N^2) pointer copies and one slice allocation
+	// per frame across an N-frame group. The new scheme is O(1) per append with
+	// zero per-append allocation, and reads remain a single atomic load.
+	//
+	// Concurrency: appends are concurrency-safe (the CAS on count reserves a
+	// unique slot per appender, so no frame is lost or overwritten) and
+	// data-race-free (count and each slot are accessed only through atomics, and
+	// distinct slots are distinct memory locations). In production, append is
+	// single-writer per cache (one fill goroutine), so slots fill in order.
+	slots []atomic.Pointer[moqt.Frame]
+	// count is the number of reserved slots: the append reservation counter (each
+	// append CAS-increments it to claim a unique slot) and the number of slots
+	// snapshot/releaseCache scan. It is NOT on the read path — readers (next)
+	// detect availability from the slot itself, since an unstored or beyond-count
+	// slot is nil (slots[i] != nil implies i < count: slots go non-nil only after
+	// append advances count past them, and count only drops in resetForReuse,
+	// which nils the slots in the same pass). So a reserved-but-not-yet-Stored
+	// slot reads back nil and the egress loop waits for the next broadcast. count
+	// is kept in [0, MaxFramesPerGroup] by the CAS in append, so it never exceeds
+	// len(slots).
+	count atomic.Int32
+
 	seq      moqt.GroupSequence
 	complete atomic.Bool // True when all frames have been added
 	refCount atomic.Int32
@@ -40,28 +60,28 @@ type groupCache struct {
 	released atomic.Bool
 }
 
-// newGroupCache allocates a groupCache whose frames snapshot is an empty slice with
-// the given capacity. atomic.Pointer cannot be set in a struct literal, so all
-// construction goes through here or through groupRing.gcPool.New.
-func newGroupCache(seq moqt.GroupSequence, frameCap int) *groupCache {
-	gc := &groupCache{seq: seq}
-	empty := make([]*moqt.Frame, 0, frameCap)
-	gc.frames.Store(&empty)
-	return gc
+// newGroupCache allocates a groupCache whose slot backing array is exactly
+// MaxFramesPerGroup long. That is the only correct size: append is hard-limited
+// to MaxFramesPerGroup frames, so the array never needs to be larger (extra
+// slots would be dead) and must not be smaller (append would index out of
+// range). All construction goes through here or through groupRing.gcPool.New.
+func newGroupCache(seq moqt.GroupSequence) *groupCache {
+	return &groupCache{
+		seq:   seq,
+		slots: make([]atomic.Pointer[moqt.Frame], MaxFramesPerGroup),
+	}
 }
 
-// snapshot returns the current immutable frames slice. Tests inspect contents
-// through this; production reads go through next(), which Loads inline.
-func (gc *groupCache) snapshot() []*moqt.Frame {
-	return *gc.frames.Load()
-}
-
-// resetForReuse replaces the frames snapshot with a fresh empty slice. Called only
-// on a cache that no reader can observe (during ring.reserve init and releaseCache),
-// so the discarded snapshot has no live readers.
+// resetForReuse clears the slot array and count so the cache can be reused for a
+// new group generation. Called only on a cache that no reader can observe (during
+// ring.reserve init and releaseCache). It reuses the backing array — no
+// allocation — unlike the previous scheme, which allocated a fresh slice.
 func (gc *groupCache) resetForReuse() {
-	empty := make([]*moqt.Frame, 0, MaxFramesPerGroup)
-	gc.frames.Store(&empty)
+	n := int(gc.count.Load())
+	for i := range n {
+		gc.slots[i].Store(nil)
+	}
+	gc.count.Store(0)
 }
 
 // isComplete returns true if the group has finished receiving all frames.
@@ -79,52 +99,76 @@ func (gc *groupCache) incrRef() {
 }
 
 // append clones f into the cache using pool. It is thread-safe and safe to call
-// concurrently: appends are serialized by a compare-and-swap retry loop on the
-// snapshot pointer, so concurrent appends never lose a frame (at the cost of an
-// O(N) copy per append). The published snapshot is immutable, so concurrent next()
-// readers are data-race-free.
+// concurrently: each appender reserves a unique slot via a compare-and-swap on
+// count, so concurrent appends never lose or overwrite a frame — at O(1) cost
+// per append (no snapshot copy). count and the reserved slot are accessed only
+// through atomics, so concurrent next() readers are data-race-free.
 func (gc *groupCache) append(f *moqt.Frame, pool *FramePool) {
 	// Fast path: if the group is already full, bail before paying for the clone.
-	// Racy with concurrent appends (re-checked under the CAS below), but skipping
-	// the pool.Get/WriteTo on the common at-limit path avoids a wasted frame copy.
-	if old := gc.frames.Load(); old != nil && len(*old) >= MaxFramesPerGroup {
+	// Re-checked under the CAS below; skipping the pool.Get/WriteTo on the common
+	// at-limit path avoids a wasted frame copy.
+	if int(gc.count.Load()) >= MaxFramesPerGroup {
 		slog.Warn("group exceeded max frame limit", "seq", gc.seq, "max", MaxFramesPerGroup)
 		return
 	}
 
-	// Clone outside the CAS loop: the clone is private until a CAS succeeds and is
-	// reused across retries (a failed attempt discards only its throwaway slice).
+	// Clone before reserving; the clone is reused across CAS retries.
 	clone := pool.Get()
 	_, _ = f.WriteTo(clone)
 
 	for {
-		oldPtr := gc.frames.Load()
-		old := *oldPtr
-		if len(old) >= MaxFramesPerGroup {
+		n := int(gc.count.Load())
+		if n >= MaxFramesPerGroup {
 			pool.Put(clone) // raced past the limit between the fast check and here
+			slog.Warn("group exceeded max frame limit", "seq", gc.seq, "max", MaxFramesPerGroup)
 			return
 		}
-		// Copy-on-write: build a new immutable snapshot = old + clone, then publish.
-		next := make([]*moqt.Frame, len(old)+1)
-		copy(next, old)
-		next[len(old)] = clone
-		if gc.frames.CompareAndSwap(oldPtr, &next) {
+		// Reserve slot n by publishing count = n+1. The CAS guarantees a unique
+		// slot per appender and keeps count in [0, MaxFramesPerGroup], so slot n
+		// is always in range. A concurrent reader may briefly see count = n+1
+		// before the Store below; it reads slot n as nil (not-ready) and waits.
+		if gc.count.CompareAndSwap(int32(n), int32(n+1)) {
+			gc.slots[n].Store(clone)
 			return
 		}
-		// Lost the CAS to another append; reload and retry (clone is still ours).
+		// Lost the CAS to another appender; retry (clone is still ours).
 	}
 }
 
-// next returns the frame at the given index, or nil if out of range.
-// Thread-free and lock-free: it Loads the current immutable snapshot (one atomic
-// pointer read) and indexes into it. Published snapshots are never mutated, so this
-// is data-race-free under the Go memory model.
+// next returns the frame at index, or nil if the index is out of range or its
+// slot has not been stored yet — unfilled and beyond-count slots are both nil, so
+// a reader detects "not available" from the slot itself without consulting count.
+// Lock-free: a single atomic load of the slot (the len bound is a plain compare
+// against the fixed backing array). Slots are only ever published through
+// atomics, so this is data-race-free under the Go memory model.
 func (gc *groupCache) next(index int) *moqt.Frame {
-	s := gc.frames.Load()
-	if s == nil || index < 0 || index >= len(*s) {
+	if index < 0 || index >= len(gc.slots) {
 		return nil
 	}
-	return (*s)[index]
+	return gc.slots[index].Load()
+}
+
+// frames yields the group's frames in order for use with range-over-func. When
+// the next frame is not yet available it consults wait: for a still-filling
+// (trickle) group wait should block until more frames may be ready and return
+// true, or return false to stop iteration (e.g. the subscriber cancelled).
+// Iteration also ends once the group is complete. groupCache owns frame ordering
+// and completion; the caller owns the wakeup/cancellation policy via wait.
+func (gc *groupCache) frames(wait func() bool) iter.Seq[*moqt.Frame] {
+	return func(yield func(*moqt.Frame) bool) {
+		for i := 0; ; {
+			if frame := gc.next(i); frame != nil {
+				if !yield(frame) {
+					return
+				}
+				i++
+				continue
+			}
+			if gc.isComplete() || !wait() {
+				return
+			}
+		}
+	}
 }
 
 func newGroupRing(size int, pool *FramePool) *groupRing {
@@ -134,7 +178,7 @@ func newGroupRing(size int, pool *FramePool) *groupRing {
 		size:   size,
 	}
 	ring.gcPool.New = func() any {
-		return newGroupCache(0, MaxFramesPerGroup)
+		return newGroupCache(0)
 	}
 	return ring
 }
@@ -159,7 +203,7 @@ func (ring *groupRing) reserve(seq moqt.GroupSequence) *groupCache {
 	cache.evicted.Store(false)
 	cache.released.Store(false)
 	// Reinitialize content state so the read contract does not depend on
-	// releaseCache having cleaned up: publish a fresh empty snapshot.
+	// releaseCache having cleaned up: clear the slots and reset count to 0.
 	cache.resetForReuse()
 
 	idx := int(ring.pos.Add(1) % uint64(ring.size))
@@ -244,16 +288,20 @@ func (ring *groupRing) releaseCache(gc *groupCache) {
 	}
 
 	// No lock: releaseCache runs at most once (released CAS above) and only when
-	// refCount == 0, so no reader is observing this cache. Return each frame in the
-	// current snapshot to the pool, then drop the snapshot for reuse.
-	snap := gc.frames.Load()
-	if snap == nil {
-		return
+	// refCount == 0, so no reader is observing this cache. In a single pass,
+	// return each stored frame to the pool and clear its slot. Clearing the
+	// pointer is what stops a later generation of this reused cache from reading
+	// a stale frame in the reserve→Store window (see the count field) — it is not
+	// about frame contents, which the pool resets on Get (FramePool.Get →
+	// frame.Reset).
+	n := int(gc.count.Load())
+	for i := range n {
+		if f := gc.slots[i].Load(); f != nil {
+			ring.pool.Put(f)
+		}
+		gc.slots[i].Store(nil)
 	}
-	for _, f := range *snap {
-		ring.pool.Put(f)
-	}
-	gc.resetForReuse()
+	gc.count.Store(0)
 
 	ring.gcPool.Put(gc)
 }

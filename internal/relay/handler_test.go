@@ -921,7 +921,7 @@ func TestIngest_ConcurrentGroups_AllCachesComplete(t *testing.T) {
 			defer wg.Done()
 			frames := make([][]byte, framesPerGroup)
 			for j := range framesPerGroup {
-				frames[j] = []byte(fmt.Sprintf("g%d-f%d", idx, j))
+				frames[j] = fmt.Appendf(nil, "g%d-f%d", idx, j)
 			}
 			ring.fill(&fakeFrameSource{frames: frames}, caches[idx], nil)
 		}(i)
@@ -1008,12 +1008,10 @@ func TestIngest_WaitGroup_BlocksDoneUntilFillComplete(t *testing.T) {
 		}
 
 		var wg sync.WaitGroup
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			ring.fill(src, cache, nil)
 			close(fillDone)
-		}()
+		})
 		go func() {
 			wg.Wait()
 			close(done)

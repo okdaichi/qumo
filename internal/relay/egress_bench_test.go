@@ -43,7 +43,7 @@ func runEgressFanout(b *testing.B, nSubs int, withCounters bool) {
 	const frameSize = 1200
 	const nFrames = 64
 	pool := NewFramePool(DefaultNewFrameCapacity)
-	gc := newGroupCache(1, nFrames)
+	gc := newGroupCache(1)
 	src := moqt.NewFrame(frameSize)
 	src.Write(make([]byte, frameSize))
 	for range nFrames {

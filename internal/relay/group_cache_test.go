@@ -17,19 +17,33 @@ import (
 // groupCache tests
 // ============================================================================
 
+// collectFrames returns all frames currently in the group, for test assertions.
+// It is a free function, not a method on groupCache, so test-only scaffolding
+// does not leak into the production type's API. It reads through the production
+// path (next), so tests exercise the same read code production uses; a
+// reserved-but-not-yet-stored slot reads back as nil.
+func collectFrames(gc *groupCache) []*moqt.Frame {
+	n := int(gc.count.Load())
+	out := make([]*moqt.Frame, n)
+	for i := range n {
+		out[i] = gc.next(i)
+	}
+	return out
+}
+
 func TestGroupCache_Append(t *testing.T) {
-	gc := newGroupCache(1, 0)
+	gc := newGroupCache(1)
 
 	frame := moqt.NewFrame(100)
 	frame.Write([]byte("test data"))
 	gc.append(frame, DefaultFramePool)
 
-	require.Len(t, gc.snapshot(), 1)
-	assert.NotSame(t, frame, gc.snapshot()[0], "frame should be cloned")
+	require.Len(t, collectFrames(gc), 1)
+	assert.NotSame(t, frame, collectFrames(gc)[0], "frame should be cloned")
 }
 
 func TestGroupCache_Append_ClonesData(t *testing.T) {
-	gc := newGroupCache(1, 0)
+	gc := newGroupCache(1)
 
 	original := moqt.NewFrame(100)
 	original.Write([]byte("original"))
@@ -38,12 +52,12 @@ func TestGroupCache_Append_ClonesData(t *testing.T) {
 	original.Reset()
 	original.Write([]byte("modified"))
 
-	cached := gc.snapshot()[0]
+	cached := collectFrames(gc)[0]
 	assert.NotEqual(t, 0, cached.Len(), "cached frame should retain original data")
 }
 
 func TestGroupCache_Append_Multiple(t *testing.T) {
-	gc := newGroupCache(1, 0)
+	gc := newGroupCache(1)
 
 	for range 5 {
 		f := moqt.NewFrame(100)
@@ -51,11 +65,11 @@ func TestGroupCache_Append_Multiple(t *testing.T) {
 		gc.append(f, DefaultFramePool)
 	}
 
-	assert.Len(t, gc.snapshot(), 5)
+	assert.Len(t, collectFrames(gc), 5)
 }
 
 func TestGroupCache_Next(t *testing.T) {
-	gc := newGroupCache(1, 0)
+	gc := newGroupCache(1)
 	for range 3 {
 		frame := moqt.NewFrame(100)
 		gc.append(frame, DefaultFramePool)
@@ -86,30 +100,28 @@ func TestGroupCache_Next(t *testing.T) {
 }
 
 func TestGroupCache_ConcurrentAppend(t *testing.T) {
-	gc := newGroupCache(1, 0)
+	gc := newGroupCache(1)
 
 	const goroutines = 10
 	const appendsPerGoroutine = 20 // Stay under MaxFramesPerGroup (256)
 
 	var wg sync.WaitGroup
 	for range goroutines {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for range appendsPerGoroutine {
 				frame := moqt.NewFrame(100)
 				frame.Write([]byte("data"))
 				gc.append(frame, DefaultFramePool)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 
-	assert.Len(t, gc.snapshot(), goroutines*appendsPerGoroutine)
+	assert.Len(t, collectFrames(gc), goroutines*appendsPerGoroutine)
 }
 
 func TestGroupCache_IsComplete(t *testing.T) {
-	gc := newGroupCache(1, 0)
+	gc := newGroupCache(1)
 
 	assert.False(t, gc.isComplete(), "should not be complete before markComplete")
 	gc.markComplete()
@@ -169,7 +181,7 @@ func TestGroupRing_EarliestAvailable_AtBoundary(t *testing.T) {
 func TestGroupRing_Get(t *testing.T) {
 	ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
 
-	testCache := newGroupCache(5, 0)
+	testCache := newGroupCache(5)
 	idx := uint64(5) % uint64(ring.size)
 	ring.caches[idx].Store(testCache)
 
@@ -209,7 +221,7 @@ func TestGroupRing_ConcurrentAccess(t *testing.T) {
 	for i := range 10 {
 		go func(id int) {
 			for j := range 100 {
-				cache := newGroupCache(moqt.GroupSequence(id*100 + j), 0)
+				cache := newGroupCache(moqt.GroupSequence(id*100 + j))
 				idx := (id*100 + j) % ring.size
 				ring.caches[idx].Store(cache)
 				ring.pos.Add(1)
@@ -392,7 +404,7 @@ func TestGroupRing_Fill_ConcurrentGroups(t *testing.T) {
 			defer wg.Done()
 			frames := make([][]byte, framesPerGroup)
 			for j := range framesPerGroup {
-				frames[j] = []byte(fmt.Sprintf("g%d-f%d", idx, j))
+				frames[j] = fmt.Appendf(nil, "g%d-f%d", idx, j)
 			}
 			ring.fill(&fakeFrameSource{frames: frames}, caches[idx], nil)
 		}(i)
@@ -514,12 +526,10 @@ func TestGroupRing_Fill_WaitGroupBlocksDone(t *testing.T) {
 		fillDone := make(chan struct{})
 
 		var wg sync.WaitGroup
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			ring.fill(src, cache, nil)
 			close(fillDone)
-		}()
+		})
 		go func() {
 			wg.Wait()
 			close(done)
@@ -549,7 +559,7 @@ func TestGroupRing_Fill_WaitGroupBlocksDone(t *testing.T) {
 // ============================================================================
 
 func BenchmarkGroupCache_Append(b *testing.B) {
-	gc := newGroupCache(1, b.N)
+	gc := newGroupCache(1)
 	frame := moqt.NewFrame(1500)
 	frame.Write(make([]byte, 1000))
 
@@ -560,7 +570,7 @@ func BenchmarkGroupCache_Append(b *testing.B) {
 }
 
 func BenchmarkGroupCache_Next(b *testing.B) {
-	gc := newGroupCache(1, 100)
+	gc := newGroupCache(1)
 	for range 100 {
 		frame := moqt.NewFrame(1500)
 		gc.append(frame, DefaultFramePool)
@@ -575,7 +585,7 @@ func BenchmarkGroupCache_Next(b *testing.B) {
 func BenchmarkGroupRing_Get(b *testing.B) {
 	ring := newGroupRing(DefaultGroupCacheSize, DefaultFramePool)
 	for i := range ring.size {
-		cache := newGroupCache(moqt.GroupSequence(i), 0)
+		cache := newGroupCache(moqt.GroupSequence(i))
 		ring.caches[i].Store(cache)
 	}
 
@@ -588,14 +598,14 @@ func BenchmarkGroupRing_Get(b *testing.B) {
 func BenchmarkGroupRing_Ingest(b *testing.B) {
 	pool := NewFramePool(DefaultNewFrameCapacity)
 	ring := newGroupRing(DefaultGroupCacheSize, pool)
-	
+
 	frame := moqt.NewFrame(DefaultNewFrameCapacity)
 	frame.Write(make([]byte, 1000))
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		cache := ring.reserve(moqt.GroupSequence(i))
-		for j := 0; j < 10; j++ {
+		for range 10 {
 			cache.append(frame, pool)
 		}
 		ring.decrRef(cache)
@@ -632,26 +642,23 @@ func TestGroupRing_Stress(t *testing.T) {
 	}
 
 	// Start writer (ingest)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for g := 1; g < numGroups; g++ {
 			cache := ring.reserve(moqt.GroupSequence(g))
-			
+
 			// Simulate concurrent fill
 			wg.Add(1)
 			go func(c *groupCache, groupSeq int) {
 				defer wg.Done()
 				time.Sleep(time.Duration(groupSeq%5) * time.Microsecond)
-				
+
 				src := &fakeFrameSource{
 					frames: [][]byte{[]byte("frame-data")},
 				}
 				ring.fill(src, c, nil)
 			}(cache, g)
 		}
-	}()
+	})
 
 	wg.Wait()
 }
-
