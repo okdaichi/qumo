@@ -103,6 +103,11 @@ type relayHandler struct {
 	nodeID       string
 	broadSession *broadcastSession // nil when metering is disabled
 
+	// sampler is the server-wide stats sampler, passed to each track
+	// distributor this handler creates (see subscribe). nil is valid (nil-safe
+	// methods) for a handler built without a Server.
+	sampler *statsSampler
+
 	ctx       context.Context
 	cancel    context.CancelFunc
 	drainOnce sync.Once
@@ -183,9 +188,10 @@ func newRelayHandler(ann *moqt.Announcement, sess *moqt.Session, nodeID string, 
 	h := &relayHandler{
 		announcement: ann,
 		session:      sess,
-		tracks:       newTrackManager(cacheSize, pool, sampler),
+		tracks:       newTrackManager(cacheSize, pool),
 		nodeID:       nodeID,
 		broadSession: broadSess,
+		sampler:      sampler,
 		ctx:          ctx,
 		cancel:       cancel,
 	}
@@ -297,7 +303,7 @@ func (h *relayHandler) subscribe(name moqt.TrackName) *trackDistributor {
 		return nil
 	}
 
-	d := newTrackDistributor(h.tracks, trackID, h.broadSession)
+	d := newTrackDistributor(h.tracks, trackID, h.broadSession, h.sampler)
 
 	go d.ingest(h.ctx, src)
 
@@ -315,23 +321,16 @@ type trackManager struct {
 	// package defaults so a minimally-constructed Server (e.g. tests) works.
 	cacheSize int
 	pool      *FramePool
-
-	// sampler is the server-wide stats sampler each distributor registers with
-	// so its ring depth is refreshed on the shared sampling tick (replacing a
-	// per-distributor pollCacheDepth goroutine). nil is valid — its methods are
-	// nil-safe — so a manager built without a Server (tests) simply skips depth
-	// sampling.
-	sampler *statsSampler
 }
 
-func newTrackManager(cacheSize int, pool *FramePool, sampler *statsSampler) *trackManager {
+func newTrackManager(cacheSize int, pool *FramePool) *trackManager {
 	if cacheSize <= 0 {
 		cacheSize = DefaultGroupCacheSize
 	}
 	if pool == nil {
 		pool = DefaultFramePool
 	}
-	return &trackManager{cacheSize: cacheSize, pool: pool, sampler: sampler}
+	return &trackManager{cacheSize: cacheSize, pool: pool}
 }
 
 func (tm *trackManager) load(trackID string) (*trackDistributor, bool) {
@@ -360,10 +359,11 @@ type trackDistributor struct {
 	egressCounter     prometheus.Counter
 	deliveryHistogram prometheus.Observer
 
-	// sampler is the distributor's own reference to the server-wide stats sampler
-	// (copied from the manager at construction), so registration/deregistration
-	// doesn't reach through manager.sampler. nil is valid — its methods are
-	// nil-safe.
+	// sampler is the server-wide stats sampler this distributor registers with
+	// so its ring depth is refreshed on the shared sampling tick (replacing a
+	// per-distributor pollCacheDepth goroutine). Passed to newTrackDistributor.
+	// nil is valid — its methods are nil-safe — so a distributor built without a
+	// Server (tests) simply skips depth sampling.
 	sampler *statsSampler
 
 	// session is non-nil when backend metering is active for this broadcast.
@@ -380,7 +380,7 @@ type trackDistributor struct {
 	done chan struct{} // closed when ingest returns
 }
 
-func newTrackDistributor(manager *trackManager, trackID string, broadSess *broadcastSession) *trackDistributor {
+func newTrackDistributor(manager *trackManager, trackID string, broadSess *broadcastSession, sampler *statsSampler) *trackDistributor {
 	d := &trackDistributor{
 		trackID:           trackID,
 		ring:              newGroupRing(manager.cacheSize, manager.pool),
@@ -388,7 +388,7 @@ func newTrackDistributor(manager *trackManager, trackID string, broadSess *broad
 		ingressCounter:    metricRelayIngressBytesTotal.WithLabelValues(trackID),
 		egressCounter:     metricRelayEgressBytesTotal.WithLabelValues(trackID),
 		deliveryHistogram: metricGroupDeliveryHistogram.WithLabelValues(trackID),
-		sampler:           manager.sampler,
+		sampler:           sampler,
 		session:           broadSess,
 		fillSem:           make(chan struct{}, maxGroupFillsInFlightOrPanic()),
 		done:              make(chan struct{}),
