@@ -18,8 +18,8 @@ import (
 // given label value. It observes the metric without mutating it, so it can
 // assert that a specific series was deleted even when the same (process-global)
 // metric vec carries unrelated samples left by sibling tests.
-func metricHasLabelValue(t *testing.T, c prometheus.Collector, value string) bool {
-	t.Helper()
+func metricHasLabelValue(tb testing.TB, c prometheus.Collector, value string) bool {
+	tb.Helper()
 	ch := make(chan prometheus.Metric, 64)
 	go func() {
 		c.Collect(ch)
@@ -39,17 +39,19 @@ func metricHasLabelValue(t *testing.T, c prometheus.Collector, value string) boo
 	return false
 }
 
-type mockConnStatsProvider struct {
+var _ connStatsProvider = (*fakeConnStatsProvider)(nil)
+
+type fakeConnStatsProvider struct {
 	stats transport.ConnectionStats
 }
 
-func (m *mockConnStatsProvider) ConnectionStats() transport.ConnectionStats {
-	return m.stats
+func (f *fakeConnStatsProvider) ConnectionStats() transport.ConnectionStats {
+	return f.stats
 }
 
 func TestSampleConnStats(t *testing.T) {
 	addr := "192.0.2.1:1234"
-	provider := &mockConnStatsProvider{
+	provider := &fakeConnStatsProvider{
 		stats: transport.ConnectionStats{
 			SmoothedRTT: 42 * time.Millisecond,
 			PacketsSent: 100,
@@ -75,7 +77,7 @@ func TestSampleConnStats(t *testing.T) {
 func TestStatsSampler_ConnLifecycle(t *testing.T) {
 	addr := "192.0.2.9:1234"
 	s := &statsSampler{}
-	provider := &mockConnStatsProvider{
+	provider := &fakeConnStatsProvider{
 		stats: transport.ConnectionStats{SmoothedRTT: 7 * time.Millisecond, PacketsSent: 10, PacketsLost: 1},
 	}
 
@@ -101,7 +103,7 @@ func TestStatsSampler_ReapSkipsReRegistered(t *testing.T) {
 		metricConnSmoothedRTT.DeleteLabelValues(addr)
 		metricConnPacketLossRate.DeleteLabelValues(addr)
 	})
-	provider := &mockConnStatsProvider{
+	provider := &fakeConnStatsProvider{
 		stats: transport.ConnectionStats{SmoothedRTT: 5 * time.Millisecond, PacketsSent: 10, PacketsLost: 1},
 	}
 
@@ -133,17 +135,19 @@ func TestStatsSampler_NilSafe(t *testing.T) {
 	})
 }
 
-type mockSessionStatsProvider struct {
+var _ sessionStatsProvider = (*fakeSessionStatsProvider)(nil)
+
+type fakeSessionStatsProvider struct {
 	stats moqt.SessionStats
 }
 
-func (m *mockSessionStatsProvider) Stats() moqt.SessionStats {
-	return m.stats
+func (f *fakeSessionStatsProvider) Stats() moqt.SessionStats {
+	return f.stats
 }
 
 func TestSampleSessionStats(t *testing.T) {
 	addr := "192.0.2.2:4321"
-	provider := &mockSessionStatsProvider{
+	provider := &fakeSessionStatsProvider{
 		stats: moqt.SessionStats{
 			RTT:              85 * time.Millisecond,
 			EstimatedBitrate: 1500000,
@@ -168,7 +172,7 @@ func TestSampleSessionStats(t *testing.T) {
 func TestStatsSampler_SessionLifecycle(t *testing.T) {
 	addr := "192.0.2.3:5555"
 	s := &statsSampler{}
-	provider := &mockSessionStatsProvider{
+	provider := &fakeSessionStatsProvider{
 		stats: moqt.SessionStats{RTT: 12 * time.Millisecond, EstimatedBitrate: 900000},
 	}
 
@@ -199,7 +203,7 @@ func TestStatsSampler_ConcurrentSampleAndDeregister(t *testing.T) {
 	for i := range addrs {
 		addr := fmt.Sprintf("198.51.100.1:%d", 10000+i)
 		addrs[i] = addr
-		s.addSession(addr, &mockSessionStatsProvider{stats: moqt.SessionStats{RTT: 10 * time.Millisecond}})
+		s.addSession(addr, &fakeSessionStatsProvider{stats: moqt.SessionStats{RTT: 10 * time.Millisecond}})
 	}
 	t.Cleanup(func() {
 		for _, addr := range addrs {

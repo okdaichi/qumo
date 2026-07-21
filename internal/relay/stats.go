@@ -66,8 +66,8 @@ type statsSampler struct {
 // queueReap enqueues fn to run on the sampler goroutine after the next sweep.
 func (s *statsSampler) queueReap(fn func()) {
 	s.reapMu.Lock()
+	defer s.reapMu.Unlock()
 	s.reap = append(s.reap, fn)
-	s.reapMu.Unlock()
 }
 
 // reapDeleted applies and clears all queued reap closures. It must run on the
@@ -77,6 +77,9 @@ func (s *statsSampler) reapDeleted() {
 	if s == nil {
 		return
 	}
+	// Detach the batch under the lock, then release it before running the
+	// closures — no defer, since holding reapMu across the closures would block
+	// concurrent queueReap callers for the duration of the deletions.
 	s.reapMu.Lock()
 	batch := s.reap
 	s.reap = nil
