@@ -107,15 +107,13 @@ func TestGroupCache_ConcurrentAppend(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for range goroutines {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for range appendsPerGoroutine {
 				frame := moqt.NewFrame(100)
 				frame.Write([]byte("data"))
 				gc.append(frame, DefaultFramePool)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 
@@ -406,7 +404,7 @@ func TestGroupRing_Fill_ConcurrentGroups(t *testing.T) {
 			defer wg.Done()
 			frames := make([][]byte, framesPerGroup)
 			for j := range framesPerGroup {
-				frames[j] = []byte(fmt.Sprintf("g%d-f%d", idx, j))
+				frames[j] = fmt.Appendf(nil, "g%d-f%d", idx, j)
 			}
 			ring.fill(&fakeFrameSource{frames: frames}, caches[idx], nil)
 		}(i)
@@ -528,12 +526,10 @@ func TestGroupRing_Fill_WaitGroupBlocksDone(t *testing.T) {
 		fillDone := make(chan struct{})
 
 		var wg sync.WaitGroup
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			ring.fill(src, cache, nil)
 			close(fillDone)
-		}()
+		})
 		go func() {
 			wg.Wait()
 			close(done)
@@ -602,14 +598,14 @@ func BenchmarkGroupRing_Get(b *testing.B) {
 func BenchmarkGroupRing_Ingest(b *testing.B) {
 	pool := NewFramePool(DefaultNewFrameCapacity)
 	ring := newGroupRing(DefaultGroupCacheSize, pool)
-	
+
 	frame := moqt.NewFrame(DefaultNewFrameCapacity)
 	frame.Write(make([]byte, 1000))
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		cache := ring.reserve(moqt.GroupSequence(i))
-		for j := 0; j < 10; j++ {
+		for range 10 {
 			cache.append(frame, pool)
 		}
 		ring.decrRef(cache)
@@ -646,26 +642,23 @@ func TestGroupRing_Stress(t *testing.T) {
 	}
 
 	// Start writer (ingest)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for g := 1; g < numGroups; g++ {
 			cache := ring.reserve(moqt.GroupSequence(g))
-			
+
 			// Simulate concurrent fill
 			wg.Add(1)
 			go func(c *groupCache, groupSeq int) {
 				defer wg.Done()
 				time.Sleep(time.Duration(groupSeq%5) * time.Microsecond)
-				
+
 				src := &fakeFrameSource{
 					frames: [][]byte{[]byte("frame-data")},
 				}
 				ring.fill(src, c, nil)
 			}(cache, g)
 		}
-	}()
+	})
 
 	wg.Wait()
 }
-
