@@ -79,8 +79,8 @@ func electAndInstall(s *Server, h *relayHandler) {
 // Tripwire: revisit if the production route-install rate approaches ~10⁵/sec
 // or a production mutex profile shows routeMu as a top contender.
 //
-// Run: go test -run=^$ -bench=BenchmarkRouteElection_Parallel \
-//          -mutexprofile=mu.out -mutexprofilefraction=1 -cpu=1,8,16 -count=5
+//	Run: go test -run=^$ -bench=BenchmarkRouteElection_Parallel \
+//	         -mutexprofile=mu.out -mutexprofilefraction=1 -cpu=1,8,16 -count=5
 func BenchmarkRouteElection_Parallel(b *testing.B) {
 	s := &Server{Config: &Config{}, TrackMux: moqt.NewTrackMux(0)}
 	s.alternates = make(map[moqt.BroadcastPath]*alternate)
@@ -191,8 +191,8 @@ func BenchmarkRouteInstall_Fanout(b *testing.B) {
 // time.AfterFunc would create timer-heap churn unrelated to routeMu). ns/op is
 // alloc-bound (fresh Announcement per op) — compare saturation, not absolutes.
 //
-// Run: go test -run=^$ -bench='RouteElection_Parallel|RouteDisplacement_Parallel' \
-//          -benchtime=2s -cpu=16 -count=5
+//	Run: go test -run=^$ -bench='RouteElection_Parallel|RouteDisplacement_Parallel' \
+//	         -benchtime=2s -cpu=16 -count=5
 //
 // Finding (2026-07, 16-core): vs the empty-slot bench, displacement churn costs
 // ~20% throughput (~384k → ~308k installs/s). The -mutexprofile attributes

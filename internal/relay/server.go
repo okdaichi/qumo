@@ -51,6 +51,13 @@ type Server struct {
 	statusHandler       *statusHandler
 	initOnce            sync.Once
 
+	// sampler is the single server-wide stats sampler. It replaces the former
+	// per-connection, per-session, and per-track poller goroutines with one
+	// registry-sweeping loop, eliminating their GC stack-scan cost at high
+	// fan-out. Created and started in init(); stopped by samplerCancel.
+	sampler       *statsSampler
+	samplerCancel context.CancelFunc
+
 	// resolvers for peer discovery
 	localResolver  PeerResolver // Nomad native (within-cluster)
 	remoteResolver PeerResolver // Remote traffic resolver (cross-cluster)
@@ -87,6 +94,15 @@ func (s *Server) HandleWebTransport(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) init() {
 	s.initOnce.Do(func() {
+		// Single server-wide stats sampler. Started here (once) and stopped in
+		// Close/Shutdown via samplerCancel. Uses a Background-derived context
+		// because the relay has no server-lifetime context of its own; the
+		// cancel is the sole stop signal.
+		s.sampler = &statsSampler{}
+		samplerCtx, cancel := context.WithCancel(context.Background())
+		s.samplerCancel = cancel
+		go s.sampler.run(samplerCtx)
+
 		if s.TrackMux == nil {
 			s.TrackMux = moqt.NewTrackMux(0)
 		}
@@ -123,7 +139,9 @@ func (s *Server) init() {
 		s.MOQServer.ConnContext = func(ctx context.Context, conn moqt.StreamConn) context.Context {
 			if provider, ok := conn.(connStatsProvider); ok {
 				addr := conn.RemoteAddr().String()
-				go pollConnStats(conn.Context(), provider, addr)
+				s.sampler.addConn(addr, provider)
+				sampleConnStats(provider, addr) // immediate first sample
+				context.AfterFunc(conn.Context(), func() { s.sampler.removeConn(addr) })
 			}
 			return ctx
 		}
@@ -178,6 +196,9 @@ func (s *Server) ListenAndServe() error {
 }
 
 func (s *Server) Close() error {
+	if s.samplerCancel != nil {
+		s.samplerCancel()
+	}
 	if s.MOQServer != nil {
 		_ = s.MOQServer.Close()
 	}
@@ -186,6 +207,9 @@ func (s *Server) Close() error {
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
+	if s.samplerCancel != nil {
+		s.samplerCancel()
+	}
 	if s.MOQServer != nil {
 		return s.MOQServer.Shutdown(ctx)
 	}
@@ -336,8 +360,10 @@ func (s *Server) markUnconnected(addr string) {
 	defer s.connectedMu.Unlock()
 	delete(s.connected, addr)
 	metricPeersConnected.Dec()
-	metricSessionRTTMilliseconds.DeleteLabelValues(addr)
-	metricSessionEstimatedBitrate.DeleteLabelValues(addr)
+	// The per-addr session RTT/bitrate series are reaped by the stats sampler
+	// when the peer session deregisters (serveSession's removeSession). Deleting
+	// them here as well would race the sampler's Set writes (resurrecting the
+	// series), so peer-metric cleanup is left to the sampler.
 }
 
 func (s *Server) maintainPeer(ctx context.Context, peer Peer) {
@@ -406,7 +432,9 @@ func (s *Server) serveSession(sess *moqt.Session, requireAuth bool) {
 	defer metricSessionsActive.Dec()
 
 	addr := sess.RemoteAddr().String()
-	go pollSessionStats(sess, addr)
+	s.sampler.addSession(addr, sess)
+	sampleSessionStats(sess, addr) // immediate first sample
+	defer s.sampler.removeSession(addr)
 
 	slog.Info("relay: new session", "remote", addr, "peer", !requireAuth)
 
@@ -442,7 +470,7 @@ func (s *Server) serveSession(sess *moqt.Session, requireAuth bool) {
 		}
 
 		handler := newRelayHandler(ann, sess, s.Config.NodeID, broadSess,
-			s.Config.GroupCacheSize, s.framePool)
+			s.Config.GroupCacheSize, s.framePool, s.sampler)
 
 		// Route selection: only replace an existing active handler if the new
 		// route is strictly better. The decision and the TrackMux install are
