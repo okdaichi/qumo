@@ -284,15 +284,20 @@ func (ring *groupRing) releaseCache(gc *groupCache) {
 	}
 
 	// No lock: releaseCache runs at most once (released CAS above) and only when
-	// refCount == 0, so no reader is observing this cache. Return each stored
-	// frame to the pool, then clear the slots for reuse.
+	// refCount == 0, so no reader is observing this cache. In a single pass,
+	// return each stored frame to the pool and clear its slot. Clearing the
+	// pointer is what stops a later generation of this reused cache from reading
+	// a stale frame in the reserve→Store window (see the count field) — it is not
+	// about frame contents, which the pool resets on Get (FramePool.Get →
+	// frame.Reset).
 	n := int(gc.count.Load())
 	for i := range n {
 		if f := gc.slots[i].Load(); f != nil {
 			ring.pool.Put(f)
 		}
+		gc.slots[i].Store(nil)
 	}
-	gc.resetForReuse()
+	gc.count.Store(0)
 
 	ring.gcPool.Put(gc)
 }
