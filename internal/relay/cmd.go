@@ -14,7 +14,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"runtime/debug"
 	"strconv"
 	"strings"
 	"syscall"
@@ -26,6 +25,7 @@ import (
 	"github.com/quic-go/quic-go"
 	"github.com/qumo-dev/gomoqt/moqt"
 	"github.com/qumo-dev/qumo/internal/cors"
+	"github.com/qumo-dev/qumo/internal/gctune"
 )
 
 // sanitizeLog strips CR and LF from s to prevent log injection.
@@ -75,7 +75,7 @@ func Run(args []string) error {
 		return err
 	}
 
-	tuneGC()
+	gctune.Apply()
 
 	addr := envOr("RELAY_ADDR", ":4433")
 	certFile := envOr("CERT_FILE", "certs/server.crt")
@@ -385,64 +385,6 @@ func envOr(key, defaultVal string) string {
 		return v
 	}
 	return defaultVal
-}
-
-// tuneGC raises the GC target percentage for the relay's workload. A fan-out
-// relay holds a large, STABLE live set — one QUIC connection per subscriber,
-// each carrying ~9 goroutines whose stacks dominate RSS (measured: heap in-use
-// ~200MB while RSS ~1.4GB at ~14K sessions; the gap is off-heap goroutine
-// stacks). Every GC cycle re-scans all of those stacks, so with the default
-// GOGC=100 the GC-scan CPU grows with connection count and becomes the
-// scaling ceiling (measured: default holds ~13-15K sessions; raising GOGC
-// pushes it to ~20K on 8 cores). Because the live set is stable and legitimate
-// (not garbage), collecting it 2x as often buys nothing but scan cost — so a
-// higher GC target trades some peak RSS headroom for markedly less GC CPU.
-//
-// GOMEMLIMIT is deliberately NOT used: capping memory forces constant GC to
-// stay under the cap, which for this "large stable live set" backfires into a
-// GC death-spiral (measured: GOMEMLIMIT-based configs collapsed to ~15-18K
-// while GOGC=high held 20K). Let the relay use the memory it needs.
-//
-// Precedence (never override an explicit operator choice):
-//   - If GOGC is set in the environment, the Go runtime already honors it and
-//     we do nothing — the operator has taken control.
-//   - Else RELAY_GOGC (if set) sets the percentage.
-//   - Else a conservative relay default (200) — a modest raise that helps at
-//     scale without the peak-RSS blow-up of an aggressive value. Hosts pushing
-//     >15K sessions with ample RAM should raise RELAY_GOGC (600-1600 reached
-//     ~18-20K in testing); memory-constrained hosts should lower it or pin
-//     GOGC=100.
-func tuneGC() {
-	pct, apply := gcPercent(os.Getenv("GOGC"), os.Getenv("RELAY_GOGC"))
-	if !apply {
-		return // operator set GOGC explicitly; the runtime already honors it.
-	}
-	debug.SetGCPercent(pct)
-	slog.Info("relay GC tuned", "gogc_percent", pct,
-		"note", "fan-out relay holds a large stable live set; higher GOGC reduces GC-scan CPU at scale. Override with RELAY_GOGC or GOGC.")
-}
-
-// defaultRelayGOGC is the relay's GC target when the operator sets neither GOGC
-// nor RELAY_GOGC — a modest raise above the runtime default (100) that reduces
-// GC-scan CPU for the large stable live set without an aggressive value's peak
-// RSS blow-up. See tuneGC.
-const defaultRelayGOGC = 200
-
-// gcPercent decides the GC target percentage from the two env inputs. It returns
-// (pct, apply): apply is false when GOGC is set (the runtime owns it and we must
-// not stomp it). Otherwise RELAY_GOGC (if a valid positive int) wins, else the
-// relay default. An invalid RELAY_GOGC falls back to the default (apply=true).
-func gcPercent(gogcEnv, relayGOGCEnv string) (pct int, apply bool) {
-	if gogcEnv != "" {
-		return 0, false
-	}
-	if relayGOGCEnv != "" {
-		if n, err := strconv.Atoi(relayGOGCEnv); err == nil && n > 0 {
-			return n, true
-		}
-		slog.Warn("invalid RELAY_GOGC; using relay default", "value", relayGOGCEnv, "default", defaultRelayGOGC)
-	}
-	return defaultRelayGOGC, true
 }
 
 func envInt(key string, defaultVal int) (int, error) {

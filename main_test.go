@@ -19,10 +19,12 @@ func TestRun_Unit(t *testing.T) {
 	origRelay := runRelay
 	origRTMP := runRTMP
 	origPlayground := runPlayground
+	origDoctor := runDoctor
 	defer func() {
 		runRelay = origRelay
 		runRTMP = origRTMP
 		runPlayground = origPlayground
+		runDoctor = origDoctor
 	}()
 
 	tests := map[string]struct {
@@ -30,6 +32,7 @@ func TestRun_Unit(t *testing.T) {
 		stubRelay          func([]string) error
 		stubRTMP           func([]string) error
 		stubPlayground     func([]string) error
+		stubDoctor         func([]string) error
 		wantCode           int
 		wantStderrContains []string
 	}{
@@ -92,6 +95,17 @@ func TestRun_Unit(t *testing.T) {
 			},
 			wantCode: 0,
 		},
+		"doctor success": {
+			args:       []string{"doctor"},
+			stubDoctor: func(_ []string) error { return nil },
+			wantCode:   0,
+		},
+		"doctor error": {
+			args:               []string{"doctor"},
+			stubDoctor:         func(_ []string) error { return fmt.Errorf("doc-fail") },
+			wantCode:           1,
+			wantStderrContains: []string{"error: doc-fail"},
+		},
 	}
 
 	for name, tt := range tests {
@@ -110,6 +124,11 @@ func TestRun_Unit(t *testing.T) {
 				runPlayground = tt.stubPlayground
 			} else {
 				runPlayground = func([]string) error { return nil }
+			}
+			if tt.stubDoctor != nil {
+				runDoctor = tt.stubDoctor
+			} else {
+				runDoctor = func([]string) error { return nil }
 			}
 
 			// capture stderr

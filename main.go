@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 
+	"github.com/qumo-dev/qumo/internal/doctor"
 	"github.com/qumo-dev/qumo/internal/ingest"
 	"github.com/qumo-dev/qumo/internal/playground"
 	"github.com/qumo-dev/qumo/internal/relay"
@@ -18,6 +19,7 @@ var (
 	runRTMP       = ingest.RunRTMP
 	runRTSP       = ingest.RunRTSP     // push server (ANNOUNCE/RECORD)
 	runRTSPPull   = ingest.RunRTSPPull // pull client (DESCRIBE/SETUP/PLAY, camera ingest)
+	runDoctor     = doctor.Run
 	runPlayground = func(args []string) error {
 		o, err := playground.ParseFlags(args, playground.Options{
 			Assets:     mustSubAssets(),
@@ -83,6 +85,8 @@ func run(args []string) int {
 		err = runRTSP(cmdArgs)
 	case "playground":
 		err = runPlayground(cmdArgs)
+	case "doctor":
+		err = runDoctor(cmdArgs)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n", cmd)
 		printUsage()
@@ -105,6 +109,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  rtsp       Pull from an RTSP source (e.g. IP camera) and republish as MoQT")
 	fmt.Fprintln(os.Stderr, "  rtsp-push  Start the RTSP push ingest server (ANNOUNCE/RECORD)")
 	fmt.Fprintln(os.Stderr, "  playground Start a local demo (relay + web UI) on http://127.0.0.1:8080")
+	fmt.Fprintln(os.Stderr, "  doctor     Explain effective runtime config (GC target) — read-only")
 	fmt.Fprintln(os.Stderr, "  version    Print version information")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Configuration:")
