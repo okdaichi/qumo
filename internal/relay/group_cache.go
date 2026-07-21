@@ -41,12 +41,16 @@ type groupCache struct {
 	// distinct slots are distinct memory locations). In production, append is
 	// single-writer per cache (one fill goroutine), so slots fill in order.
 	slots []atomic.Pointer[moqt.Frame]
-	// count is the number of reserved slots, i.e. the published length that
-	// readers observe. A slot that has been reserved (count incremented) but not
-	// yet Stored reads back nil; the egress loop already treats a nil frame as
-	// "not ready yet" and waits for the next broadcast, so the brief reserve→Store
-	// window is harmless. count is kept in [0, MaxFramesPerGroup] by the CAS in
-	// append, so it never exceeds len(slots).
+	// count is the number of reserved slots: the append reservation counter (each
+	// append CAS-increments it to claim a unique slot) and the number of slots
+	// snapshot/releaseCache scan. It is NOT on the read path — readers (next)
+	// detect availability from the slot itself, since an unstored or beyond-count
+	// slot is nil (slots[i] != nil implies i < count: slots go non-nil only after
+	// append advances count past them, and count only drops in resetForReuse,
+	// which nils the slots in the same pass). So a reserved-but-not-yet-Stored
+	// slot reads back nil and the egress loop waits for the next broadcast. count
+	// is kept in [0, MaxFramesPerGroup] by the CAS in append, so it never exceeds
+	// len(slots).
 	count atomic.Int32
 
 	seq      moqt.GroupSequence
@@ -131,14 +135,14 @@ func (gc *groupCache) append(f *moqt.Frame, pool *FramePool) {
 	}
 }
 
-// next returns the frame at the given index, or nil if the index is out of range
-// or its slot has been reserved but not yet stored. Lock-free: one atomic load of
-// count to bound the index, then one atomic load of the slot. count never exceeds
-// len(slots) (capped in append), so index < count implies index is in range.
-// Slots are only ever published through atomics, so this is data-race-free under
-// the Go memory model.
+// next returns the frame at index, or nil if the index is out of range or its
+// slot has not been stored yet — unfilled and beyond-count slots are both nil, so
+// a reader detects "not available" from the slot itself without consulting count.
+// Lock-free: a single atomic load of the slot (the len bound is a plain compare
+// against the fixed backing array). Slots are only ever published through
+// atomics, so this is data-race-free under the Go memory model.
 func (gc *groupCache) next(index int) *moqt.Frame {
-	if index < 0 || index >= int(gc.count.Load()) {
+	if index < 0 || index >= len(gc.slots) {
 		return nil
 	}
 	return gc.slots[index].Load()
