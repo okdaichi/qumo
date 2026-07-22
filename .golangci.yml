@@ -68,3 +68,9 @@ linters:
       # later via Drain or context.AfterFunc; gosec cannot trace cross-function ownership.
       - linters: [gosec]
         text: "G118"
+      # G404 (math/rand used): non-security jitter and desynchronization delays
+      # in the relay's backoff and reconnect logic — crypto-strength randomness
+      # is unnecessary here and 20× more expensive (101 ns vs 5 ns per op).
+      - linters: [gosec]
+        path: "internal/relay/"
+        text: "G404"

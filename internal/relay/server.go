@@ -388,11 +388,33 @@ func (s *Server) maintainPeer(ctx context.Context, peer Peer) {
 		metricPeerDialAttempts.WithLabelValues(peer.Address, "ok").Inc()
 		backoff.reset()
 
-		s.relayPeer(sess)
+		// Serve the current session, then on disconnect attempt an immediate
+		// reconnect with jitter. On success, loop back to serve the new session;
+		// on failure, break to the outer retry loop with exponential backoff.
+		for {
+			s.relayPeer(sess)
 
-		<-sess.Context().Done()
+			<-sess.Context().Done()
 
-		slog.Info("peer disconnected", "address", peer.Address)
+			slog.Info("peer disconnected", "address", peer.Address)
+
+			// Attempt one immediate reconnect with a small random jitter to
+			// spread out synchronized reconnects. The jitter prevents a
+			// thundering herd when many peers disconnect simultaneously.
+			if !jitterDelay(ctx, 100*time.Millisecond) {
+				return
+			}
+			sess, err = s.MOQDialer.DialQUIC(ctx, peer.Address, s.TrackMux)
+			if err != nil {
+				metricPeerDialAttempts.WithLabelValues(peer.Address, "error").Inc()
+				metricDialRetriesTotal.WithLabelValues(peer.Address).Inc()
+				slog.Warn("failed to dial peer", "address", peer.Address, "error", err,
+					"retry_attempt", backoff.attempt+1)
+				break
+			}
+			metricPeerDialAttempts.WithLabelValues(peer.Address, "ok").Inc()
+			backoff.reset()
+		}
 
 		if !backoff.wait(ctx) {
 			return

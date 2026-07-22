@@ -53,7 +53,7 @@ func (b *dialBackoff) wait(ctx context.Context) bool {
 	// When attempt >= 10, maintain the max exponent (2⁹ = 512× base) rather
 	// than falling back to 1× base; the max cap below enforces the actual
 	// ceiling so overflow is never exposed.
-	exp := 1
+	var exp int
 	if b.attempt < 10 {
 		exp = 1 << b.attempt
 	} else {
@@ -86,4 +86,21 @@ func (b *dialBackoff) wait(ctx context.Context) bool {
 // reconnection starts from the minimum delay.
 func (b *dialBackoff) reset() {
 	b.attempt = 0
+}
+
+// jitterDelay waits for a random duration in [0, max] or until ctx is
+// cancelled. It returns false if ctx was cancelled. Used to spread out
+// synchronized reconnect attempts after a batch of simultaneous peer
+// disconnects, reducing the thundering-herd effect on the peer's
+// handshake capacity.
+func jitterDelay(ctx context.Context, max time.Duration) bool {
+	delay := time.Duration(rand.Float64() * float64(max))
+	t := time.NewTimer(delay)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
+	}
 }

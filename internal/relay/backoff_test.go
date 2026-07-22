@@ -28,7 +28,7 @@ func TestDialBackoff_ExponentialGrowth(t *testing.T) {
 		before := b.attempt
 
 		// Compute the expected delay using the same formula as wait().
-		exp := 1
+		var exp int
 		if before < 10 {
 			exp = 1 << before
 		} else {
