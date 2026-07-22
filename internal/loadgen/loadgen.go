@@ -2,7 +2,7 @@
 // relay. It has two subcommands:
 //
 //	loadgen publish    — one trickle publisher (a small group every 1/GPS s)
-//	loadgen subscribe  — ramp N subscriber sessions and measure the hold
+//	loadgen subscribe  — launch N subscriber sessions and measure the hold
 //
 // The point of running out-of-process is measurement fidelity: the earlier
 // in-process capacity benchmark ran the relay and all N clients in one process
@@ -12,7 +12,7 @@
 // `subscribe` reports the
 // RELAY's own per-session cost by scraping its /metrics endpoint
 // (go_goroutines, process_resident_memory_bytes, qumo_relay_sessions_active)
-// before and after the ramp — the number reflects the relay, not the load
+// before and after the run — the number reflects the relay, not the load
 // generator.
 //
 // `subscribe` emits a capacity-group JSONL record (when --results is set) in the
@@ -78,7 +78,7 @@ Out-of-process capacity load against a running qumo relay.
 
 Subcommands:
   publish    Publish one trickle track to the relay (keep running during a sweep)
-  subscribe  Ramp N subscriber sessions and measure the relay's hold + per-session cost
+  subscribe  Launch N subscriber sessions and measure the relay's hold + per-session cost
   sweep      Run a session-count sweep (publisher + subscribe per point), optionally
              starting a local relay subprocess (--start-relay); emits a dashboard-ready
              capacity JSONL. Point it at a remote relay for a true two-host run.

@@ -28,7 +28,7 @@ import (
 )
 
 // runSweep runs a session-count sweep: it (optionally) starts a local relay
-// subprocess, runs a background publisher, and for each session count ramps
+// subprocess, runs a background publisher, and for each session count measures
 // subscribers and records the relay's hold. Only the relay is a separate
 // process; the publisher and subscribers share this (load) process — which is
 // the point, since it keeps client cost off the relay's cores. Point --relay at
