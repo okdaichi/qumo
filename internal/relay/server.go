@@ -367,6 +367,8 @@ func (s *Server) markUnconnected(addr string) {
 }
 
 func (s *Server) maintainPeer(ctx context.Context, peer Peer) {
+	var backoff = DialBackoff{Base: 1 * time.Second, Max: 30 * time.Second}
+
 	for {
 		if ctx.Err() != nil {
 			return
@@ -375,36 +377,48 @@ func (s *Server) maintainPeer(ctx context.Context, peer Peer) {
 		sess, err := s.MOQDialer.DialQUIC(ctx, peer.Address, s.TrackMux)
 		if err != nil {
 			metricPeerDialAttempts.WithLabelValues(peer.Address, "error").Inc()
-			slog.Warn("failed to dial peer", "address", peer.Address, "error", err)
-			if !waitRetry(ctx, 5*time.Second) {
+			metricDialRetriesTotal.WithLabelValues(peer.Address).Inc()
+			slog.Warn("failed to dial peer", "address", peer.Address, "error", err,
+				"retry_attempt", backoff.Attempts()+1)
+			if !backoff.Wait(ctx) {
 				return
 			}
 			continue
 		}
 		metricPeerDialAttempts.WithLabelValues(peer.Address, "ok").Inc()
+		backoff.Reset()
 
-		s.relayPeer(sess)
+		// Serve the current session, then on disconnect attempt an immediate
+		// reconnect with jitter. On success, loop back to serve the new session;
+		// on failure, break to the outer retry loop with exponential backoff.
+		for {
+			s.relayPeer(sess)
 
-		<-sess.Context().Done()
+			<-sess.Context().Done()
 
-		slog.Info("peer disconnected", "address", peer.Address)
+			slog.Info("peer disconnected", "address", peer.Address)
 
-		if !waitRetry(ctx, 5*time.Second) {
+			// Attempt one immediate reconnect with a small random jitter to
+			// spread out synchronized reconnects. The jitter prevents a
+			// thundering herd when many peers disconnect simultaneously.
+			if !jitterDelay(ctx, 100*time.Millisecond) {
+				return
+			}
+			sess, err = s.MOQDialer.DialQUIC(ctx, peer.Address, s.TrackMux)
+			if err != nil {
+				metricPeerDialAttempts.WithLabelValues(peer.Address, "error").Inc()
+				metricDialRetriesTotal.WithLabelValues(peer.Address).Inc()
+				slog.Warn("failed to dial peer", "address", peer.Address, "error", err,
+					"retry_attempt", backoff.Attempts()+1)
+				break
+			}
+			metricPeerDialAttempts.WithLabelValues(peer.Address, "ok").Inc()
+			backoff.Reset()
+		}
+
+		if !backoff.Wait(ctx) {
 			return
 		}
-	}
-}
-
-// waitRetry waits for the specified duration or until ctx is cancelled.
-// Returns false if ctx was cancelled.
-func waitRetry(ctx context.Context, d time.Duration) bool {
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-ctx.Done():
-		return false
-	case <-t.C:
-		return true
 	}
 }
 

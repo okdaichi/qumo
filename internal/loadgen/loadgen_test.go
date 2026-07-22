@@ -206,6 +206,64 @@ func TestEmitJSONL(t *testing.T) {
 	assert.Equal(t, 15000, first.Goros)
 }
 
+func TestDialWithRetry_CancelledContext(t *testing.T) {
+	// A pre-cancelled context should cause dialWithRetry to return promptly
+	// with the context error, without hanging or retrying indefinitely.
+	target := dialTarget{relay: "127.0.0.1:1"}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel immediately
+
+	start := time.Now()
+	sess, err := dialWithRetry(ctx, target)
+	elapsed := time.Since(start)
+
+	assert.Nil(t, sess, "session should be nil on cancelled context")
+	assert.ErrorIs(t, err, context.Canceled)
+	assert.Less(t, elapsed, 500*time.Millisecond, "should return promptly on cancelled context")
+}
+
+func TestDialWithRetry_TimeoutContext(t *testing.T) {
+	// A context that expires quickly should cause dialWithRetry to return
+	// with deadline exceeded after attempting (and failing) to dial.
+	// Note: this exercises the cancellation path of the retry loop, not the
+	// exponential backoff formula itself (which requires a longer-lived
+	// context and a real relay, or extracted delay helpers).
+	target := dialTarget{relay: "127.0.0.1:1"}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	sess, err := dialWithRetry(ctx, target)
+	elapsed := time.Since(start)
+
+	assert.Nil(t, sess, "session should be nil after timeout")
+	assert.ErrorIs(t, err, context.DeadlineExceeded, "should return deadline exceeded")
+	// Should complete within a generous bound (allowing for one failed dial + sleep).
+	assert.Less(t, elapsed, 2*time.Second, "should return within timeout + slack")
+}
+
+func TestSleepCtx_Expires(t *testing.T) {
+	// sleepCtx should block for approximately the given duration when ctx is
+	// not cancelled.
+	ctx := context.Background()
+	d := 20 * time.Millisecond
+	start := time.Now()
+	sleepCtx(ctx, d)
+	elapsed := time.Since(start)
+	assert.GreaterOrEqual(t, elapsed, d, "should sleep at least the requested duration")
+	assert.Less(t, elapsed, 500*time.Millisecond, "should not overshoot by more than scheduler slack")
+}
+
+func TestSleepCtx_Cancelled(t *testing.T) {
+	// When ctx is cancelled during sleepCtx, it should return promptly.
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(20*time.Millisecond, cancel)
+	start := time.Now()
+	sleepCtx(ctx, 10*time.Second) // long sleep that will be interrupted
+	elapsed := time.Since(start)
+	assert.Less(t, elapsed, 2*time.Second, "should return soon after context cancellation")
+}
+
 func TestRun_Dispatch(t *testing.T) {
 	t.Run("no args errors", func(t *testing.T) {
 		assert.Error(t, Run(nil))

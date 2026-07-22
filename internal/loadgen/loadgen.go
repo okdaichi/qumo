@@ -44,6 +44,7 @@ import (
 
 	"github.com/quic-go/quic-go"
 	"github.com/qumo-dev/gomoqt/moqt"
+	"github.com/qumo-dev/qumo/internal/relay"
 )
 
 // Run dispatches a loadgen subcommand. It is the package entrypoint wired into
@@ -358,10 +359,15 @@ func runCarry(ctx context.Context, target dialTarget, sessions int, ramp float64
 
 // subscribeOne dials one session, subscribes, and counts received frames until
 // the deadline or cancellation. Returns (connected, framesReceived).
+//
+// Dial failures are retried with exponential backoff + jitter so that a burst
+// of simultaneous subscriber connections (common in fan-out benchmarks) does
+// not trigger a thundering-herd of synchronized re-dials that overwhelms the
+// relay's handshake capacity.
 func subscribeOne(ctx context.Context, target dialTarget, dur time.Duration, connCount *atomic.Int64) (bool, int) {
 	dctx, cancel := context.WithTimeout(ctx, dur)
 	defer cancel()
-	sess, err := dialer(target).Dial(dctx, "moqt://"+target.relay, moqt.NewTrackMux(0))
+	sess, err := dialWithRetry(dctx, target)
 	if err != nil {
 		return false, 0
 	}
@@ -384,6 +390,27 @@ func subscribeOne(ctx context.Context, target dialTarget, dur time.Duration, con
 		}
 	}
 	return true, n
+}
+
+// dialWithRetry dials the relay with exponential backoff + jitter on failure.
+// It retries until the dial succeeds or ctx is cancelled, using the relay
+// package's DialBackoff to spread out synchronized re-dials across subscriber
+// goroutines with the same algorithm the server-side maintainPeer uses.
+func dialWithRetry(ctx context.Context, target dialTarget) (*moqt.Session, error) {
+	var backoff = relay.DialBackoff{Base: 1 * time.Second, Max: 30 * time.Second}
+	for {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		sess, err := dialer(target).Dial(ctx, "moqt://"+target.relay, moqt.NewTrackMux(0))
+		if err == nil {
+			return sess, nil
+		}
+		slog.Debug("loadgen dial failed, retrying", "relay", target.relay, "retry_attempt", backoff.Attempts()+1, "err", err)
+		if !backoff.Wait(ctx) {
+			return nil, ctx.Err()
+		}
+	}
 }
 
 // settleFor waits until connCount reaches want or the deadline elapses.
