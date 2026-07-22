@@ -181,8 +181,8 @@ func TestBindCommon(t *testing.T) {
 func TestEmitJSONL(t *testing.T) {
 	dir := t.TempDir()
 	res := carryResult{connected: 950, receiving: 940, relayGoros: 15000, relayRSSMB: 120, perSessionKB: 129.3}
-	require.NoError(t, emitJSONL(dir, 1000, 2000, res))
-	require.NoError(t, emitJSONL(dir, 500, 2000, carryResult{connected: 500, receiving: 500}))
+	require.NoError(t, emitJSONL(dir, 1000, res))
+	require.NoError(t, emitJSONL(dir, 500, carryResult{connected: 500, receiving: 500}))
 
 	data, err := os.ReadFile(filepath.Join(dir, "results.jsonl"))
 	require.NoError(t, err)

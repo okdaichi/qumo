@@ -228,9 +228,8 @@ func publishTrickle(ctx context.Context, target dialTarget, gps float64, size in
 func runSubscribe(args []string) error {
 	fs := flag.NewFlagSet("loadgen subscribe", flag.ContinueOnError)
 	finalize := bindCommon(fs)
-	sessions := fs.Int("sessions", 1000, "number of subscriber sessions to ramp")
-	ramp := fs.Float64("ramp", 2000, "sessions launched per second (0 = burst all at once)")
-	hold := fs.Duration("hold", 30*time.Second, "how long to hold sessions after ramp")
+	sessions := fs.Int("sessions", 1000, "number of subscriber sessions")
+	hold := fs.Duration("hold", 30*time.Second, "how long to hold sessions after establishment")
 	resultsDir := fs.String("results", "", "dir to append a capacity JSONL record (optional)")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -243,13 +242,13 @@ func runSubscribe(args []string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	res, err := runCarry(ctx, target, *sessions, *ramp, *hold)
+	res, err := runCarry(ctx, target, *sessions, *hold)
 	if err != nil {
 		return err
 	}
-	report(target, *sessions, *ramp, res)
+	report(target, *sessions, res)
 	if *resultsDir != "" {
-		if err := emitJSONL(*resultsDir, *sessions, *ramp, res); err != nil {
+		if err := emitJSONL(*resultsDir, *sessions, res); err != nil {
 			slog.Warn("loadgen results emission failed", "err", err)
 		}
 	}
@@ -269,33 +268,33 @@ type carryResult struct {
 	perSessionGoros float64 // relayGoros / connected
 }
 
-func runCarry(ctx context.Context, target dialTarget, sessions int, ramp float64, hold time.Duration) (carryResult, error) {
+func runCarry(ctx context.Context, target dialTarget, sessions int, hold time.Duration) (carryResult, error) {
 	client := &http.Client{Timeout: 5 * time.Second}
 	base, baseErr := fetchMetrics(ctx, client, target.metrics)
 	if baseErr != nil {
 		slog.Warn("relay /metrics unreadable; per-session cost will be unavailable", "url", target.metrics, "err", baseErr)
 	}
 
-	rampSecs := 0.0
-	if ramp > 0 {
-		rampSecs = float64(sessions) / ramp
-	}
 	// Subscribers live under subCtx: they hold until we cancel it (right after
 	// the steady-state scrape), then return and record their result. A generous
 	// safety deadline guarantees they can never outlive the run.
 	subCtx, subCancel := context.WithCancel(ctx)
 	defer subCancel()
-	safety := time.Duration(rampSecs*float64(time.Second)) + hold + 60*time.Second
+	safety := hold + 60*time.Second
 
-	// connCount is both the ramp-settle signal and the connected tally
-	// (subscribeOne increments it on a successful subscribe); receivingCount
-	// tallies sessions that got >=1 frame. Both are atomics rather than shared
-	// slices read after a timed drain, so the post-drain read is race-free even
-	// if a straggler subscriber is still exiting past the drain deadline.
+	// connCount is both the connected tally and the drain signal (subscribeOne
+	// increments it on a successful subscribe); receivingCount tallies sessions
+	// that got >=1 frame. Both are atomics rather than shared slices read after
+	// a timed drain, so the post-drain read is race-free even if a straggler
+	// subscriber is still exiting past the drain deadline.
 	var connCount atomic.Int64
 	var receivingCount atomic.Int64
 	var wg sync.WaitGroup
-	launch := func() {
+
+	// Launch all sessions at once (burst). The exponential backoff in
+	// dialWithRetry spreads out the QUIC handshake load so the relay is not
+	// overwhelmed by synchronized re-dials.
+	for range sessions {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -305,28 +304,9 @@ func runCarry(ctx context.Context, target dialTarget, sessions int, ramp float64
 		}()
 	}
 
-	if ramp > 0 {
-		interval := time.Duration(float64(time.Second) / ramp)
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-	rampLoop:
-		for i := 0; i < sessions; i++ {
-			select {
-			case <-ctx.Done():
-				break rampLoop
-			case <-ticker.C:
-				launch()
-			}
-		}
-	} else {
-		for range sessions {
-			launch()
-		}
-	}
-
-	// Hold: wait for the ramp to settle, then hold at steady state before the
-	// second scrape so the relay's session count reflects the full fan-out.
-	settleFor(ctx, &connCount, sessions, time.Duration(rampSecs*float64(time.Second))+10*time.Second)
+	// Hold: wait for sessions to connect (backoff handles retries), then hold
+	// at steady state before the second scrape.
+	settleFor(ctx, &connCount, sessions, 30*time.Second)
 	select {
 	case <-ctx.Done():
 	case <-time.After(hold):
@@ -519,10 +499,10 @@ func verdictFor(receiving, sessions int) string {
 	return "HOLDS"
 }
 
-func report(target dialTarget, sessions int, ramp float64, r carryResult) {
+func report(target dialTarget, sessions int, r carryResult) {
 	verdict := verdictFor(r.receiving, sessions)
 	fmt.Printf("loadgen subscribe → relay %s (path %s)\n", target.relay, target.path)
-	fmt.Printf("  offered sessions : %d (ramp %g/s)\n", sessions, ramp)
+	fmt.Printf("  offered sessions : %d\n", sessions)
 	fmt.Printf("  connected        : %d\n", r.connected)
 	fmt.Printf("  receiving        : %d\n", r.receiving)
 	if r.metricsScraped {
@@ -551,7 +531,7 @@ type jsonlRecord struct {
 	Verdict      string  `json:"verdict"`
 }
 
-func emitJSONL(dir string, sessions int, ramp float64, r carryResult) error {
+func emitJSONL(dir string, sessions int, r carryResult) error {
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return fmt.Errorf("mkdir %q: %w", dir, err)
 	}
