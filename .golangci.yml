@@ -27,6 +27,11 @@ linters:
       - linters: [gosec]
         path: "internal/playground/"
         text: "G304"
+      # False positive: the load generator's --ca / --results paths come from CLI
+      # flags run by an operator, not external user input.
+      - linters: [gosec]
+        path: "internal/loadgen/"
+        text: "G304"
       # False positive: slice bounds are guaranteed by the RTMP/QUIC encoding protocol logic
       - linters: [gosec]
         text: "G602"
