@@ -374,7 +374,7 @@ func BenchmarkRelayChain_Fanout(b *testing.B) {
 // stream embeds ReportMetric values only inside output strings). No-op locally.
 type benchResult struct {
 	Bench    string  `json:"bench"`            // function name, e.g. "FanoutSweep"
-	Group    string  `json:"group"`            // series|fanout|load|objsize|soak|reconnect
+	Group    string  `json:"group"`            // series|fanout|load|objsize|soak|reconnect|capacity
 	Config   string  `json:"config"`           // "K=4", "depth=3", "100fps/K=8", "slice=3"
 	K        int     `json:"k,omitempty"`      // fan-out width
 	Depth    int     `json:"depth,omitempty"`  // chain depth (series)
@@ -395,7 +395,13 @@ type benchResult struct {
 	Goros    int     `json:"goros,omitempty"`
 	CpuMs    float64 `json:"cpu_ms,omitempty"`
 	Fairness float64 `json:"fairness,omitempty"` // Jain's index, 0-1 (1=perfectly fair fan-out)
-	JitterMs  float64 `json:"jitter_ms,omitempty"`
+	JitterMs float64 `json:"jitter_ms,omitempty"`
+	// capacity group (BenchmarkRelay_ConnectionCarry): concurrent-session axis.
+	Sessions     int     `json:"sessions,omitempty"`       // offered concurrent subscriber sessions
+	Connected    int     `json:"connected,omitempty"`      // sessions that established
+	Receiving    int     `json:"receiving,omitempty"`      // sessions that received frames
+	PerSessionKB float64 `json:"per_session_kb,omitempty"` // heap KB per connected session
+	Verdict      string  `json:"verdict,omitempty"`        // HOLDS | CANNOT-HOLD
 }
 
 func recordBench(tb testing.TB, r benchResult) {
@@ -473,7 +479,7 @@ func reportChainStats(b *testing.B, cfg chainConfig, st chainStats, hopsOrFanout
 		MinMs: min.Seconds() * 1000, P25Ms: p25.Seconds() * 1000,
 		MedianMs: median.Seconds() * 1000, P75Ms: p75.Seconds() * 1000,
 		P95Ms: p95.Seconds() * 1000, P99Ms: p99.Seconds() * 1000,
-		MaxMs: maxLat.Seconds() * 1000,
+		MaxMs:  maxLat.Seconds() * 1000,
 		HeapMB: float64(st.heapDelta) / (1024 * 1024), Goros: st.gorosDelta,
 	}
 	if cfg.fanout > 0 {

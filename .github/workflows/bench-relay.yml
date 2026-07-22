@@ -3,7 +3,8 @@ name: Relay Bench (nightly + on-demand)
 # Comprehensive relay-chain benchmark run: full fan-out scalability sweep
 # (K=1..128), load × fan-out, object-size × fan-out, series per-hop latency,
 # the reconnect-storm churn characterization, and a long soak. Emits JSONL,
-# CSV + SVG plots, uploads as an artifact.
+# CSV + SVG plots, and one consolidated results/index.html dashboard (capacity
+# headline + decision summary + inline plots); uploads them as an artifact.
 #
 # A second job, `paramexp`, runs a Bayesian-optimization sweep of the relay's
 # tuning knobs (ring size / frame / notify-timeout × fan-out) — the scientific
@@ -162,7 +163,11 @@ jobs:
         with:
           deno-version: "2.8.1"
 
-      - name: Generate CSV + plots
+      # Builds results/index.html — the one consolidated dashboard (capacity
+      # headline + decision summary + every plot inline) alongside the CSVs/SVGs.
+      # The paramexp GP/ML findings live in the separate `paramexp` job's
+      # artifact; fold them in locally with `--paramexp <px-report-dir>`.
+      - name: Generate CSV + plots + dashboard
         if: always()
         run: deno run --allow-read=results --allow-write=results scripts/relay_bench_report.ts results
 
