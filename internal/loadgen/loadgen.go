@@ -397,7 +397,7 @@ func subscribeOne(ctx context.Context, target dialTarget, dur time.Duration, con
 // package's DialBackoff to spread out synchronized re-dials across subscriber
 // goroutines with the same algorithm the server-side maintainPeer uses.
 func dialWithRetry(ctx context.Context, target dialTarget) (*moqt.Session, error) {
-	var backoff = relay.NewDialBackoff()
+	var backoff = relay.DialBackoff{Base: 1 * time.Second, Max: 30 * time.Second}
 	for {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
@@ -406,7 +406,7 @@ func dialWithRetry(ctx context.Context, target dialTarget) (*moqt.Session, error
 		if err == nil {
 			return sess, nil
 		}
-		slog.Debug("loadgen dial failed, retrying", "relay", target.relay, "err", err)
+		slog.Debug("loadgen dial failed, retrying", "relay", target.relay, "retry_attempt", backoff.Attempts()+1, "err", err)
 		if !backoff.Wait(ctx) {
 			return nil, ctx.Err()
 		}

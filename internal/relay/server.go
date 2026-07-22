@@ -367,7 +367,7 @@ func (s *Server) markUnconnected(addr string) {
 }
 
 func (s *Server) maintainPeer(ctx context.Context, peer Peer) {
-	var backoff = NewDialBackoff()
+	var backoff = DialBackoff{Base: 1 * time.Second, Max: 30 * time.Second}
 
 	for {
 		if ctx.Err() != nil {

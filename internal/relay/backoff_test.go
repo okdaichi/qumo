@@ -9,10 +9,10 @@ import (
 )
 
 func TestDialBackoff_Defaults(t *testing.T) {
-	b := NewDialBackoff()
-	assert.Equal(t, 1*time.Second, b.base)
-	assert.Equal(t, 30*time.Second, b.max)
-	assert.Equal(t, 0, b.maxAttempts)
+	b := DialBackoff{Base: 1 * time.Second, Max: 30 * time.Second}
+	assert.Equal(t, 1*time.Second, b.Base)
+	assert.Equal(t, 30*time.Second, b.Max)
+	assert.Equal(t, 0, b.MaxAttempts)
 	assert.Equal(t, 0, b.attempt)
 }
 
@@ -21,7 +21,7 @@ func TestDialBackoff_ExponentialGrowth(t *testing.T) {
 	// timing, to avoid CI scheduler flakes. Each call to wait() increments
 	// attempt and sleeps for the computed delay; we assert that the actual wait
 	// falls within the expected [0.75×, 1.25×] range of the formula.
-	b := DialBackoff{base: 100 * time.Millisecond, max: 10 * time.Second}
+	b := DialBackoff{Base: 100 * time.Millisecond, Max: 10 * time.Second}
 	ctx := context.Background()
 
 	for i := 0; i < 5; i++ {
@@ -34,9 +34,9 @@ func TestDialBackoff_ExponentialGrowth(t *testing.T) {
 		} else {
 			exp = 1 << 9
 		}
-		rawDelay := b.base * time.Duration(exp)
-		if b.max > 0 && rawDelay > b.max {
-			rawDelay = b.max
+		rawDelay := b.Base * time.Duration(exp)
+		if b.Max > 0 && rawDelay > b.Max {
+			rawDelay = b.Max
 		}
 		minDelay := time.Duration(float64(rawDelay) * 0.75)
 		maxDelay := time.Duration(float64(rawDelay) * 1.25)
@@ -56,7 +56,7 @@ func TestDialBackoff_ExponentialGrowth(t *testing.T) {
 func TestDialBackoff_MaxCap(t *testing.T) {
 	// base=10ms, max=50ms. After a few retries the computed delay exceeds max
 	// exponentially; the actual wait must be bounded by max + jitter.
-	b := DialBackoff{base: 10 * time.Millisecond, max: 50 * time.Millisecond}
+	b := DialBackoff{Base: 10 * time.Millisecond, Max: 50 * time.Millisecond}
 	ctx := context.Background()
 
 	// Verify the formula directly: with attempt=5, exp=32, delay=320ms,
@@ -75,7 +75,7 @@ func TestDialBackoff_MaxCap(t *testing.T) {
 }
 
 func TestDialBackoff_MaxAttempts(t *testing.T) {
-	b := DialBackoff{base: 1 * time.Millisecond, max: 10 * time.Millisecond, maxAttempts: 3}
+	b := DialBackoff{Base: 1 * time.Millisecond, Max: 10 * time.Millisecond, MaxAttempts: 3}
 	ctx := context.Background()
 
 	assert.True(t, b.Wait(ctx), "attempt 0 should succeed")
@@ -85,7 +85,7 @@ func TestDialBackoff_MaxAttempts(t *testing.T) {
 }
 
 func TestDialBackoff_ContextCancellation(t *testing.T) {
-	b := DialBackoff{base: 1 * time.Hour, max: 2 * time.Hour} // long enough to never fire
+	b := DialBackoff{Base: 1 * time.Hour, Max: 2 * time.Hour} // long enough to never fire
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately
 
@@ -96,7 +96,7 @@ func TestDialBackoff_ContextCancellation(t *testing.T) {
 }
 
 func TestDialBackoff_Reset(t *testing.T) {
-	b := DialBackoff{base: 1 * time.Millisecond, max: 10 * time.Millisecond, maxAttempts: 2}
+	b := DialBackoff{Base: 1 * time.Millisecond, Max: 10 * time.Millisecond, MaxAttempts: 2}
 
 	// Exhaust attempts.
 	b.Wait(context.Background())
@@ -112,7 +112,7 @@ func TestDialBackoff_JitterUniformRange(t *testing.T) {
 	// Run many backoff samples with the same parameters and verify the
 	// jittered delay falls within the expected [0.75×, 1.25×] range.
 	// This checks the jitter formula, not the statistical distribution.
-	b := DialBackoff{base: 10 * time.Millisecond, max: 200 * time.Millisecond}
+	b := DialBackoff{Base: 10 * time.Millisecond, Max: 200 * time.Millisecond}
 	ctx := context.Background()
 
 	// With attempt=0, exp=1, delay=10ms, jitter range = [7.5ms, 12.5ms].
@@ -137,9 +137,9 @@ func TestDialBackoff_ZeroValueIsSafe(t *testing.T) {
 	var b DialBackoff
 	ctx := context.Background()
 
-	assert.Equal(t, time.Duration(0), b.base)
-	assert.Equal(t, time.Duration(0), b.max)
-	assert.Equal(t, 0, b.maxAttempts)
+	assert.Equal(t, time.Duration(0), b.Base)
+	assert.Equal(t, time.Duration(0), b.Max)
+	assert.Equal(t, 0, b.MaxAttempts)
 
 	start := time.Now()
 	assert.True(t, b.Wait(ctx), "zero value should not panic")
@@ -151,7 +151,7 @@ func TestDialBackoff_ZeroValueIsSafe(t *testing.T) {
 }
 
 func TestDialBackoff_AttemptCounter(t *testing.T) {
-	b := DialBackoff{base: 1 * time.Millisecond, max: 5 * time.Millisecond}
+	b := DialBackoff{Base: 1 * time.Millisecond, Max: 5 * time.Millisecond}
 	ctx := context.Background()
 
 	for i := 0; i < 4; i++ {

@@ -18,22 +18,12 @@ import (
 //   - Peer relay reconnection (maintainPeer)
 //   - Client-side dial retry (loadgen)
 //
-// Zero value: base=1s, max=30s, maxAttempts=0 (unlimited).
+// Zero value: Base=1s, Max=30s, MaxAttempts=0 (unlimited).
 type DialBackoff struct {
-	base        time.Duration // starting interval
-	max         time.Duration // ceiling
-	maxAttempts int           // 0 = unlimited; after this many, Wait returns false
+	Base        time.Duration // starting interval
+	Max         time.Duration // ceiling
+	MaxAttempts int           // 0 = unlimited; after this many, Wait returns false
 	attempt     int
-}
-
-// NewDialBackoff returns a DialBackoff with the recommended defaults for
-// peer-relay connection retry: 1s base, 30s cap, unlimited attempts.
-func NewDialBackoff() DialBackoff {
-	return DialBackoff{
-		base:        1 * time.Second,
-		max:         30 * time.Second,
-		maxAttempts: 0,
-	}
 }
 
 // Wait blocks until either the backoff delay elapses or ctx is cancelled.
@@ -45,7 +35,7 @@ func NewDialBackoff() DialBackoff {
 //	delay = min(base * 2^attempt, max)
 //	delay *= uniform(0.75, 1.25)   // ±25 % jitter
 func (b *DialBackoff) Wait(ctx context.Context) bool {
-	if b.maxAttempts > 0 && b.attempt >= b.maxAttempts {
+	if b.MaxAttempts > 0 && b.attempt >= b.MaxAttempts {
 		return false
 	}
 
@@ -59,11 +49,11 @@ func (b *DialBackoff) Wait(ctx context.Context) bool {
 	} else {
 		exp = 1 << 9
 	}
-	delay := b.base * time.Duration(exp)
+	delay := b.Base * time.Duration(exp)
 
 	// Apply ceiling.
-	if b.max > 0 && delay > b.max {
-		delay = b.max
+	if b.Max > 0 && delay > b.Max {
+		delay = b.Max
 	}
 
 	// Apply ±25 % jitter.
@@ -79,6 +69,12 @@ func (b *DialBackoff) Wait(ctx context.Context) bool {
 	case <-t.C:
 		return true
 	}
+}
+
+// Attempts returns the current retry attempt count (0 = no retries yet).
+// Useful for logging in callers that want to expose retry progress.
+func (b *DialBackoff) Attempts() int {
+	return b.attempt
 }
 
 // Reset restores the backoff to its initial state. Call this after a

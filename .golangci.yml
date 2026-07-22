@@ -74,9 +74,3 @@ linters:
       - linters: [gosec]
         path: "internal/relay/"
         text: "G404"
-      # G404 (math/rand used): non-security jitter for client-side dial retries
-      # in the out-of-process load generator (internal/loadgen). Same rationale
-      # as the relay exclusion: jitter is for desync, not cryptography.
-      - linters: [gosec]
-        path: "internal/loadgen/"
-        text: "G404"
