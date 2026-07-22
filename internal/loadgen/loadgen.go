@@ -31,6 +31,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math/rand/v2"
 	"net/http"
 	"os"
 	"os/signal"
@@ -358,10 +359,15 @@ func runCarry(ctx context.Context, target dialTarget, sessions int, ramp float64
 
 // subscribeOne dials one session, subscribes, and counts received frames until
 // the deadline or cancellation. Returns (connected, framesReceived).
+//
+// Dial failures are retried with exponential backoff + jitter so that a burst
+// of simultaneous subscriber connections (common in fan-out benchmarks) does
+// not trigger a thundering-herd of synchronized re-dials that overwhelms the
+// relay's handshake capacity.
 func subscribeOne(ctx context.Context, target dialTarget, dur time.Duration, connCount *atomic.Int64) (bool, int) {
 	dctx, cancel := context.WithTimeout(ctx, dur)
 	defer cancel()
-	sess, err := dialer(target).Dial(dctx, "moqt://"+target.relay, moqt.NewTrackMux(0))
+	sess, err := dialWithRetry(dctx, target)
 	if err != nil {
 		return false, 0
 	}
@@ -384,6 +390,46 @@ func subscribeOne(ctx context.Context, target dialTarget, dur time.Duration, con
 		}
 	}
 	return true, n
+}
+
+// dialWithRetry dials the relay with exponential backoff + jitter on failure.
+// It retries until the dial succeeds or ctx is cancelled, applying ±25 % jitter
+// to spread out synchronized re-dials across subscriber goroutines.
+func dialWithRetry(ctx context.Context, target dialTarget) (*moqt.Session, error) {
+	const base = 1 * time.Second
+	const max = 30 * time.Second
+	attempt := 0
+	for {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		sess, err := dialer(target).Dial(ctx, "moqt://"+target.relay, moqt.NewTrackMux(0))
+		if err == nil {
+			return sess, nil
+		}
+		slog.Debug("loadgen dial failed, retrying", "relay", target.relay, "attempt", attempt, "err", err)
+		// Exponential factor, capped at 2^9.
+		var exp int
+		if attempt < 10 {
+			exp = 1 << attempt
+		} else {
+			exp = 1 << 9
+		}
+		delay := base * time.Duration(exp)
+		if delay > max {
+			delay = max
+		}
+		// Apply ±25 % jitter.
+		jitter := time.Duration(float64(delay) * (0.75 + 0.5*rand.Float64()))
+		attempt++
+		t := time.NewTimer(jitter)
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			return nil, ctx.Err()
+		case <-t.C:
+		}
+	}
 }
 
 // settleFor waits until connCount reaches want or the deadline elapses.
