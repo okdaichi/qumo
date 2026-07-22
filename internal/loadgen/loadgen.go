@@ -82,6 +82,8 @@ Subcommands:
   sweep      Run a session-count sweep (publisher + subscribe per point), optionally
              starting a local relay subprocess (--start-relay); emits a dashboard-ready
              capacity JSONL. Point it at a remote relay for a true two-host run.
+             With --auto it climbs the session count until CANNOT-HOLD to find the
+             ceiling automatically (--bisect to pin the boundary).
 
 Run "qumo loadgen <subcommand> -h" for that subcommand's flags.
 `)

@@ -51,6 +51,13 @@ func runSweep(args []string) error {
 	relayBin := fs.String("relay-bin", "", "relay binary for --start-relay (default: this executable)")
 	relayCores := fs.String("relay-cores", "", "taskset CPU list for the relay subprocess (Linux; --start-relay)")
 	gogc := fs.Int("gogc", 800, "GOGC for the relay subprocess (--start-relay)")
+	auto := fs.Bool("auto", false, "auto-ceiling: climb session counts until CANNOT-HOLD instead of using --sessions")
+	startN := fs.Int("start", 2000, "auto: first session count to probe")
+	maxN := fs.Int("max", 50000, "auto: upper bound / safety cap on session count")
+	step := fs.Int("step", 0, "auto: fixed climb increment (0 = geometric via --growth)")
+	growth := fs.Float64("growth", 2.0, "auto: geometric growth factor when --step is 0")
+	bisect := fs.Bool("bisect", false, "auto: after the first CANNOT-HOLD, binary-search the boundary")
+	bisectTol := fs.Int("bisect-tol", 1000, "auto: stop bisection when the HOLD/FAIL gap is <= this")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -110,19 +117,45 @@ func runSweep(args []string) error {
 	default:
 	}
 
+	// probe runs one session count and reports whether the relay held it. Shared
+	// by the static sweep and the auto-ceiling search so both report/record
+	// identically.
+	probe := func(n int) (bool, error) {
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
+		res, err := runCarry(ctx, target, n, *hold)
+		if err != nil {
+			return false, err
+		}
+		report(target, n, res)
+		if *results != "" {
+			if err := emitJSONL(*results, n, res); err != nil {
+				slog.Warn("loadgen results emission failed", "err", err)
+			}
+		}
+		return verdictFor(res.receiving, n) == "HOLDS", nil
+	}
+
+	if *auto {
+		search := ceilingSearch{start: *startN, max: *maxN, step: *step, growth: *growth, bisect: *bisect, tol: *bisectTol}
+		if err := search.validate(); err != nil {
+			return err
+		}
+		cr, err := findCeiling(search, probe)
+		if err != nil {
+			return err
+		}
+		printCeiling(search, cr)
+		return nil
+	}
+
 	for _, s := range sessions {
 		if ctx.Err() != nil {
 			break
 		}
-		res, err := runCarry(ctx, target, s, *hold)
-		if err != nil {
+		if _, err := probe(s); err != nil {
 			return err
-		}
-		report(target, s, res)
-		if *results != "" {
-			if err := emitJSONL(*results, s, res); err != nil {
-				slog.Warn("loadgen results emission failed", "err", err)
-			}
 		}
 	}
 	return nil

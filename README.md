@@ -225,3 +225,14 @@ subscribe measurement per point). It runs two ways:
 Every point appends a `capacity`-group record to `results.jsonl`, so a sweep
 renders in the same dashboard. A distributed (multi-machine) run is what a
 25K-session ceiling claim needs to be *confirmed* rather than extrapolated.
+
+**Finding the ceiling automatically.** Instead of a fixed `--sessions` list,
+`--auto` climbs the session count (geometrically by default, or `--step N`)
+until a point can't hold, reporting the highest that held. `--bisect` then
+binary-searches the boundary to `--bisect-tol` sessions:
+
+```bash
+qumo loadgen sweep --start-relay --relay-cores 0-1 \
+  --auto --start 2000 --max 50000 --bisect --results ./out
+# → climbs 2000, 4000, 8000, … then bisects; prints "ceiling (highest HOLDS): N"
+```
