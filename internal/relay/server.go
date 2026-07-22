@@ -367,6 +367,8 @@ func (s *Server) markUnconnected(addr string) {
 }
 
 func (s *Server) maintainPeer(ctx context.Context, peer Peer) {
+	var backoff = newDialBackoff()
+
 	for {
 		if ctx.Err() != nil {
 			return
@@ -375,13 +377,16 @@ func (s *Server) maintainPeer(ctx context.Context, peer Peer) {
 		sess, err := s.MOQDialer.DialQUIC(ctx, peer.Address, s.TrackMux)
 		if err != nil {
 			metricPeerDialAttempts.WithLabelValues(peer.Address, "error").Inc()
-			slog.Warn("failed to dial peer", "address", peer.Address, "error", err)
-			if !waitRetry(ctx, 5*time.Second) {
+			metricDialRetriesTotal.WithLabelValues(peer.Address).Inc()
+			slog.Warn("failed to dial peer", "address", peer.Address, "error", err,
+				"retry_attempt", backoff.attempt+1)
+			if !backoff.wait(ctx) {
 				return
 			}
 			continue
 		}
 		metricPeerDialAttempts.WithLabelValues(peer.Address, "ok").Inc()
+		backoff.reset()
 
 		s.relayPeer(sess)
 
@@ -389,24 +394,13 @@ func (s *Server) maintainPeer(ctx context.Context, peer Peer) {
 
 		slog.Info("peer disconnected", "address", peer.Address)
 
-		if !waitRetry(ctx, 5*time.Second) {
+		if !backoff.wait(ctx) {
 			return
 		}
 	}
 }
 
-// waitRetry waits for the specified duration or until ctx is cancelled.
-// Returns false if ctx was cancelled.
-func waitRetry(ctx context.Context, d time.Duration) bool {
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-ctx.Done():
-		return false
-	case <-t.C:
-		return true
-	}
-}
+
 
 // Relay handles inbound WebTransport sessions (publishers and browser clients).
 // When a backend client is configured, each announced broadcast path is
