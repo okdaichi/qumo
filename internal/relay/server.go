@@ -379,7 +379,7 @@ func (s *Server) maintainPeer(ctx context.Context, peer Peer) {
 			metricPeerDialAttempts.WithLabelValues(peer.Address, "error").Inc()
 			metricDialRetriesTotal.WithLabelValues(peer.Address).Inc()
 			slog.Warn("failed to dial peer", "address", peer.Address, "error", err,
-				"retry_attempt", backoff.attempt+1)
+				"retry_attempt", backoff.Attempts()+1)
 			if !backoff.Wait(ctx) {
 				return
 			}
@@ -409,7 +409,7 @@ func (s *Server) maintainPeer(ctx context.Context, peer Peer) {
 				metricPeerDialAttempts.WithLabelValues(peer.Address, "error").Inc()
 				metricDialRetriesTotal.WithLabelValues(peer.Address).Inc()
 				slog.Warn("failed to dial peer", "address", peer.Address, "error", err,
-					"retry_attempt", backoff.attempt+1)
+					"retry_attempt", backoff.Attempts()+1)
 				break
 			}
 			metricPeerDialAttempts.WithLabelValues(peer.Address, "ok").Inc()
