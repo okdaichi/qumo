@@ -28,7 +28,7 @@ import (
 )
 
 // runSweep runs a session-count sweep: it (optionally) starts a local relay
-// subprocess, runs a background publisher, and for each session count ramps
+// subprocess, runs a background publisher, and for each session count measures
 // subscribers and records the relay's hold. Only the relay is a separate
 // process; the publisher and subscribers share this (load) process — which is
 // the point, since it keeps client cost off the relay's cores. Point --relay at
@@ -43,7 +43,6 @@ func runSweep(args []string) error {
 	idle := fs.Duration("idle-timeout", 30*time.Second, "QUIC max idle timeout")
 	keepalive := fs.Duration("keepalive", 5*time.Second, "QUIC keep-alive period")
 	sessionsArg := fs.String("sessions", "2000 5000 8000 12000", "session counts to sweep (space/comma-separated)")
-	ramp := fs.Float64("ramp", 2000, "sessions launched per second (0 = burst)")
 	hold := fs.Duration("hold", 15*time.Second, "hold duration per point")
 	gps := fs.Float64("gps", 0.5, "publisher groups per second")
 	size := fs.Int("size", 64, "frame size in bytes")
@@ -115,13 +114,13 @@ func runSweep(args []string) error {
 		if ctx.Err() != nil {
 			break
 		}
-		res, err := runCarry(ctx, target, s, *ramp, *hold)
+		res, err := runCarry(ctx, target, s, *hold)
 		if err != nil {
 			return err
 		}
-		report(target, s, *ramp, res)
+		report(target, s, res)
 		if *results != "" {
-			if err := emitJSONL(*results, s, *ramp, res); err != nil {
+			if err := emitJSONL(*results, s, res); err != nil {
 				slog.Warn("loadgen results emission failed", "err", err)
 			}
 		}
