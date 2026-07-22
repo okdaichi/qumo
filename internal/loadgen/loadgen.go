@@ -287,17 +287,21 @@ func runCarry(ctx context.Context, target dialTarget, sessions int, ramp float64
 	defer subCancel()
 	safety := time.Duration(rampSecs*float64(time.Second)) + hold + 60*time.Second
 
-	connected := make([]bool, sessions)
-	receiving := make([]int, sessions)
+	// connCount is both the ramp-settle signal and the connected tally
+	// (subscribeOne increments it on a successful subscribe); receivingCount
+	// tallies sessions that got >=1 frame. Both are atomics rather than shared
+	// slices read after a timed drain, so the post-drain read is race-free even
+	// if a straggler subscriber is still exiting past the drain deadline.
 	var connCount atomic.Int64
+	var receivingCount atomic.Int64
 	var wg sync.WaitGroup
-	launch := func(i int) {
+	launch := func() {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			ok, n := subscribeOne(subCtx, target, safety, &connCount)
-			connected[i] = ok
-			receiving[i] = n
+			if subscribeOne(subCtx, target, safety, &connCount) > 0 {
+				receivingCount.Add(1)
+			}
 		}()
 	}
 
@@ -311,12 +315,12 @@ func runCarry(ctx context.Context, target dialTarget, sessions int, ramp float64
 			case <-ctx.Done():
 				break rampLoop
 			case <-ticker.C:
-				launch(i)
+				launch()
 			}
 		}
 	} else {
-		for i := range sessions {
-			launch(i)
+		for range sessions {
+			launch()
 		}
 	}
 
@@ -334,14 +338,9 @@ func runCarry(ctx context.Context, target dialTarget, sessions int, ramp float64
 	subCancel()
 	drain(&wg, 20*time.Second)
 
-	res := carryResult{}
-	for i := range sessions {
-		if connected[i] {
-			res.connected++
-		}
-		if receiving[i] > 0 {
-			res.receiving++
-		}
+	res := carryResult{
+		connected: int(connCount.Load()),
+		receiving: int(receivingCount.Load()),
 	}
 	if baseErr == nil && steadyErr == nil {
 		res.metricsScraped = true
@@ -358,23 +357,25 @@ func runCarry(ctx context.Context, target dialTarget, sessions int, ramp float64
 }
 
 // subscribeOne dials one session, subscribes, and counts received frames until
-// the deadline or cancellation. Returns (connected, framesReceived).
+// the deadline or cancellation. It increments connCount once on a successful
+// subscribe (so connCount is the "connected" tally) and returns the frame count
+// (0 if it never subscribed).
 //
 // Dial failures are retried with exponential backoff + jitter so that a burst
 // of simultaneous subscriber connections (common in fan-out benchmarks) does
 // not trigger a thundering-herd of synchronized re-dials that overwhelms the
 // relay's handshake capacity.
-func subscribeOne(ctx context.Context, target dialTarget, dur time.Duration, connCount *atomic.Int64) (bool, int) {
+func subscribeOne(ctx context.Context, target dialTarget, dur time.Duration, connCount *atomic.Int64) int {
 	dctx, cancel := context.WithTimeout(ctx, dur)
 	defer cancel()
 	sess, err := dialWithRetry(dctx, target)
 	if err != nil {
-		return false, 0
+		return 0
 	}
 	defer sess.CloseWithError(moqt.NoError, "done")
 	tr, err := sess.Subscribe(dctx, moqt.BroadcastPath(target.path), moqt.TrackName(target.track), nil)
 	if err != nil {
-		return false, 0
+		return 0
 	}
 	connCount.Add(1)
 	defer tr.Close()
@@ -389,7 +390,7 @@ func subscribeOne(ctx context.Context, target dialTarget, dur time.Duration, con
 			n++
 		}
 	}
-	return true, n
+	return n
 }
 
 // dialWithRetry dials the relay with exponential backoff + jitter on failure.
