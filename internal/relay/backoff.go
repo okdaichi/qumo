@@ -18,7 +18,10 @@ import (
 //   - Peer relay reconnection (maintainPeer)
 //   - Client-side dial retry (loadgen)
 //
-// Zero value: Base=1s, Max=30s, MaxAttempts=0 (unlimited).
+// Zero value: Base=0, Max=0, MaxAttempts=0 (unlimited — retries instantly).
+// The recommended configuration for peer relay retry:
+//
+//	b := DialBackoff{Base: 1 * time.Second, Max: 30 * time.Second}
 type DialBackoff struct {
 	Base        time.Duration // starting interval
 	Max         time.Duration // ceiling
