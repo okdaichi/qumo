@@ -11,6 +11,9 @@ import (
 // gradual ramp, helping the relay survive simultaneous handshake load
 // spikes without dropping connections.
 //
+// dialBackoff is not safe for concurrent use; each goroutine that needs
+// backoff must have its own instance.
+//
 // Use cases:
 //   - Peer relay reconnection (maintainPeer)
 //   - Any outbound dial that should retry on transient failure

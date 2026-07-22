@@ -400,8 +400,6 @@ func (s *Server) maintainPeer(ctx context.Context, peer Peer) {
 	}
 }
 
-
-
 // Relay handles inbound WebTransport sessions (publishers and browser clients).
 // When a backend client is configured, each announced broadcast path is
 // authenticated via a JWT read from the "auth" MoQ track before being accepted.

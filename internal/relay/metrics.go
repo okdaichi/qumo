@@ -80,9 +80,22 @@ var (
 			Namespace: "qumo",
 			Subsystem: "relay",
 			Name:      "peer_goaway_received_total",
-			Help:      "GOAWAY messages received from upstream peer relays, by whether a redirect URI was supplied.",
+			Help:      "GOAWAY messages received from upstream relay peers, by whether a redirect URI was supplied.",
 		},
 		[]string{"redirect"},
+	)
+
+	// metricDialRetriesTotal counts outbound peer dial retries. Each retry
+	// is a reconnection attempt after a previous dial or session failure,
+	// labelled by the peer address.
+	metricDialRetriesTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "qumo",
+			Subsystem: "relay",
+			Name:      "dial_retries_total",
+			Help:      "Total number of outbound peer dial retries.",
+		},
+		[]string{"peer"},
 	)
 
 	// metricRelayIngressBytesTotal counts bytes received from upstream publishers.
@@ -236,19 +249,6 @@ var (
 			Buckets:   prometheus.DefBuckets,
 		},
 		[]string{"track"},
-	)
-
-	// metricDialRetriesTotal counts outbound peer dial retries. Each retry
-	// is a reconnection attempt after a previous dial or session failure,
-	// labelled by the peer address.
-	metricDialRetriesTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "qumo",
-			Subsystem: "relay",
-			Name:      "dial_retries_total",
-			Help:      "Total number of outbound peer dial retries.",
-		},
-		[]string{"peer"},
 	)
 
 	// metricSubscribeErrorsTotal counts how many times a MoQT subscription

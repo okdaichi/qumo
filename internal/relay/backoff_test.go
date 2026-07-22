@@ -17,19 +17,39 @@ func TestDialBackoff_Defaults(t *testing.T) {
 }
 
 func TestDialBackoff_ExponentialGrowth(t *testing.T) {
+	// Verify the delay formula directly rather than relying solely on wall-clock
+	// timing, to avoid CI scheduler flakes. Each call to wait() increments
+	// attempt and sleeps for the computed delay; we assert that the actual wait
+	// falls within the expected [0.75×, 1.25×] range of the formula.
 	b := dialBackoff{base: 100 * time.Millisecond, max: 10 * time.Second}
 	ctx := context.Background()
 
-	prev := time.Duration(0)
 	for i := 0; i < 5; i++ {
+		before := b.attempt
+
+		// Compute the expected delay using the same formula as wait().
+		exp := 1
+		if before < 10 {
+			exp = 1 << before
+		} else {
+			exp = 1 << 9
+		}
+		rawDelay := b.base * time.Duration(exp)
+		if b.max > 0 && rawDelay > b.max {
+			rawDelay = b.max
+		}
+		minDelay := time.Duration(float64(rawDelay) * 0.75)
+		maxDelay := time.Duration(float64(rawDelay) * 1.25)
+
 		start := time.Now()
 		ok := b.wait(ctx)
 		elapsed := time.Since(start)
 
 		assert.True(t, ok, "wait should return true on attempt %d", i)
-		// Each subsequent wait should be >= previous (exponential, so strictly larger).
-		assert.GreaterOrEqual(t, elapsed, prev, "backoff should not shrink on attempt %d", i)
-		prev = elapsed
+		assert.GreaterOrEqual(t, elapsed, minDelay,
+			"wait at attempt %d should be ≥ %.0f%% of computed delay", i, 75.0)
+		assert.LessOrEqual(t, elapsed, maxDelay+50*time.Millisecond,
+			"wait at attempt %d should be ≤ %.0f%% of computed delay + scheduler slack", i, 125.0)
 	}
 }
 
