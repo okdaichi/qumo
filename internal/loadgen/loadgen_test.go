@@ -328,17 +328,17 @@ func TestGenerateRelayCert(t *testing.T) {
 
 // ---- helpers ----
 
-func newTestFlagSet(t *testing.T) *flag.FlagSet {
-	t.Helper()
+func newTestFlagSet(tb testing.TB) *flag.FlagSet {
+	tb.Helper()
 	return flag.NewFlagSet("test", flag.ContinueOnError)
 }
 
-func selfSignedCertPEM(t *testing.T) []byte {
-	t.Helper()
+func selfSignedCertPEM(tb testing.TB) []byte {
+	tb.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	tmpl := &x509.Certificate{
 		SerialNumber:          serial,
 		Subject:               pkix.Name{CommonName: "localhost"},
@@ -348,6 +348,6 @@ func selfSignedCertPEM(t *testing.T) []byte {
 		BasicConstraintsValid: true,
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 }
