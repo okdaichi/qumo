@@ -6,6 +6,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/json"
@@ -215,6 +216,56 @@ func TestRun_Dispatch(t *testing.T) {
 	t.Run("help is not an error", func(t *testing.T) {
 		assert.NoError(t, Run([]string{"help"}))
 	})
+	t.Run("sweep without --ca or --start-relay errors", func(t *testing.T) {
+		assert.Error(t, Run([]string{"sweep", "--sessions", "10"}))
+	})
+}
+
+func TestParseSessions(t *testing.T) {
+	tests := map[string]struct {
+		in      string
+		want    []int
+		wantErr bool
+	}{
+		"spaces":            {in: "2000 5000 8000", want: []int{2000, 5000, 8000}},
+		"commas":            {in: "500,1000,2000", want: []int{500, 1000, 2000}},
+		"mixed + extra ws":  {in: " 500,  1000\t2000 ", want: []int{500, 1000, 2000}},
+		"single":            {in: "12000", want: []int{12000}},
+		"empty":             {in: "   ", wantErr: true},
+		"non-numeric":       {in: "500 abc", wantErr: true},
+		"zero not positive": {in: "0", wantErr: true},
+		"negative":          {in: "-5", wantErr: true},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			got, err := parseSessions(tt.in)
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestGenerateRelayCert(t *testing.T) {
+	dir := t.TempDir()
+	certFile, keyFile, pool, err := generateRelayCert(dir)
+	require.NoError(t, err)
+	assert.FileExists(t, certFile)
+	assert.FileExists(t, keyFile)
+	require.NotNil(t, pool)
+
+	// The generated PEM must load as a usable key pair and be trusted by its
+	// own returned pool (self-signed = its own issuer).
+	pair, err := tls.LoadX509KeyPair(certFile, keyFile)
+	require.NoError(t, err)
+	require.NotEmpty(t, pair.Certificate)
+	leaf, err := x509.ParseCertificate(pair.Certificate[0])
+	require.NoError(t, err)
+	_, err = leaf.Verify(x509.VerifyOptions{Roots: pool, DNSName: "localhost"})
+	assert.NoError(t, err, "generated cert should verify against its own pool")
 }
 
 // ---- helpers ----

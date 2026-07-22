@@ -59,6 +59,8 @@ func Run(args []string) error {
 		return runSubscribe(rest)
 	case "publish":
 		return runPublish(rest)
+	case "sweep":
+		return runSweep(rest)
 	case "-h", "--help", "help":
 		usage(os.Stdout)
 		return nil
@@ -76,6 +78,9 @@ Out-of-process capacity load against a running qumo relay.
 Subcommands:
   publish    Publish one trickle track to the relay (keep running during a sweep)
   subscribe  Ramp N subscriber sessions and measure the relay's hold + per-session cost
+  sweep      Run a session-count sweep (publisher + subscribe per point), optionally
+             starting a local relay subprocess (--start-relay); emits a dashboard-ready
+             capacity JSONL. Point it at a remote relay for a true two-host run.
 
 Run "qumo loadgen <subcommand> -h" for that subcommand's flags.
 `)
@@ -93,7 +98,32 @@ type dialTarget struct {
 	quic    *quic.Config
 }
 
-// bindCommon registers the flags common to both subcommands on fs and returns a
+// newTarget builds a dialTarget that trusts pool. An empty metrics URL defaults
+// to http://<relay>/metrics.
+func newTarget(relay, metrics, path, track string, pool *x509.CertPool, idle, keepalive time.Duration) dialTarget {
+	m := metrics
+	if m == "" {
+		m = "http://" + relay + "/metrics"
+	}
+	return dialTarget{
+		relay:   relay,
+		metrics: m,
+		path:    path,
+		track:   track,
+		tls: &tls.Config{
+			RootCAs:    pool,
+			NextProtos: []string{moqt.NextProtoMOQ},
+			MinVersion: tls.VersionTLS13,
+		},
+		quic: &quic.Config{
+			EnableDatagrams: true,
+			KeepAlivePeriod: keepalive,
+			MaxIdleTimeout:  idle,
+		},
+	}
+}
+
+// bindCommon registers the flags common to publish/subscribe on fs and returns a
 // finalizer that validates them and builds the TLS/QUIC config after Parse.
 func bindCommon(fs *flag.FlagSet) func() (dialTarget, error) {
 	relay := fs.String("relay", "127.0.0.1:4433", "relay moqt address (host:port)")
@@ -111,26 +141,7 @@ func bindCommon(fs *flag.FlagSet) func() (dialTarget, error) {
 		if err != nil {
 			return dialTarget{}, err
 		}
-		m := *metrics
-		if m == "" {
-			m = "http://" + *relay + "/metrics"
-		}
-		return dialTarget{
-			relay:   *relay,
-			metrics: m,
-			path:    *path,
-			track:   *track,
-			tls: &tls.Config{
-				RootCAs:    pool,
-				NextProtos: []string{moqt.NextProtoMOQ},
-				MinVersion: tls.VersionTLS13,
-			},
-			quic: &quic.Config{
-				EnableDatagrams: true,
-				KeepAlivePeriod: *keepalive,
-				MaxIdleTimeout:  *idle,
-			},
-		}, nil
+		return newTarget(*relay, *metrics, *path, *track, pool, *idle, *keepalive), nil
 	}
 }
 
@@ -166,18 +177,23 @@ func runPublish(args []string) error {
 	if err != nil {
 		return err
 	}
-	if *size < 16 {
-		*size = 16
-	}
-
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+	slog.Info("loadgen publishing", "relay", target.relay, "path", target.path, "gps", *gps, "size", *size)
+	return publishTrickle(ctx, target, *gps, *size)
+}
 
-	interval := time.Duration(float64(time.Second) / *gps)
+// publishTrickle publishes one track that emits a small group every 1/gps s,
+// blocking until ctx is cancelled. Shared by `publish` and `sweep`.
+func publishTrickle(ctx context.Context, target dialTarget, gps float64, size int) error {
+	if size < 16 {
+		size = 16
+	}
+	interval := time.Duration(float64(time.Second) / gps)
 	mux := moqt.NewTrackMux(moqt.NewHopID())
 	mux.PublishFunc(ctx, moqt.BroadcastPath(target.path), func(tw *moqt.TrackWriter) {
 		defer tw.Close()
-		payload := make([]byte, *size)
+		payload := make([]byte, size)
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
@@ -190,20 +206,18 @@ func runPublish(args []string) error {
 				if err != nil || gw == nil {
 					continue
 				}
-				fr := moqt.NewFrame(*size)
+				fr := moqt.NewFrame(size)
 				_, _ = fr.Write(payload)
 				_ = gw.WriteFrame(fr)
 				_ = gw.Close()
 			}
 		}
 	})
-
 	sess, err := dialer(target).Dial(ctx, "moqt://"+target.relay, mux)
 	if err != nil {
 		return fmt.Errorf("dial relay %s: %w", target.relay, err)
 	}
 	defer sess.CloseWithError(moqt.NoError, "done")
-	slog.Info("loadgen publishing", "relay", target.relay, "path", target.path, "gps", *gps, "size", *size)
 	<-ctx.Done()
 	return nil
 }

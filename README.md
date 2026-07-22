@@ -60,6 +60,7 @@ qumo rtmp        # Start RTMP ingest server (bridges RTMP → MoQT)
 qumo rtsp        # Pull from an RTSP source (e.g. IP camera) and republish as MoQT
 qumo rtsp-push   # Start the RTSP push ingest server (bridges RTSP → MoQT)
 qumo playground  # One-command local demo: in-process relay + embedded web UI on http://127.0.0.1:8080
+qumo loadgen     # Out-of-process capacity load generator (publish|subscribe) — see Benchmarking
 qumo version     # Print build-time version info
 ```
 
@@ -145,12 +146,15 @@ qumo/
 │   ├── rtmp/                   # RTMP protocol stack
 │   ├── rtsp/                   # RTSP protocol stack & RTP de-packetization
 │   ├── playground/             # One-command demo server (relay + embedded web UI + /api/pull)
+│   ├── loadgen/                # Out-of-process capacity load generator (qumo loadgen)
 │   ├── cors/                   # WebTransport origin validation (CSWT mitigation)
 │   ├── smoketest/              # Cross-region streaming smoke test harness
 │   └── version/                # Version info
 │
 ├── magefiles/                  # Build automation (Mage tasks)
 │
+├── scripts/                    # Bench dashboard generator (Deno)
+├── tools/paramexp/             # Parameter-space explorer (GP surrogate; separate module)
 ├── docs/                       # Design docs
 ├── playground/                 # Web demo / relay test client (Deno + Solid)
 ├── .github/workflows/          # CI/CD pipelines
@@ -171,3 +175,53 @@ mage docker:build  # Build Docker image
 mage relay         # Run relay server locally
 mage smoke         # Run cross-region streaming smoke test
 ```
+
+### Benchmarking & capacity
+
+The relay's benchmarks emit JSONL that a zero-dependency Deno tool turns into a
+single, self-contained **dashboard** — open one file, no server:
+
+```bash
+# After a bench run has written results.jsonl into <dir> (BENCH_RESULTS_DIR):
+deno run --allow-read=<dir> --allow-write=<dir> scripts/relay_bench_report.ts <dir>
+# → <dir>/index.html : capacity headline + decision summary + every plot inline,
+#   plus the paramexp GP/ML findings when passed --paramexp <report-dir>.
+```
+
+**Concurrent-session capacity is measured out-of-process** with `qumo loadgen`.
+Running the relay and the load clients in one process makes client-side
+QUIC-handshake CPU — not the relay — the bottleneck, so `loadgen` drives a
+*separately running* relay and reports the **relay's own** per-session cost by
+scraping its `/metrics` (`go_goroutines`, `process_resident_memory_bytes`,
+`qumo_relay_sessions_active`) before/after a ramp:
+
+```bash
+qumo loadgen publish   --relay <host:4433> --ca <relay-cert.pem>   # trickle source
+qumo loadgen subscribe --relay <host:4433> --ca <relay-cert.pem> \
+  --sessions 12000 --ramp 2000 --hold 15s --results ./out         # ramp + measure
+```
+
+`qumo loadgen sweep` wraps this into a session-count sweep (publisher + a
+subscribe measurement per point). It runs two ways:
+
+- **One box:** `--start-relay` spawns a local relay subprocess (self-signed cert
+  generated in-process — no `openssl`) pinned via `--relay-cores` so its CPU is
+  isolated from the load — a single-box stand-in for two hosts. This is what the
+  `loadgen-sweep` job in `.github/workflows/bench-relay.yml` runs (a modest
+  sweep; hosted runners are small and single-host):
+
+  ```bash
+  qumo loadgen sweep --start-relay --relay-cores 0-1 \
+    --sessions "500 1000 2000" --hold 10s --results ./out
+  ```
+
+- **Two hosts:** point it at a relay running elsewhere; it only generates load:
+
+  ```bash
+  qumo loadgen sweep --relay relay.example.net:4433 --ca relay-cert.pem \
+    --sessions "5000 10000 25000" --results ./out
+  ```
+
+Every point appends a `capacity`-group record to `results.jsonl`, so a sweep
+renders in the same dashboard. A distributed (multi-machine) run is what a
+25K-session ceiling claim needs to be *confirmed* rather than extrapolated.
