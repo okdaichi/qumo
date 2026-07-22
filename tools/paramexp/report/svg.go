@@ -99,18 +99,18 @@ func sweepSVG(obs []experiment.Observation, p experiment.ParamDef, objective str
 		poly = append(poly, fmt.Sprintf("%.1f,%.1f", xScale(xs[i]), yScale(means[i]+stds[i])))
 	}
 	sb.WriteString(fmt.Sprintf(`<polygon points="%s" fill="%s" fill-opacity="0.15" stroke="none"/>`, strings.Join(poly, " "), palette[0]))
-	d := ""
+	var d strings.Builder
 	for i, x := range xs {
 		px, py := xScale(x), yScale(means[i])
 		if i == 0 {
-			d = fmt.Sprintf("M%.1f %.1f", px, py)
+			fmt.Fprintf(&d, "M%.1f %.1f", px, py)
 		} else {
-			d += fmt.Sprintf(" L%.1f %.1f", px, py)
+			fmt.Fprintf(&d, " L%.1f %.1f", px, py)
 		}
 		sb.WriteString(fmt.Sprintf(`<circle cx="%.1f" cy="%.1f" r="3" fill="%s"/>`, px, py, palette[0]))
 		sb.WriteString(fmt.Sprintf(`<text x="%.1f" y="%d" text-anchor="middle">%s</text>`, px, svgH-svgM+15, escape(labels[i])))
 	}
-	sb.WriteString(fmt.Sprintf(`<path d="%s" fill="none" stroke="%s" stroke-width="2"/>`, d, palette[0]))
+	sb.WriteString(fmt.Sprintf(`<path d="%s" fill="none" stroke="%s" stroke-width="2"/>`, d.String(), palette[0]))
 	sb.WriteString(fmt.Sprintf(`<line x1="%d" y1="%d" x2="%d" y2="%d" stroke="#333"/>`, svgM, svgM, svgM, svgH-svgM))
 	sb.WriteString(fmt.Sprintf(`<line x1="%d" y1="%d" x2="%d" y2="%d" stroke="#333"/>`, svgM, svgH-svgM, svgW-svgM, svgH-svgM))
 	return svgWrap(fmt.Sprintf("%s vs %s", objective, p.Name), sb.String())
@@ -225,16 +225,16 @@ func responseSurfaceSVG(xs, means, stds []float64, paramName, objective string) 
 		poly = append(poly, fmt.Sprintf("%.1f,%.1f", xScale(xs[i]), yScale(means[i]+2*stds[i])))
 	}
 	sb.WriteString(fmt.Sprintf(`<polygon points="%s" fill="%s" fill-opacity="0.15"/>`, strings.Join(poly, " "), palette[0]))
-	d := ""
+	var d strings.Builder
 	for i := range xs {
 		px, py := xScale(xs[i]), yScale(means[i])
 		if i == 0 {
-			d = fmt.Sprintf("M%.1f %.1f", px, py)
+			fmt.Fprintf(&d, "M%.1f %.1f", px, py)
 		} else {
-			d += fmt.Sprintf(" L%.1f %.1f", px, py)
+			fmt.Fprintf(&d, " L%.1f %.1f", px, py)
 		}
 	}
-	sb.WriteString(fmt.Sprintf(`<path d="%s" fill="none" stroke="%s" stroke-width="2"/>`, d, palette[0]))
+	sb.WriteString(fmt.Sprintf(`<path d="%s" fill="none" stroke="%s" stroke-width="2"/>`, d.String(), palette[0]))
 	sb.WriteString(fmt.Sprintf(`<line x1="%d" y1="%d" x2="%d" y2="%d" stroke="#333"/>`, svgM, svgM, svgM, svgH-svgM))
 	sb.WriteString(fmt.Sprintf(`<line x1="%d" y1="%d" x2="%d" y2="%d" stroke="#333"/>`, svgM, svgH-svgM, svgW-svgM, svgH-svgM))
 	sb.WriteString(fmt.Sprintf(`<text x="%d" y="%d" text-anchor="middle">%s (low → high)</text>`, svgW/2, svgH-12, escape(paramName)))
