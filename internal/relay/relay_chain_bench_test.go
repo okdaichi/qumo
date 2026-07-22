@@ -374,7 +374,7 @@ func BenchmarkRelayChain_Fanout(b *testing.B) {
 // stream embeds ReportMetric values only inside output strings). No-op locally.
 type benchResult struct {
 	Bench    string  `json:"bench"`            // function name, e.g. "FanoutSweep"
-	Group    string  `json:"group"`            // series|fanout|load|objsize|soak|reconnect|capacity
+	Group    string  `json:"group"`            // series|fanout|load|objsize|soak|reconnect
 	Config   string  `json:"config"`           // "K=4", "depth=3", "100fps/K=8", "slice=3"
 	K        int     `json:"k,omitempty"`      // fan-out width
 	Depth    int     `json:"depth,omitempty"`  // chain depth (series)
@@ -396,12 +396,10 @@ type benchResult struct {
 	CpuMs    float64 `json:"cpu_ms,omitempty"`
 	Fairness float64 `json:"fairness,omitempty"` // Jain's index, 0-1 (1=perfectly fair fan-out)
 	JitterMs float64 `json:"jitter_ms,omitempty"`
-	// capacity group (BenchmarkRelay_ConnectionCarry): concurrent-session axis.
-	Sessions     int     `json:"sessions,omitempty"`       // offered concurrent subscriber sessions
-	Connected    int     `json:"connected,omitempty"`      // sessions that established
-	Receiving    int     `json:"receiving,omitempty"`      // sessions that received frames
-	PerSessionKB float64 `json:"per_session_kb,omitempty"` // heap KB per connected session
-	Verdict      string  `json:"verdict,omitempty"`        // HOLDS | CANNOT-HOLD
+	// The capacity group (concurrent-session ceiling) is produced out-of-process
+	// by `qumo loadgen` (internal/loadgen), which writes its own record shape;
+	// the in-process capacity benchmarks were removed as unable to reach the
+	// relay's true ceiling (client establishment cost dominated).
 }
 
 func recordBench(tb testing.TB, r benchResult) {

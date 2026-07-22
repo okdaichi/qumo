@@ -4,11 +4,12 @@
 //	loadgen publish    — one trickle publisher (a small group every 1/GPS s)
 //	loadgen subscribe  — ramp N subscriber sessions and measure the hold
 //
-// The point of running out-of-process is measurement fidelity: the in-process
-// integration benchmark (BenchmarkRelay_ConnectionCarry) runs the relay and all
-// N clients in one process on shared cores, so client-side QUIC-handshake CPU —
-// not the relay — caps establishment (~6K on an 8-core VM). Here the relay is a
-// separate process (ideally a separate host), and `subscribe` reports the
+// The point of running out-of-process is measurement fidelity: the earlier
+// in-process capacity benchmark ran the relay and all N clients in one process
+// on shared cores, so client-side QUIC-handshake CPU — not the relay — capped
+// establishment (~6K on an 8-core VM). It was removed in favor of this tool.
+// Here the relay is a separate process (ideally a separate host), and
+// `subscribe` reports the
 // RELAY's own per-session cost by scraping its /metrics endpoint
 // (go_goroutines, process_resident_memory_bytes, qumo_relay_sessions_active)
 // before and after the ramp — the number reflects the relay, not the load
@@ -492,8 +493,9 @@ func report(target dialTarget, sessions int, ramp float64, r carryResult) {
 	fmt.Printf("  verdict          : %s\n", verdict)
 }
 
-// jsonlRecord mirrors the relay bench capacity-group schema so a sweep lands in
-// the same dashboard. Resource fields are the RELAY's, not the load generator's.
+// jsonlRecord is the capacity-group record the relay-bench dashboard reads, so a
+// sweep lands in the same index.html. Resource fields are the RELAY's, not the
+// load generator's.
 type jsonlRecord struct {
 	Bench        string  `json:"bench"`
 	Group        string  `json:"group"`
