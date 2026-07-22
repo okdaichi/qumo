@@ -31,7 +31,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"math/rand/v2"
 	"net/http"
 	"os"
 	"os/signal"
@@ -45,6 +44,7 @@ import (
 
 	"github.com/quic-go/quic-go"
 	"github.com/qumo-dev/gomoqt/moqt"
+	"github.com/qumo-dev/qumo/internal/relay"
 )
 
 // Run dispatches a loadgen subcommand. It is the package entrypoint wired into
@@ -393,12 +393,11 @@ func subscribeOne(ctx context.Context, target dialTarget, dur time.Duration, con
 }
 
 // dialWithRetry dials the relay with exponential backoff + jitter on failure.
-// It retries until the dial succeeds or ctx is cancelled, applying ±25 % jitter
-// to spread out synchronized re-dials across subscriber goroutines.
+// It retries until the dial succeeds or ctx is cancelled, using the relay
+// package's DialBackoff to spread out synchronized re-dials across subscriber
+// goroutines with the same algorithm the server-side maintainPeer uses.
 func dialWithRetry(ctx context.Context, target dialTarget) (*moqt.Session, error) {
-	const base = 1 * time.Second
-	const max = 30 * time.Second
-	attempt := 0
+	var backoff = relay.NewDialBackoff()
 	for {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
@@ -407,27 +406,9 @@ func dialWithRetry(ctx context.Context, target dialTarget) (*moqt.Session, error
 		if err == nil {
 			return sess, nil
 		}
-		slog.Debug("loadgen dial failed, retrying", "relay", target.relay, "attempt", attempt, "err", err)
-		// Exponential factor, capped at 2^9.
-		var exp int
-		if attempt < 10 {
-			exp = 1 << attempt
-		} else {
-			exp = 1 << 9
-		}
-		delay := base * time.Duration(exp)
-		if delay > max {
-			delay = max
-		}
-		// Apply ±25 % jitter.
-		jitter := time.Duration(float64(delay) * (0.75 + 0.5*rand.Float64()))
-		attempt++
-		t := time.NewTimer(jitter)
-		select {
-		case <-ctx.Done():
-			t.Stop()
+		slog.Debug("loadgen dial failed, retrying", "relay", target.relay, "err", err)
+		if !backoff.Wait(ctx) {
 			return nil, ctx.Err()
-		case <-t.C:
 		}
 	}
 }

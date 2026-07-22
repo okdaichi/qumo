@@ -9,7 +9,7 @@ import (
 )
 
 func TestDialBackoff_Defaults(t *testing.T) {
-	b := newDialBackoff()
+	b := NewDialBackoff()
 	assert.Equal(t, 1*time.Second, b.base)
 	assert.Equal(t, 30*time.Second, b.max)
 	assert.Equal(t, 0, b.maxAttempts)
@@ -21,7 +21,7 @@ func TestDialBackoff_ExponentialGrowth(t *testing.T) {
 	// timing, to avoid CI scheduler flakes. Each call to wait() increments
 	// attempt and sleeps for the computed delay; we assert that the actual wait
 	// falls within the expected [0.75×, 1.25×] range of the formula.
-	b := dialBackoff{base: 100 * time.Millisecond, max: 10 * time.Second}
+	b := DialBackoff{base: 100 * time.Millisecond, max: 10 * time.Second}
 	ctx := context.Background()
 
 	for i := 0; i < 5; i++ {
@@ -42,7 +42,7 @@ func TestDialBackoff_ExponentialGrowth(t *testing.T) {
 		maxDelay := time.Duration(float64(rawDelay) * 1.25)
 
 		start := time.Now()
-		ok := b.wait(ctx)
+		ok := b.Wait(ctx)
 		elapsed := time.Since(start)
 
 		assert.True(t, ok, "wait should return true on attempt %d", i)
@@ -56,7 +56,7 @@ func TestDialBackoff_ExponentialGrowth(t *testing.T) {
 func TestDialBackoff_MaxCap(t *testing.T) {
 	// base=10ms, max=50ms. After a few retries the computed delay exceeds max
 	// exponentially; the actual wait must be bounded by max + jitter.
-	b := dialBackoff{base: 10 * time.Millisecond, max: 50 * time.Millisecond}
+	b := DialBackoff{base: 10 * time.Millisecond, max: 50 * time.Millisecond}
 	ctx := context.Background()
 
 	// Verify the formula directly: with attempt=5, exp=32, delay=320ms,
@@ -65,7 +65,7 @@ func TestDialBackoff_MaxCap(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		b.attempt = 5 + i // Force a high attempt count so formula exceeds cap
 		start := time.Now()
-		ok := b.wait(ctx)
+		ok := b.Wait(ctx)
 		elapsed := time.Since(start)
 
 		assert.True(t, ok, "wait should return true on attempt %d", 5+i)
@@ -75,44 +75,44 @@ func TestDialBackoff_MaxCap(t *testing.T) {
 }
 
 func TestDialBackoff_MaxAttempts(t *testing.T) {
-	b := dialBackoff{base: 1 * time.Millisecond, max: 10 * time.Millisecond, maxAttempts: 3}
+	b := DialBackoff{base: 1 * time.Millisecond, max: 10 * time.Millisecond, maxAttempts: 3}
 	ctx := context.Background()
 
-	assert.True(t, b.wait(ctx), "attempt 0 should succeed")
-	assert.True(t, b.wait(ctx), "attempt 1 should succeed")
-	assert.True(t, b.wait(ctx), "attempt 2 should succeed (zero-indexed, attempt=0,1,2 = 3 tries)")
-	assert.False(t, b.wait(ctx), "attempt 3 should be rejected (maxAttempts=3)")
+	assert.True(t, b.Wait(ctx), "attempt 0 should succeed")
+	assert.True(t, b.Wait(ctx), "attempt 1 should succeed")
+	assert.True(t, b.Wait(ctx), "attempt 2 should succeed (zero-indexed, attempt=0,1,2 = 3 tries)")
+	assert.False(t, b.Wait(ctx), "attempt 3 should be rejected (maxAttempts=3)")
 }
 
 func TestDialBackoff_ContextCancellation(t *testing.T) {
-	b := dialBackoff{base: 1 * time.Hour, max: 2 * time.Hour} // long enough to never fire
+	b := DialBackoff{base: 1 * time.Hour, max: 2 * time.Hour} // long enough to never fire
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately
 
 	start := time.Now()
-	ok := b.wait(ctx)
+	ok := b.Wait(ctx)
 	assert.False(t, ok, "wait should return false on cancelled ctx")
 	assert.Less(t, time.Since(start), 100*time.Millisecond, "should return promptly")
 }
 
 func TestDialBackoff_Reset(t *testing.T) {
-	b := dialBackoff{base: 1 * time.Millisecond, max: 10 * time.Millisecond, maxAttempts: 2}
+	b := DialBackoff{base: 1 * time.Millisecond, max: 10 * time.Millisecond, maxAttempts: 2}
 
 	// Exhaust attempts.
-	b.wait(context.Background())
-	b.wait(context.Background())
-	assert.False(t, b.wait(context.Background()), "should be exhausted")
+	b.Wait(context.Background())
+	b.Wait(context.Background())
+	assert.False(t, b.Wait(context.Background()), "should be exhausted")
 
-	b.reset()
+	b.Reset()
 	assert.Equal(t, 0, b.attempt, "reset should zero attempt count")
-	assert.True(t, b.wait(context.Background()), "should succeed after reset")
+	assert.True(t, b.Wait(context.Background()), "should succeed after reset")
 }
 
 func TestDialBackoff_JitterUniformRange(t *testing.T) {
 	// Run many backoff samples with the same parameters and verify the
 	// jittered delay falls within the expected [0.75×, 1.25×] range.
 	// This checks the jitter formula, not the statistical distribution.
-	b := dialBackoff{base: 10 * time.Millisecond, max: 200 * time.Millisecond}
+	b := DialBackoff{base: 10 * time.Millisecond, max: 200 * time.Millisecond}
 	ctx := context.Background()
 
 	// With attempt=0, exp=1, delay=10ms, jitter range = [7.5ms, 12.5ms].
@@ -120,7 +120,7 @@ func TestDialBackoff_JitterUniformRange(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		b.attempt = 0
 		start := time.Now()
-		ok := b.wait(ctx)
+		ok := b.Wait(ctx)
 		elapsed := time.Since(start)
 
 		assert.True(t, ok, "wait should succeed")
@@ -134,7 +134,7 @@ func TestDialBackoff_ZeroValueIsSafe(t *testing.T) {
 	// The zero-value of dialBackoff (base=0, max=0, maxAttempts=0) should
 	// not panic or deadlock. With base=0 the delay is effectively 0;
 	// maxAttempts=0 means unlimited.
-	var b dialBackoff
+	var b DialBackoff
 	ctx := context.Background()
 
 	assert.Equal(t, time.Duration(0), b.base)
@@ -142,21 +142,21 @@ func TestDialBackoff_ZeroValueIsSafe(t *testing.T) {
 	assert.Equal(t, 0, b.maxAttempts)
 
 	start := time.Now()
-	assert.True(t, b.wait(ctx), "zero value should not panic")
+	assert.True(t, b.Wait(ctx), "zero value should not panic")
 	assert.Less(t, time.Since(start), 50*time.Millisecond, "should return near-instantly")
 
 	// Multiple waits should also work (unlimited maxAttempts).
-	assert.True(t, b.wait(ctx))
-	assert.True(t, b.wait(ctx))
+	assert.True(t, b.Wait(ctx))
+	assert.True(t, b.Wait(ctx))
 }
 
 func TestDialBackoff_AttemptCounter(t *testing.T) {
-	b := dialBackoff{base: 1 * time.Millisecond, max: 5 * time.Millisecond}
+	b := DialBackoff{base: 1 * time.Millisecond, max: 5 * time.Millisecond}
 	ctx := context.Background()
 
 	for i := 0; i < 4; i++ {
 		assert.Equal(t, i, b.attempt, "attempt count should be %d before wait %d", i, i)
-		b.wait(ctx)
+		b.Wait(ctx)
 	}
 	assert.Equal(t, 4, b.attempt, "attempt count should be 4 after 4 waits")
 }

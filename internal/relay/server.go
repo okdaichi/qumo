@@ -367,7 +367,7 @@ func (s *Server) markUnconnected(addr string) {
 }
 
 func (s *Server) maintainPeer(ctx context.Context, peer Peer) {
-	var backoff = newDialBackoff()
+	var backoff = NewDialBackoff()
 
 	for {
 		if ctx.Err() != nil {
@@ -380,13 +380,13 @@ func (s *Server) maintainPeer(ctx context.Context, peer Peer) {
 			metricDialRetriesTotal.WithLabelValues(peer.Address).Inc()
 			slog.Warn("failed to dial peer", "address", peer.Address, "error", err,
 				"retry_attempt", backoff.attempt+1)
-			if !backoff.wait(ctx) {
+			if !backoff.Wait(ctx) {
 				return
 			}
 			continue
 		}
 		metricPeerDialAttempts.WithLabelValues(peer.Address, "ok").Inc()
-		backoff.reset()
+		backoff.Reset()
 
 		// Serve the current session, then on disconnect attempt an immediate
 		// reconnect with jitter. On success, loop back to serve the new session;
@@ -413,10 +413,10 @@ func (s *Server) maintainPeer(ctx context.Context, peer Peer) {
 				break
 			}
 			metricPeerDialAttempts.WithLabelValues(peer.Address, "ok").Inc()
-			backoff.reset()
+			backoff.Reset()
 		}
 
-		if !backoff.wait(ctx) {
+		if !backoff.Wait(ctx) {
 			return
 		}
 	}

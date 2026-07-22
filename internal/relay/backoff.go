@@ -6,37 +6,37 @@ import (
 	"time"
 )
 
-// dialBackoff implements exponential backoff with jitter for outbound
+// DialBackoff implements exponential backoff with jitter for outbound
 // connection-establishment retries. It transforms burst arrivals into a
 // gradual ramp, helping the relay survive simultaneous handshake load
 // spikes without dropping connections.
 //
-// dialBackoff is not safe for concurrent use; each goroutine that needs
+// DialBackoff is not safe for concurrent use; each goroutine that needs
 // backoff must have its own instance.
 //
 // Use cases:
 //   - Peer relay reconnection (maintainPeer)
-//   - Any outbound dial that should retry on transient failure
+//   - Client-side dial retry (loadgen)
 //
 // Zero value: base=1s, max=30s, maxAttempts=0 (unlimited).
-type dialBackoff struct {
+type DialBackoff struct {
 	base        time.Duration // starting interval
 	max         time.Duration // ceiling
-	maxAttempts int           // 0 = unlimited; after this many, wait() returns false
+	maxAttempts int           // 0 = unlimited; after this many, Wait returns false
 	attempt     int
 }
 
-// newDialBackoff returns a dialBackoff with the recommended defaults for
+// NewDialBackoff returns a DialBackoff with the recommended defaults for
 // peer-relay connection retry: 1s base, 30s cap, unlimited attempts.
-func newDialBackoff() dialBackoff {
-	return dialBackoff{
+func NewDialBackoff() DialBackoff {
+	return DialBackoff{
 		base:        1 * time.Second,
 		max:         30 * time.Second,
 		maxAttempts: 0,
 	}
 }
 
-// wait blocks until either the backoff delay elapses or ctx is cancelled.
+// Wait blocks until either the backoff delay elapses or ctx is cancelled.
 // It returns false if ctx was cancelled (caller should stop) or if
 // maxAttempts has been reached. Each call advances the backoff state.
 //
@@ -44,7 +44,7 @@ func newDialBackoff() dialBackoff {
 //
 //	delay = min(base * 2^attempt, max)
 //	delay *= uniform(0.75, 1.25)   // ±25 % jitter
-func (b *dialBackoff) wait(ctx context.Context) bool {
+func (b *DialBackoff) Wait(ctx context.Context) bool {
 	if b.maxAttempts > 0 && b.attempt >= b.maxAttempts {
 		return false
 	}
@@ -81,10 +81,10 @@ func (b *dialBackoff) wait(ctx context.Context) bool {
 	}
 }
 
-// reset restores the backoff to its initial state. Call this after a
+// Reset restores the backoff to its initial state. Call this after a
 // successful connection is established so that a subsequent disconnect
 // reconnection starts from the minimum delay.
-func (b *dialBackoff) reset() {
+func (b *DialBackoff) Reset() {
 	b.attempt = 0
 }
 
