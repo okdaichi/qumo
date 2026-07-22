@@ -8,6 +8,7 @@ import (
 
 	"github.com/qumo-dev/qumo/internal/doctor"
 	"github.com/qumo-dev/qumo/internal/ingest"
+	"github.com/qumo-dev/qumo/internal/loadgen"
 	"github.com/qumo-dev/qumo/internal/playground"
 	"github.com/qumo-dev/qumo/internal/relay"
 	"github.com/qumo-dev/qumo/internal/version"
@@ -20,6 +21,7 @@ var (
 	runRTSP       = ingest.RunRTSP     // push server (ANNOUNCE/RECORD)
 	runRTSPPull   = ingest.RunRTSPPull // pull client (DESCRIBE/SETUP/PLAY, camera ingest)
 	runDoctor     = doctor.Run
+	runLoadgen    = loadgen.Run
 	runPlayground = func(args []string) error {
 		o, err := playground.ParseFlags(args, playground.Options{
 			Assets:     mustSubAssets(),
@@ -87,6 +89,8 @@ func run(args []string) int {
 		err = runPlayground(cmdArgs)
 	case "doctor":
 		err = runDoctor(cmdArgs)
+	case "loadgen":
+		err = runLoadgen(cmdArgs)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n", cmd)
 		printUsage()
@@ -110,6 +114,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  rtsp-push  Start the RTSP push ingest server (ANNOUNCE/RECORD)")
 	fmt.Fprintln(os.Stderr, "  playground Start a local demo (relay + web UI) on http://127.0.0.1:8080")
 	fmt.Fprintln(os.Stderr, "  doctor     Explain effective runtime config (GC target) — read-only")
+	fmt.Fprintln(os.Stderr, "  loadgen    Drive an out-of-process capacity load against a relay (subscribe|publish)")
 	fmt.Fprintln(os.Stderr, "  version    Print version information")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Configuration:")
