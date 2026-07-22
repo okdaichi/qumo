@@ -344,6 +344,13 @@ func BenchmarkRelay_ConnectionCarry(b *testing.B) {
 	b.ReportMetric(float64(r.goros), "goros")
 	log.Printf("[carry] mode=%-20s S=%-6d ramp=%-4g/s | connected=%-6d receiving=%-6d rssΔ=%-6.1fMB gorosΔ=%-6d perSession=%-.1fKB => %s",
 		mode, sessions, rampRate, r.connected, r.receiving, r.rssMB, r.goros, perConnKB, verdict)
+	// Machine-readable emission for the consolidated bench dashboard (no-op unless
+	// BENCH_RESULTS_DIR is set). The capacity group carries the session-axis ceiling.
+	recordBench(b, benchResult{
+		Bench: "ConnectionCarry", Group: "capacity", Config: mode + "/S=" + strconv.Itoa(sessions),
+		Sessions: sessions, Connected: r.connected, Receiving: r.receiving,
+		HeapMB: r.rssMB, Goros: r.goros, PerSessionKB: perConnKB, Verdict: verdict,
+	})
 }
 
 type carryResult struct {
