@@ -219,6 +219,62 @@ func BenchmarkGroupRing_Fill_VariableSize(b *testing.B) {
 
 // func BenchmarkTrackDistributor_Broadcast removed: subscribe/unsubscribe API replaced by broadcastNotify
 
+// BenchmarkBroadcastNotify_Listen measures the cost of a single listen() — the
+// read-side primitive every egress goroutine calls on each wakeup (and that the
+// deliverGroup seq-guard adds one extra call of per trickle wakeup). It is a
+// pure atomic.Pointer load returning a notifyState value, so this is the floor
+// cost of participating in the broadcast. A regression here scales directly
+// into fan-out: it is paid by every subscriber, every wakeup.
+func BenchmarkBroadcastNotify_Listen(b *testing.B) {
+	var n broadcastNotify
+	n.init()
+	b.ResetTimer()
+	b.ReportAllocs()
+	for range b.N {
+		_ = n.listen()
+	}
+}
+
+// BenchmarkBroadcastNotify_Listen_Parallel measures listen() under the relay's
+// actual access pattern: many readers (one egress goroutine per subscriber)
+// reading concurrently with a single writer calling notify(). The writer's
+// Store invalidates the cache line the readers Load, modeling the real fan-out
+// cost; a regression here flags growing read-side contention. The notifier runs
+// hot, so its allocations (a channel + state per notify) appear in the harness
+// but not in the measured ns/op, which is the reader-side load only.
+func BenchmarkBroadcastNotify_Listen_Parallel(b *testing.B) {
+	var n broadcastNotify
+	n.init()
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				n.notify()
+			}
+		}
+	}()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			s := n.listen()
+			_ = s.seq
+		}
+	})
+
+	b.StopTimer()
+	close(stop)
+	wg.Wait()
+}
+
 // ============================================================================
 // Subscribe/Unsubscribe Benchmarks
 // ============================================================================
