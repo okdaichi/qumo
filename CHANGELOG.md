@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`internal/rtsp` `selectQop` is allocation-free.** The RTSP Digest "qop" parser (run during connection-setup auth header construction) used `strings.Split`, allocating a `[]string` each call. Replaced with an `IndexByte` scan that allocates nothing — 1 → 0 allocs/op and ~75% faster on `BenchmarkSelectQop`.
+
 ### Added
 
 - **`tools/capacity` starts a fresh relay per probe in `--start-relay` mode.** Each session-count probe now spawns its own relay + publisher and tears them down, so every measurement is independent. Previously the driver reused one long-lived relay across all probes, so once a probe pushed past the ceiling the relay carried residual goroutines/heap into the next probe — which corrupted the sub-ceiling bisect steps (a WSL run had the 17K/18K probes collapse to ~12K connected with a *negative* RSS delta). Reuse would turn the capacity benchmark into a recovery/soak test — a different workload that belongs in a higher-level harness, not a flag — so there is deliberately no `--reuse-relay` escape hatch. Remote mode (`--relay <host>`, no `--start-relay`) is unchanged: the external relay is a persistent service the driver doesn't own, so it keeps one publisher for the whole run.
