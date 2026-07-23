@@ -282,7 +282,12 @@ func runCarry(ctx context.Context, target dialTarget, sessions int, hold time.Du
 	// RSS delta can then be smaller than the GC'd startup memory, producing a
 	// negative heap_mb in the dashboard. A one-second pause is enough for the
 	// young-gen GC to run and release those transient allocations.
-	sleepCtx(ctx, time.Second)
+	// Inline context-aware sleep: the function was previously in sweep.go (deleted).
+	select {
+	case <-ctx.Done():
+		return carryResult{}, ctx.Err()
+	case <-time.After(time.Second):
+	}
 	base, baseErr := fetchMetrics(ctx, client, target.metrics)
 	if baseErr != nil {
 		slog.Warn("relay /metrics unreadable; per-session cost will be unavailable", "url", target.metrics, "err", baseErr)
