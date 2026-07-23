@@ -556,16 +556,23 @@ func (d *trackDistributor) deliverGroup(tw *moqt.TrackWriter, twCtx context.Cont
 		}
 	}
 
+	// Batch egress bytes locally per group delivery to reduce atomic CAS contention.
+	var egressTotal int64
 	for frame := range cache.frames(wait) {
 		if err := gw.WriteFrame(frame); err != nil {
+			// Flush bytes written before the failure: these frames were already
+			// handed to QUIC, so they count against egress (and metering) even
+			// though the group is being abandoned. The failing frame is excluded.
+			d.egressCounter.Add(float64(egressTotal))
 			return true
 		}
-		n := frame.Len()
-		d.egressCounter.Add(float64(n))
+		n := int64(frame.Len())
+		egressTotal += n
 		if d.session != nil {
 			d.session.addEgress(int64(n))
 		}
 	}
+	d.egressCounter.Add(float64(egressTotal))
 	if cancelled {
 		return true
 	}

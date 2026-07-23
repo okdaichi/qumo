@@ -22,16 +22,24 @@ var fanoutSizes = []int{1, 2, 4, 16, 64, 100}
 //	d.egressCounter.Add(float64(n))   // ONE prometheus.Counter per track, shared
 //	d.session.addEgress(int64(n))     // ONE atomic.Int64 per session, shared
 //
-// withCounters=false drops the two shared-atomics Add calls, yielding the
+// withCounters=false drops the shared-counter Add calls, yielding the
 // contention-free baseline (next + Len only). Comparing the two across the
 // fan-out sweep isolates the cache-line ping-pong cost of the shared counters.
+//
+// batched=true models the deliverGroup optimization (#333): instead of one
+// egressCounter.Add per frame, bytes are accumulated locally and flushed once
+// per group (every nFrames frames), cutting shared-counter CAS operations from
+// O(frames) to O(groups). addEgress stays per-frame in both modes — it is
+// per-session, not a shared counter. The per-frame (batched=false) and
+// per-group (batched=true) sweeps together let benchstat show the batching win
+// directly under fan-out contention.
 //
 // This is a maximal-contention upper bound: in production gw.WriteFrame (a
 // QUIC stream write) spaces the Add calls apart in time, reducing contention.
 // If the counters are NOT a bottleneck under maximal contention, they are
 // definitively not one in production. The group is pre-filled and complete, so
 // there is no waiting/wakeup on this path — next() always hits.
-func runEgressFanout(b *testing.B, nSubs int, withCounters bool) {
+func runEgressFanout(b *testing.B, nSubs int, withCounters, batched bool) {
 	b.Helper()
 
 	trackID := fmt.Sprintf("bench-egress-%d-%d", nSubs, time.Now().UnixNano())
@@ -57,13 +65,27 @@ func runEgressFanout(b *testing.B, nSubs int, withCounters bool) {
 	opsPerSub := b.N / nSubs
 	for range nSubs {
 		wg.Go(func() {
+			var acc int64
 			for i := range opsPerSub {
 				f := gc.next(i % nFrames)
 				if withCounters {
-					nn := f.Len()
-					dist.egressCounter.Add(float64(nn))
-					dist.session.addEgress(int64(nn))
+					nn := int64(f.Len())
+					if batched {
+						// One egressCounter.Add per group (nFrames frames),
+						// matching deliverGroup's per-group flush.
+						acc += nn
+						if i%nFrames == nFrames-1 {
+							dist.egressCounter.Add(float64(acc))
+							acc = 0
+						}
+					} else {
+						dist.egressCounter.Add(float64(nn))
+					}
+					dist.session.addEgress(nn) // per-frame: per-session, not shared
 				}
+			}
+			if batched && acc > 0 {
+				dist.egressCounter.Add(float64(acc)) // flush remainder
 			}
 		})
 	}
@@ -77,7 +99,21 @@ func runEgressFanout(b *testing.B, nSubs int, withCounters bool) {
 func BenchmarkEgressAccounting_Fanout(b *testing.B) {
 	for _, n := range fanoutSizes {
 		b.Run(fmt.Sprintf("subs=%d", n), func(b *testing.B) {
-			runEgressFanout(b, n, true)
+			runEgressFanout(b, n, true, false)
+		})
+	}
+}
+
+// BenchmarkEgressAccounting_Fanout_Batched measures the per-group egress
+// accounting (#333): egressCounter.Add is flushed once per group of nFrames
+// frames instead of once per frame. Under fan-out contention the shared counter
+// sees ~nFrames× fewer CAS operations, so ns/op should sit below the per-frame
+// variant (BenchmarkEgressAccounting_Fanout) and the gap should widen with
+// subscriber count. This is the benchmark that directly measures the #333 win.
+func BenchmarkEgressAccounting_Fanout_Batched(b *testing.B) {
+	for _, n := range fanoutSizes {
+		b.Run(fmt.Sprintf("subs=%d", n), func(b *testing.B) {
+			runEgressFanout(b, n, true, true)
 		})
 	}
 }
@@ -89,7 +125,7 @@ func BenchmarkEgressAccounting_Fanout(b *testing.B) {
 func BenchmarkEgressRead_Fanout(b *testing.B) {
 	for _, n := range fanoutSizes {
 		b.Run(fmt.Sprintf("subs=%d", n), func(b *testing.B) {
-			runEgressFanout(b, n, false)
+			runEgressFanout(b, n, false, false)
 		})
 	}
 }
