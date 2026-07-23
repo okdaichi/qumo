@@ -217,92 +217,15 @@ func BenchmarkGroupRing_Fill_VariableSize(b *testing.B) {
 // Broadcast Operation Benchmarks
 // ============================================================================
 
-func BenchmarkTrackDistributor_Broadcast(b *testing.B) {
-	tests := []struct {
-		name        string
-		subscribers int
-	}{
-		{"1_subscriber", 1},
-		{"10_subscribers", 10},
-		{"100_subscribers", 100},
-		{"1000_subscribers", 1000},
-	}
-
-	// broadcast() notifies cap-1 signal channels. Two states matter for any
-	// "skip the select when len(ch)>0" fast path:
-	//
-	//   - drained: subscribers keep up, so the channel is empty on the next
-	//     broadcast — the common steady state. The fast path adds a len() load
-	//     + branch before a send that still succeeds.
-	//   - full: the channel already holds a pending signal (backpressure). The
-	//     fast path skips the select entirely.
-	//
-	// Measuring only "full" overstates such an optimization (it is the sole
-	// case it helps), so both states are swept. The drained drain runs inside
-	// the timed loop but is invariant across base/PR, so it cancels in a delta.
-	for _, state := range []string{"drained", "full"} {
-		for _, tt := range tests {
-			b.Run(state+"/"+tt.name, func(b *testing.B) {
-				dist := &trackDistributor{}
-
-				chs := make([]chan struct{}, 0, tt.subscribers)
-				for i := 0; i < tt.subscribers; i++ {
-					ch := make(chan struct{}, 1)
-					dist.subscribers = append(dist.subscribers, ch)
-					chs = append(chs, ch)
-					if state == "full" {
-						ch <- struct{}{} // pre-fill: stays full across iterations
-					}
-				}
-
-				b.ResetTimer()
-				b.ReportAllocs()
-
-				for range b.N {
-					dist.broadcast()
-					if state == "drained" {
-						for _, ch := range chs {
-							select {
-							case <-ch:
-							default:
-							}
-						}
-					}
-				}
-			})
-		}
-	}
-}
+// func BenchmarkTrackDistributor_Broadcast removed: subscribe/unsubscribe API replaced by broadcastNotify
 
 // ============================================================================
 // Subscribe/Unsubscribe Benchmarks
 // ============================================================================
 
-func BenchmarkTrackDistributor_SubscribeUnsubscribe(b *testing.B) {
-	dist := &trackDistributor{}
+// func BenchmarkTrackDistributor_SubscribeUnsubscribe removed: subscribe/unsubscribe API replaced by broadcastNotify
 
-	b.ResetTimer()
-	b.ReportAllocs()
-
-	for i := 0; i < b.N; i++ {
-		ch := dist.subscribe()
-		dist.unsubscribe(ch)
-	}
-}
-
-func BenchmarkTrackDistributor_SubscribeUnsubscribe_Parallel(b *testing.B) {
-	dist := &trackDistributor{}
-
-	b.ResetTimer()
-	b.ReportAllocs()
-
-	b.RunParallel(func(pb *testing.PB) {
-		for pb.Next() {
-			ch := dist.subscribe()
-			dist.unsubscribe(ch)
-		}
-	})
-}
+// func BenchmarkTrackDistributor_SubscribeUnsubscribe_Parallel removed: subscribe/unsubscribe API replaced by broadcastNotify
 
 // ============================================================================
 // Memory Allocation Tracking Benchmarks
@@ -415,37 +338,7 @@ func BenchmarkLockPressure_GroupCache(b *testing.B) {
 	}
 }
 
-func BenchmarkLockPressure_TrackDistributor_Subscribe(b *testing.B) {
-	tests := []struct {
-		name  string
-		count int
-	}{
-		{"10_goroutines", 10},
-		{"100_goroutines", 100},
-		{"1000_goroutines", 1000},
-	}
-
-	for _, tt := range tests {
-		b.Run(tt.name, func(b *testing.B) {
-			dist := &trackDistributor{}
-
-			b.ResetTimer()
-			b.ReportAllocs()
-
-			var wg sync.WaitGroup
-			for g := 0; g < tt.count; g++ {
-				wg.Go(func() {
-					for i := 0; i < b.N/tt.count; i++ {
-						ch := dist.subscribe()
-						dist.unsubscribe(ch)
-					}
-				})
-			}
-
-			wg.Wait()
-		})
-	}
-}
+// func BenchmarkLockPressure_TrackDistributor_Subscribe removed: subscribe/unsubscribe API replaced by broadcastNotify
 
 // ============================================================================
 // Ring Contention Benchmarks
