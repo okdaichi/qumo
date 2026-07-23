@@ -11,6 +11,7 @@ import (
 	"log"
 	"log/slog"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -251,6 +252,20 @@ func Run(args []string) error {
 	httpMux.HandleFunc("/", relayServer.HandleWebTransport)
 	httpMux.HandleFunc("/health", relayServer.ServeHealth)
 	httpMux.Handle("/metrics", promhttp.Handler())
+
+	// Optional net/http/pprof endpoints, off by default. pprof exposes runtime
+	// internals (heap object graphs, goroutine stacks) so it is gated behind
+	// RELAY_PPROF=1 and should only be enabled on a trusted/loopback interface.
+	// Intended for capacity profiling under load (e.g. drive the relay to the
+	// session ceiling via qumo loadgen and capture /debug/pprof/{heap,profile}).
+	if os.Getenv("RELAY_PPROF") != "" {
+		httpMux.HandleFunc("/debug/pprof/", pprof.Index)
+		httpMux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+		httpMux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+		httpMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+		httpMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+		log.Printf("\t%-8s: pprof (RELAY_PPROF on)\n", "/debug/pprof/")
+	}
 
 	httpServer := &http.Server{
 		Addr:              addr,
