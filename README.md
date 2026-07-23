@@ -214,9 +214,11 @@ publisher, then probes session counts). Build it with `go build -o capacity
 
 - **One box:** `--start-relay` spawns a local relay (self-signed cert generated
   in-process — no `openssl`) pinned via `--relay-cores` so its CPU is isolated
-  from the load — a single-box stand-in for two hosts. `--sessions` probes an
-  explicit list; `--auto` climbs until the relay can't hold to find the ceiling
-  (`--bisect` pins the boundary). This is what the `capacity-sweep` job in
+  from the load — a single-box stand-in for two hosts. A **fresh relay is
+  started per probe**, so each measurement is independent and never inherits
+  residual state from a prior overload. `--sessions` probes an explicit list;
+  `--auto` climbs until the relay can't hold to find the ceiling (`--bisect`
+  pins the boundary). This is what the `capacity-sweep` job in
   `.github/workflows/bench-relay.yml` runs:
 
   ```bash

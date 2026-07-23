@@ -106,8 +106,15 @@ func run(args []string) error {
 }
 
 func orchestrate(ctx context.Context, cfg config, sessions []int, auto bool, search ceilingSearch) error {
-	// Relay: spawn a local one (with a fresh cert) or trust an existing one.
+	var probe func(n int) (bool, error)
+
 	if cfg.startRelay {
+		// Local mode: a FRESH relay + publisher per probe. Each probe is an
+		// independent measurement — the relay never carries residual state
+		// (goroutines/heap) from a prior overload into the next probe, which
+		// otherwise contaminates the readings once you push past the ceiling.
+		// The cert is generated once and reused as both the relay's server cert
+		// and the clients' trust anchor.
 		tmp, err := os.MkdirTemp("", "capacity-relay-")
 		if err != nil {
 			return fmt.Errorf("temp dir: %w", err)
@@ -118,40 +125,33 @@ func orchestrate(ctx context.Context, cfg config, sessions []int, auto bool, sea
 			return err
 		}
 		cfg.caFile = certFile
-		stop, err := startRelay(ctx, cfg, certFile, keyFile)
+		probe = func(n int) (bool, error) {
+			if err := ctx.Err(); err != nil {
+				return false, err
+			}
+			return probeFreshRelay(ctx, cfg, certFile, keyFile, n)
+		}
+	} else {
+		// Remote mode: the relay is a persistent external service we don't own,
+		// so we can't cycle it — one publisher for the whole run.
+		if cfg.caFile == "" {
+			return errors.New("--ca is required unless --start-relay")
+		}
+		if err := waitForMetrics(ctx, metricsURL(cfg), 30*time.Second); err != nil {
+			return err
+		}
+		stopPub, err := startPublisher(ctx, cfg)
 		if err != nil {
 			return err
 		}
-		defer stop()
-	} else if cfg.caFile == "" {
-		return errors.New("--ca is required unless --start-relay")
-	}
-
-	if err := waitForMetrics(ctx, "http://"+cfg.relay+"/metrics", 30*time.Second); err != nil {
-		return err
-	}
-
-	// Background publisher (only the relay is separate; publisher + subscribers
-	// share this load process).
-	stopPub, err := startPublisher(ctx, cfg)
-	if err != nil {
-		return err
-	}
-	defer stopPub()
-	sleepCtx(ctx, 2*time.Second) // let the announcement propagate
-
-	probe := func(n int) (bool, error) {
-		if err := ctx.Err(); err != nil {
-			return false, err
+		defer stopPub()
+		sleepCtx(ctx, 2*time.Second) // let the announcement propagate
+		probe = func(n int) (bool, error) {
+			if err := ctx.Err(); err != nil {
+				return false, err
+			}
+			return measure(ctx, cfg, n)
 		}
-		if err := runSubscribe(ctx, cfg, n); err != nil {
-			return false, err
-		}
-		held, _, err := lastVerdict(cfg.results)
-		if err != nil {
-			return false, fmt.Errorf("read verdict for N=%d: %w", n, err)
-		}
-		return held, nil
 	}
 
 	if auto {
@@ -172,6 +172,42 @@ func orchestrate(ctx context.Context, cfg config, sessions []int, auto bool, sea
 	}
 	return nil
 }
+
+// probeFreshRelay starts a fresh relay + publisher, runs one measurement at N,
+// then tears both down (via defers) — so the probe can't inherit state from a
+// prior one.
+func probeFreshRelay(ctx context.Context, cfg config, certFile, keyFile string, n int) (bool, error) {
+	stopRelay, err := startRelay(ctx, cfg, certFile, keyFile)
+	if err != nil {
+		return false, err
+	}
+	defer stopRelay()
+	if err := waitForMetrics(ctx, metricsURL(cfg), 30*time.Second); err != nil {
+		return false, err
+	}
+	stopPub, err := startPublisher(ctx, cfg)
+	if err != nil {
+		return false, err
+	}
+	defer stopPub()
+	sleepCtx(ctx, 2*time.Second) // let the announcement propagate
+	return measure(ctx, cfg, n)
+}
+
+// measure runs `qumo loadgen subscribe <N>` against the current relay and reads
+// back the HOLD/CANNOT-HOLD verdict from results.jsonl.
+func measure(ctx context.Context, cfg config, n int) (bool, error) {
+	if err := runSubscribe(ctx, cfg, n); err != nil {
+		return false, err
+	}
+	held, _, err := lastVerdict(cfg.results)
+	if err != nil {
+		return false, fmt.Errorf("read verdict for N=%d: %w", n, err)
+	}
+	return held, nil
+}
+
+func metricsURL(cfg config) string { return "http://" + cfg.relay + "/metrics" }
 
 // ---- subprocess drivers ----
 
