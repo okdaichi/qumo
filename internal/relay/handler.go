@@ -556,12 +556,14 @@ func (d *trackDistributor) deliverGroup(tw *moqt.TrackWriter, twCtx context.Cont
 		}
 	}
 
+	// Batch egress bytes locally per group delivery to reduce atomic CAS contention.
+	var egressTotal int64
 	for frame := range cache.frames(wait) {
 		if err := gw.WriteFrame(frame); err != nil {
 			return true
 		}
-		n := frame.Len()
-		d.egressCounter.Add(float64(n))
+		n := int64(frame.Len())
+			egressTotal += n
 		if d.session != nil {
 			d.session.addEgress(int64(n))
 		}
@@ -569,6 +571,7 @@ func (d *trackDistributor) deliverGroup(tw *moqt.TrackWriter, twCtx context.Cont
 	if cancelled {
 		return true
 	}
+	d.egressCounter.Add(float64(egressTotal))
 
 	d.deliveryHistogram.Observe(time.Since(start).Seconds())
 	return false
