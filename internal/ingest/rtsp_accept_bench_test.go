@@ -1,45 +1,17 @@
 package ingest
 
 import (
-	"context"
 	"net"
 	"net/url"
 	"strconv"
 	"testing"
-	"time"
 
-	"github.com/qumo-dev/gomoqt/moqt"
 	"github.com/qumo-dev/qumo/internal/rtsp"
 )
 
-// benchStartServer is the testing.TB variant of startRTSPServer (rtsp_test.go),
-// so benchmarks in this package can stand up a live RTSPServer.
-func benchStartServer(tb testing.TB) (*RTSPServer, net.Addr) {
-	tb.Helper()
-	server := NewRTSPServer(RTSPConfig{
-		Addr:     "127.0.0.1:0",
-		TrackMux: moqt.NewTrackMux(0),
-	})
-	ctx, cancel := context.WithCancel(context.Background())
-	errCh := make(chan error, 1)
-	go func() { errCh <- server.ListenAndServe(ctx) }()
-	tb.Cleanup(func() {
-		cancel()
-		_ = server.Shutdown(context.Background())
-		<-errCh
-	})
-	var addr net.Addr
-	for i := 0; i < 200; i++ {
-		if addr = server.Addr(); addr != nil {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if addr == nil {
-		tb.Fatal("RTSP server never started listening")
-	}
-	return server, addr
-}
+// benchStartServer (the testing.TB variant of startRTSPServer) lives in
+// rtsp_loop_bench_test.go and is shared across this package's benchmarks — do
+// not re-declare it here.
 
 // BenchmarkRTSPConnCycle measures the per-connection accept→handle→teardown
 // cost — the accept-loop goroutine path (connWg.Add → go handleConn → Done)

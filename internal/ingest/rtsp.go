@@ -176,7 +176,6 @@ func (s *RTSPServer) handleConn(ctx context.Context, conn *rtsp.Conn) {
 			if err != nil {
 				slog.Error("failed to create ingest session", "error", err)
 				resp.StatusCode = rtsp.StatusInternalServerError
-				break
 			}
 
 		case rtsp.MethodSetup:
