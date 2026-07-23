@@ -85,7 +85,7 @@ func customQUICListener() func(string, *tls.Config, *quic.Config) (transport.QUI
 		}
 		ln, err := quic.ListenEarly(conn, tlsConfig, quicConfig)
 		if err != nil {
-			conn.Close()
+			_ = conn.Close() // not actionable: QUIC listener setup failed; best-effort cleanup of the UDP conn
 			return nil, fmt.Errorf("quic.ListenEarly: %w", err)
 		}
 		return &rcvbufListener{ln: ln}, nil
