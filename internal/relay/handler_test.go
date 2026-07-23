@@ -31,10 +31,27 @@ func newTestRelayHandler(ctx context.Context) *relayHandler {
 
 // // func TestTrackDistributor_ByteCounters( removed: subscribe/unsubscribe API replaced by broadcastNotify
 
+func TestTrackDistributor_ByteCounters(t *testing.T) {
+	// Use a unique trackID per run so parallel tests don't share counter state.
+	nodeID := fmt.Sprintf("node-%d", time.Now().UnixNano())
+	trackID := "[" + nodeID + "]/live/cam1/video"
+
+	dist := newTrackDistributor(newTrackManager(0, nil), trackID, nil, nil)
+	defer close(dist.done)
+
+	// Verify the counters are wired to the correct Prometheus metric+label.
+	// This is independent of the notification mechanism (broadcastNotify) — it
+	// exercises the ingress/egress byte-counter wiring that addGroup/egress rely on.
+	dist.ingressCounter.Add(200)
+	dist.ingressCounter.Add(100)
+	dist.egressCounter.Add(150)
+
+	assert.Equal(t, 300.0, testutil.ToFloat64(metricRelayIngressBytesTotal.WithLabelValues(trackID)))
+	assert.Equal(t, 150.0, testutil.ToFloat64(metricRelayEgressBytesTotal.WithLabelValues(trackID)))
+}
 
 // TestTrackDistributor_NotificationDelivery tests notification delivery guarantees
 // func TestTrackDistributor_NotificationDelivery( removed: subscribe/unsubscribe API replaced by broadcastNotify
-
 
 // ============================================================================
 // trackDistributor Integration Tests
@@ -43,8 +60,7 @@ func newTestRelayHandler(ctx context.Context) *relayHandler {
 // TestTrackDistributor_GroupRingIntegration tests groupRing initialization
 func TestTrackDistributor_GroupRingIntegration(t *testing.T) {
 	dist := &trackDistributor{
-		ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-		
+		ring: newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
 	}
 
 	// Verify ring is properly initialized
@@ -83,8 +99,7 @@ func TestTrackDistributor_DoneChannel(t *testing.T) {
 func TestTrackDistributor_RingBehavior(t *testing.T) {
 	t.Run("ring_initialization", func(t *testing.T) {
 		dist := &trackDistributor{
-			ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-			
+			ring: newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
 		}
 
 		// Verify ring is initialized
@@ -97,8 +112,7 @@ func TestTrackDistributor_RingBehavior(t *testing.T) {
 
 	t.Run("earliest_available_at_start", func(t *testing.T) {
 		dist := &trackDistributor{
-			ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-			
+			ring: newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
 		}
 
 		earliest := dist.ring.earliestAvailable()
@@ -107,8 +121,7 @@ func TestTrackDistributor_RingBehavior(t *testing.T) {
 
 	t.Run("catchup_logic", func(t *testing.T) {
 		dist := &trackDistributor{
-			ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-			
+			ring: newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
 		}
 
 		// Initially head should be 0
@@ -134,8 +147,9 @@ func TestRelayHandler_ConcurrentSubscribe(t *testing.T) {
 
 	// Pre-fill distributors to avoid real Session.Subscribe calls
 	const numTracks = 10
-	for range numTracks {
-		trackID := "[test-node]/test/" + "track-0"
+	for i := range numTracks {
+		name := moqt.TrackName(fmt.Sprintf("track-%d", i))
+		trackID := "[test-node]/test/" + string(name)
 		d := newTrackDistributor(h.tracks, trackID, nil, nil)
 		defer close(d.done)
 		h.tracks.store(trackID, d)
@@ -143,11 +157,14 @@ func TestRelayHandler_ConcurrentSubscribe(t *testing.T) {
 
 	done := make(chan struct{}, numTracks)
 
-	for range numTracks {
+	for i := range numTracks {
 		go func() {
 			defer func() { done <- struct{}{} }()
+			name := moqt.TrackName(fmt.Sprintf("track-%d", i))
 
 			// Should hit the cache and return immediately
+			tr := h.subscribe(name)
+			_ = tr
 		}()
 	}
 

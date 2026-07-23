@@ -465,6 +465,21 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 			continue
 		}
 
+		// Single wait + cancellation point. Every non-delivery path converges
+		// here so the egress always observes cancellation — twCtx.Done()
+		// (subscriber disconnect, or relay shutdown via conn close → stream-
+		// context cancel) or d.done (upstream ended). The delivery path is
+		// covered by OpenGroupAt/WriteFrame erroring on the same stream reset.
+		// Without this convergence a fell-behind/cache-miss spin could blind-
+		// loop past cancellation and pin gomoqt's stream-handler WaitGroup,
+		// hanging Server.Shutdown/Close (#286).
+		//
+		// No poll-timer fallback: broadcast() (called on every fill) advances
+		// the notify seq and closes the previous channel, waking this select;
+		// egress re-reads head() fresh each iteration (level-triggered), so
+		// coalesced signals never lose data. Guarded by
+		// TestRelayChain_NotifyOnlyDelivery (delivery is complete and prompt
+		// with no poll fallback).
 		select {
 		case <-state.ch:
 			// Channel closed — new data arrived. Refresh state and loop.
