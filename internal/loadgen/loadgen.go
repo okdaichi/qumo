@@ -274,6 +274,15 @@ type carryResult struct {
 
 func runCarry(ctx context.Context, target dialTarget, sessions int, hold time.Duration) (carryResult, error) {
 	client := &http.Client{Timeout: 5 * time.Second}
+
+	// Let the relay's RSS settle before taking the baseline snapshot. Without
+	// this pause the base scrape may catch transient startup allocations (TLS
+	// setup, initial memory pools, listener creation) that the Go GC collects
+	// before the steady-state scrape. For small session counts the subscriber
+	// RSS delta can then be smaller than the GC'd startup memory, producing a
+	// negative heap_mb in the dashboard. A one-second pause is enough for the
+	// young-gen GC to run and release those transient allocations.
+	sleepCtx(ctx, time.Second)
 	base, baseErr := fetchMetrics(ctx, client, target.metrics)
 	if baseErr != nil {
 		slog.Warn("relay /metrics unreadable; per-session cost will be unavailable", "url", target.metrics, "err", baseErr)
@@ -328,8 +337,15 @@ func runCarry(ctx context.Context, target dialTarget, sessions int, hold time.Du
 	}
 	if baseErr == nil && steadyErr == nil {
 		res.metricsScraped = true
-		res.relayGoros = int(steady.goroutines - base.goroutines)
-		res.relayRSSMB = (steady.rssBytes - base.rssBytes) / (1024 * 1024)
+		// Clamp at zero: RSS/goroutines can never decrease from adding sessions.
+		// A negative delta is a measurement artifact (startup transients at base
+		// that were GC'd by the time steady was taken).
+		res.relayGoros = max(0, int(steady.goroutines-base.goroutines))
+		deltaRSS := steady.rssBytes - base.rssBytes
+		if deltaRSS < 0 {
+			deltaRSS = 0
+		}
+		res.relayRSSMB = deltaRSS / (1024 * 1024)
 		res.relaySessions = steady.sessionsActive
 		if res.connected > 0 {
 			res.perSessionKB = res.relayRSSMB * 1024 / float64(res.connected)
