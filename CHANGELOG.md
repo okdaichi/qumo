@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`internal/ingest` build: duplicate `benchStartServer` redeclaration.** Two parallel RTSP bench merges each added an identical `benchStartServer` helper (`rtsp_accept_bench_test.go` and `rtsp_loop_bench_test.go`), a same-package redeclaration that broke `go test ./...` / `golangci-lint` on `main` and blocked every open PR's CI. The duplicate is removed from `rtsp_accept_bench_test.go`; the single shared helper lives in `rtsp_loop_bench_test.go` (alongside `benchAnnounce`).
+
 - **`internal/ingest` RTSP session accumulation per connection.** `handleConn` deferred `sess.Close()` inside its request loop, so every successful ANNOUNCE on a long-lived RTSP connection stacked another deferred close — sessions (and their goroutines/announcement state) accumulated until the TCP connection ended. The loop now closes any previous session before establishing a new one, with a single outer deferred close for final cleanup. `BenchmarkRTSPAnnounceLoop` is added as a regression guard.
 
 ### Changed
