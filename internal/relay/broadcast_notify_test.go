@@ -76,8 +76,7 @@ func TestBroadcastNotify_NotifyWakesWaiter(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		state := n.listen()
-		state = n.listen() // refresh
-		<-state.ch         // wait for close
+		<-state.ch // wait for close
 		close(done)
 	}()
 
