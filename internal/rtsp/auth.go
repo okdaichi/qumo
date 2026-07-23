@@ -166,10 +166,21 @@ func selectQop(advertised string) string {
 	if advertised == "" {
 		return ""
 	}
-	for _, q := range strings.Split(advertised, ",") {
-		if strings.TrimSpace(q) == "auth" {
+	// Allocation-free scan: strings.Split would heap-allocate a []string on
+	// every call. selectQop runs during RTSP Digest auth header construction
+	// (per connection setup), so avoid the allocation.
+	for {
+		i := strings.IndexByte(advertised, ',')
+		if i < 0 {
+			if strings.TrimSpace(advertised) == "auth" {
+				return "auth"
+			}
+			break
+		}
+		if strings.TrimSpace(advertised[:i]) == "auth" {
 			return "auth"
 		}
+		advertised = advertised[i+1:]
 	}
 	// auth-int not supported; if only auth-int is offered, fall back to legacy.
 	return ""
