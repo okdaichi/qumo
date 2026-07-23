@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`internal/ingest` RTSP session accumulation per connection.** `handleConn` deferred `sess.Close()` inside its request loop, so every successful ANNOUNCE on a long-lived RTSP connection stacked another deferred close — sessions (and their goroutines/announcement state) accumulated until the TCP connection ended. The loop now closes any previous session before establishing a new one, with a single outer deferred close for final cleanup. `BenchmarkRTSPAnnounceLoop` is added as a regression guard.
+
 ### Changed
 
 - **`internal/rtsp` `selectQop` is allocation-free.** The RTSP Digest "qop" parser (run during connection-setup auth header construction) used `strings.Split`, allocating a `[]string` each call. Replaced with an `IndexByte` scan that allocates nothing — 1 → 0 allocs/op and ~75% faster on `BenchmarkSelectQop`.
