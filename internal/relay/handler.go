@@ -528,9 +528,24 @@ func (d *trackDistributor) deliverGroup(tw *moqt.TrackWriter, twCtx context.Cont
 	// or distributor shut down), which ends the iteration; cancelled records that
 	// so we return the right egress verdict below.
 	cancelled := false
+	// lastSeen tracks the notify sequence across wait() calls so a wakeup is
+	// never missed. Without it, wait() would read the current channel fresh
+	// inside the select: if a notify landed between frames() deciding to block
+	// and wait() calling listen(), listen() would return the freshly-swapped
+	// (open) channel and the select would block on it — delaying the in-flight
+	// frame until the *next* notify. The seq check catches a notify that already
+	// happened; selecting on the captured state.ch catches one that happens
+	// after. Mirrors the seq guard in the egress loop.
+	lastSeen := d.notify.listen()
 	wait := func() bool {
+		state := d.notify.listen()
+		if state.seq > lastSeen.seq {
+			lastSeen = state
+			return true
+		}
 		select {
-		case <-d.notify.listen().ch:
+		case <-state.ch:
+			lastSeen = d.notify.listen()
 			return true
 		case <-d.done:
 			cancelled = true
