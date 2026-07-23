@@ -401,13 +401,12 @@ func TestTrackDistributor_MeteringIngress(t *testing.T) {
 	payload := []byte("hello-world") // 11 bytes
 	src := &fakeFrameSource{frames: [][]byte{payload}}
 
-	var wg sync.WaitGroup
-	cache := dist.ring.reserve(moqt.GroupSequence(1))
-	ok := dist.processGroup(context.Background(), &wg, moqt.GroupSequence(1), src)
+	ok := dist.processGroup(context.Background(), moqt.GroupSequence(1), src)
 	require.True(t, ok)
-	wg.Wait()
-
-	_ = cache // reserved above
+	// processGroup dispatches to a worker; close the job channel and wait so the
+	// fill completes before asserting on its metering side effects.
+	close(dist.fillJobs)
+	dist.fillWg.Wait()
 
 	assert.Equal(t, int64(len(payload)), sess.ingressBytes.Load(),
 		"processGroup must add ingress bytes to the broadcast session")
@@ -447,10 +446,10 @@ func TestTrackDistributor_MeteringNilSession(t *testing.T) {
 	t.Cleanup(func() { close(dist.done) })
 
 	src := &fakeFrameSource{frames: [][]byte{[]byte("frame")}}
-	var wg sync.WaitGroup
 	assert.NotPanics(t, func() {
-		dist.processGroup(context.Background(), &wg, moqt.GroupSequence(1), src)
-		wg.Wait()
+		dist.processGroup(context.Background(), moqt.GroupSequence(1), src)
+		close(dist.fillJobs)
+		dist.fillWg.Wait()
 	})
 }
 
@@ -459,8 +458,8 @@ func TestTrackDistributor_MeteringNilSession(t *testing.T) {
 // ============================================================================
 
 // TestTrackDistributor_ProcessGroup_SemaphoreLimitsConcurrency verifies that
-// processGroup blocks (semaphore-full) when MaxGroupFillsInFlight goroutines
-// are already in flight, and resumes as soon as a slot is released.
+// processGroup blocks (worker-pool-full) when MaxGroupFillsInFlight fill jobs
+// are already in flight, and resumes as soon as a worker slot is released.
 // Uses testing/synctest for deterministic goroutine scheduling.
 func TestTrackDistributor_ProcessGroup_SemaphoreLimitsConcurrency(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -476,8 +475,8 @@ func TestTrackDistributor_ProcessGroup_SemaphoreLimitsConcurrency(t *testing.T) 
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		// Each slow source blocks indefinitely until the context is cancelled.
-		// This keeps fill goroutines alive so we can count in-flight slots.
+		// Each slow source blocks the worker for 1 hour of synctest time, keeping
+		// its backpressure slot occupied so we can observe the full-pool block.
 		slowSrc := func() frameSource {
 			return &slowFrameSource{
 				fakeFrameSource: fakeFrameSource{frames: [][]byte{[]byte("x")}},
@@ -485,20 +484,18 @@ func TestTrackDistributor_ProcessGroup_SemaphoreLimitsConcurrency(t *testing.T) 
 			}
 		}
 
-		var wg sync.WaitGroup
-
 		// Spin up `limit` groups — all should be accepted without blocking.
 		for i := range limit {
-			ok := dist.processGroup(ctx, &wg, moqt.GroupSequence(i+1), slowSrc())
+			ok := dist.processGroup(ctx, moqt.GroupSequence(i+1), slowSrc())
 			require.True(t, ok, "processGroup should succeed while under the limit")
 		}
 
-		// All slots are now occupied. A further processGroup call must block.
+		// All worker slots are now occupied. A further processGroup call must block.
 		blocked := make(chan struct{})
 		accepted := make(chan struct{})
 		go func() {
 			close(blocked)
-			ok := dist.processGroup(ctx, &wg, moqt.GroupSequence(limit+1), slowSrc())
+			ok := dist.processGroup(ctx, moqt.GroupSequence(limit+1), slowSrc())
 			if ok {
 				close(accepted)
 			}
@@ -510,30 +507,33 @@ func TestTrackDistributor_ProcessGroup_SemaphoreLimitsConcurrency(t *testing.T) 
 		// Verify it is still blocked (accepted not closed).
 		select {
 		case <-accepted:
-			t.Fatal("processGroup should be blocked when semaphore is full")
+			t.Fatal("processGroup should be blocked when the worker pool is full")
 		default:
 		}
 
-		// Advance time past the slow-source delay to let one fill goroutine finish,
-		// which releases a semaphore slot and unblocks the waiting processGroup.
+		// Advance time past the slow-source delay to let one fill complete, which
+		// frees a worker slot and unblocks the waiting processGroup.
 		time.Sleep(2 * time.Hour)
 		synctest.Wait()
 
 		select {
 		case <-accepted:
 		default:
-			t.Fatal("processGroup should have unblocked after a slot was released")
+			t.Fatal("processGroup should have unblocked after a worker slot was released")
 		}
 
-		// Drain remaining goroutines.
+		// Drain remaining workers: close the job channel so workers exit their
+		// range loop, then advance time past the slow sources so in-flight fills
+		// complete and the workers can exit.
 		cancel()
+		close(dist.fillJobs)
+		time.Sleep(2 * time.Hour)
 		synctest.Wait()
-		wg.Wait()
 	})
 }
 
 // TestTrackDistributor_ProcessGroup_CtxCancelUnblocks verifies that a
-// processGroup call blocked on a full semaphore returns false when its
+// processGroup call blocked on a full worker pool returns false when its
 // context is cancelled.
 func TestTrackDistributor_ProcessGroup_CtxCancelUnblocks(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -546,20 +546,18 @@ func TestTrackDistributor_ProcessGroup_CtxCancelUnblocks(t *testing.T) {
 
 		ctx, cancel := context.WithCancel(context.Background())
 
-		var wg sync.WaitGroup
-
-		// Fill the single slot with a goroutine that blocks until cancelled.
+		// Fill the single worker slot with a job that blocks.
 		holdSrc := &slowFrameSource{
 			fakeFrameSource: fakeFrameSource{frames: [][]byte{[]byte("x")}},
 			delay:           1 * time.Hour,
 		}
-		ok := dist.processGroup(ctx, &wg, moqt.GroupSequence(1), holdSrc)
+		ok := dist.processGroup(ctx, moqt.GroupSequence(1), holdSrc)
 		require.True(t, ok)
 
-		// Second call must block on the full semaphore.
+		// Second call must block on the full worker pool.
 		result := make(chan bool, 1)
 		go func() {
-			result <- dist.processGroup(ctx, &wg, moqt.GroupSequence(2), &fakeFrameSource{frames: [][]byte{[]byte("y")}})
+			result <- dist.processGroup(ctx, moqt.GroupSequence(2), &fakeFrameSource{frames: [][]byte{[]byte("y")}})
 		}()
 
 		synctest.Wait()
@@ -575,7 +573,11 @@ func TestTrackDistributor_ProcessGroup_CtxCancelUnblocks(t *testing.T) {
 			t.Fatal("processGroup did not return after ctx cancel")
 		}
 
-		wg.Wait()
+		// Advance time past the slow source so the worker's fill completes and it
+		// exits cleanly (no deadlock/leak on exit).
+		close(dist.fillJobs)
+		time.Sleep(2 * time.Hour)
+		synctest.Wait()
 	})
 }
 

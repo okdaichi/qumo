@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`internal/relay` group fills use a fixed worker pool instead of a per-group goroutine.** `processGroup` previously did `wg.Go(func(){...})` per accepted group — spawning a goroutine and allocating two closures (the dispatch body + the per-frame fill callback) on every group, on the ingest hot path. It now dispatches a `fillJob` struct to a pool of `MaxGroupFillsInFlight` long-lived worker goroutines (created once per `trackDistributor`), and the per-frame callback is the `onFrame` method. Concurrency is bounded identically (one in-flight fill per worker via the existing `fillSem`), shutdown order is explicit (`close(fillJobs)` → `fillWg.Wait()` → `close(done)` so every reserved cache is filled before egress sees `done`), and the slot is acquired before `ring.reserve` so cancellation never leaks a reserved cache. Measured on `BenchmarkProcessGroup`: 11 → 9 allocs/op (−18%), 454 → 377 B/op (−17%), ~15% faster; no regression on `BenchmarkGroupRing_Fill`. Supersedes #336 (rebased onto the #332 atomic-seqnum notify API).
+
 ### Fixed
 
 - **`internal/ingest` build: duplicate `benchStartServer` redeclaration.** Two parallel RTSP bench merges each added an identical `benchStartServer` helper (`rtsp_accept_bench_test.go` and `rtsp_loop_bench_test.go`), a same-package redeclaration that broke `go test ./...` / `golangci-lint` on `main` and blocked every open PR's CI. The duplicate is removed from `rtsp_accept_bench_test.go`; the single shared helper lives in `rtsp_loop_bench_test.go` (alongside `benchAnnounce`).
