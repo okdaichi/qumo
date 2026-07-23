@@ -349,6 +349,13 @@ func (tm *trackManager) remove(trackID string, d *trackDistributor) {
 	tm.m.CompareAndDelete(trackID, d)
 }
 
+// fillJob is a unit of fill work dispatched to a pool worker goroutine.
+// Using a struct instead of closures avoids heap allocation per job.
+type fillJob struct {
+	src   frameSource
+	cache *groupCache
+}
+
 type trackDistributor struct {
 	trackID string
 	ring    *groupRing
@@ -369,10 +376,18 @@ type trackDistributor struct {
 	// session is non-nil when backend metering is active for this broadcast.
 	session *broadcastSession
 
-	// fillSem is a buffered-channel semaphore that limits the number of
-	// concurrently running fill goroutines. Its capacity is set to
-	// MaxGroupFillsInFlight at construction time.
+	// fillSem is a buffered-channel semaphore acquired BEFORE reserving a ring
+	// slot. This guarantees we never leak a reserved cache on context
+	// cancellation — the send may block but no ring slot has been consumed.
+	// Capacity is MaxGroupFillsInFlight.
 	fillSem chan struct{}
+
+	// fillJobs dispatches fill work to a fixed pool of long-lived worker
+	// goroutines. Its capacity equals MaxGroupFillsInFlight so a send after
+	// acquiring fillSem always succeeds immediately.
+	fillJobs chan fillJob
+	// fillWg tracks the worker goroutines for clean shutdown.
+	fillWg sync.WaitGroup
 
 	mu          sync.RWMutex
 	subscribers []chan struct{}
@@ -381,6 +396,7 @@ type trackDistributor struct {
 }
 
 func newTrackDistributor(manager *trackManager, trackID string, broadSess *broadcastSession, sampler *statsSampler) *trackDistributor {
+	nWorkers := maxGroupFillsInFlightOrPanic()
 	d := &trackDistributor{
 		trackID:           trackID,
 		ring:              newGroupRing(manager.cacheSize, manager.pool),
@@ -390,8 +406,15 @@ func newTrackDistributor(manager *trackManager, trackID string, broadSess *broad
 		deliveryHistogram: metricGroupDeliveryHistogram.WithLabelValues(trackID),
 		sampler:           sampler,
 		session:           broadSess,
-		fillSem:           make(chan struct{}, maxGroupFillsInFlightOrPanic()),
+		fillSem:           make(chan struct{}, nWorkers),
+		fillJobs:          make(chan fillJob, nWorkers),
 		done:              make(chan struct{}),
+	}
+	// Start the fixed worker pool. These goroutines live for the lifetime of
+	// the distributor, eliminating per-group go func() churn.
+	d.fillWg.Add(nWorkers)
+	for range nWorkers {
+		go d.fillWorker()
 	}
 	d.sampler.addTrack(d.trackID, d)
 	return d
@@ -579,59 +602,73 @@ func (d *trackDistributor) unsubscribe(ch chan struct{}) {
 func (d *trackDistributor) ingest(ctx context.Context, src *moqt.TrackReader) {
 	defer d.manager.remove(d.trackID, d)
 	defer d.sampler.removeTrack(d.trackID)
-	defer close(d.done)
-
-	// wg tracks in-flight fill goroutines so we can wait for them before
-	// closing d.done (which signals egress goroutines to stop).
-	var wg sync.WaitGroup
-	defer wg.Wait()
+	// Workers must complete before we signal egress. The combined defer
+	// ensures the correct order: close fillJobs → Wait → close done.
+	// Using one closure avoids LIFO ordering issues with separate defers.
+	defer func() {
+		close(d.fillJobs) // signal workers to exit their range loops
+		d.fillWg.Wait()   // wait for all in-flight fills to complete
+		close(d.done)     // signal egress goroutines to stop
+	}()
 
 	for {
 		gr, err := src.AcceptGroup(ctx)
 		if err != nil {
 			return
 		}
-		if !d.processGroup(ctx, &wg, gr.GroupSequence(), gr) {
+		if !d.processGroup(ctx, gr.GroupSequence(), gr) {
 			return
 		}
 	}
 }
 
-// processGroup acquires a semaphore slot and launches a fill goroutine for the
-// given group. It is separated from ingest so that tests can drive it directly
-// with a fakeFrameSource without needing a real *moqt.TrackReader.
-// Returns false if ctx is cancelled while waiting for a semaphore slot.
-func (d *trackDistributor) processGroup(ctx context.Context, wg *sync.WaitGroup, seq moqt.GroupSequence, src frameSource) bool {
-	// Acquire a fill semaphore slot before reserving the ring slot.
-	// This bounds in-flight goroutines to MaxGroupFillsInFlight and
-	// prevents unbounded goroutine growth. The semaphore is acquired
-	// after AcceptGroup returns, not before — it does not gate AcceptGroup.
+// processGroup acquires a backpressure slot, reserves a ring slot, and
+// dispatches a fill job to the worker pool. The backpressure slot is acquired
+// BEFORE reserve so that context cancellation never leaks a reserved cache.
+// Send to fillJobs always succeeds because the semaphore guarantees capacity.
+// Returns false if ctx is cancelled while waiting for a backpressure slot.
+func (d *trackDistributor) processGroup(ctx context.Context, seq moqt.GroupSequence, src frameSource) bool {
+	// Acquire backpressure slot before reserving — if cancelled here, no ring
+	// slot has been consumed and no cache is leaked.
 	select {
 	case d.fillSem <- struct{}{}:
 	case <-ctx.Done():
 		return false
 	}
 
-	// Reserve a ring slot synchronously to preserve group ordering,
-	// then fill frames concurrently so the next AcceptGroup is not blocked.
+	// Reserve ring slot synchronously to preserve group ordering.
 	cache := d.ring.reserve(seq)
-	metricGroupFillsInflight.Inc()
-	wg.Go(func() {
-		defer func() {
-			<-d.fillSem
-			metricGroupFillsInflight.Dec()
-		}()
-		d.ring.fill(src, cache, func(n int) {
-			if n > 0 {
-				d.ingressCounter.Add(float64(n))
-				if d.session != nil {
-					d.session.addIngress(int64(n))
-				}
-			}
-			d.broadcast()
-		})
-	})
+
+	// Dispatch to the worker pool. Guaranteed non-blocking because fillSem
+	// limits in-flight jobs to ≤ channel capacity.
+	d.fillJobs <- fillJob{src: src, cache: cache}
 	return true
+}
+
+// fillWorker is a long-lived goroutine that processes fill jobs from the pool
+// channel. It replaces the per-group go func() pattern, eliminating goroutine
+// creation/destruction overhead. Workers exit when fillJobs is closed (on
+// ingest return).
+func (d *trackDistributor) fillWorker() {
+	defer d.fillWg.Done()
+	for job := range d.fillJobs {
+		metricGroupFillsInflight.Inc()
+		d.ring.fill(job.src, job.cache, d.onFrame)
+		metricGroupFillsInflight.Dec()
+		<-d.fillSem // release backpressure slot
+	}
+}
+
+// onFrame is the per-frame callback passed to ring.fill. Extracted as a method
+// so the worker pool avoids allocating a closure per fill job.
+func (d *trackDistributor) onFrame(n int) {
+	if n > 0 {
+		d.ingressCounter.Add(float64(n))
+		if d.session != nil {
+			d.session.addIngress(int64(n))
+		}
+	}
+	d.broadcast()
 }
 
 // broadcast notifies all subscribers that new data is available.
