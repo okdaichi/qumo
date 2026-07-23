@@ -220,10 +220,7 @@ func Run(args []string) error {
 	// defaults to 256 KB (262144) which is well above the Windows default
 	// (~8 KB) and matches Linux auto-tuning. Set to 0 to disable the override
 	// and use the OS default.
-	customLN, err := customQUICListener()
-	if err != nil {
-		return fmt.Errorf("customQUICListener: %w", err)
-	}
+	customLN := customQUICListener()
 	moqtServer := &moqt.Server{
 		Addr:               addr,
 		TLSConfig:          tlsConfig,

@@ -57,15 +57,16 @@ func byteSize(n int) string {
 // buffer read from RELAY_UDP_RCVBUF. It wraps the quic-go EarlyListener into
 // the transport.QUICListener interface required by gomoqt's moqt.Server.
 //
-// Call once during server construction; the returned function is meant to be
-// assigned to moqt.Server.ListenFunc. It returns a non-nil function only when
-// the buffer override is actually needed: if the user explicitly disabled the
-// override (RELAY_UDP_RCVBUF=0) or the default applies without issue.
-func customQUICListener() (func(string, *tls.Config, *quic.Config) (transport.QUICListener, error), error) {
+// customQUICListener returns a QUIC-listener factory that applies the UDP
+// receive-buffer override (SO_RCVBUF) read from RELAY_UDP_RCVBUF, suitable for
+// assignment to moqt.Server.ListenFunc. It returns nil when the override is
+// disabled (RELAY_UDP_RCVBUF=0); in that case the caller leaves ListenFunc at
+// its zero value and gomoqt uses its default listener.
+func customQUICListener() func(string, *tls.Config, *quic.Config) (transport.QUICListener, error) {
 	bufSize, desc := udpRcvBufFromEnv()
 	if bufSize <= 0 {
 		slog.Info("relay: UDP receive buffer override disabled, using OS default")
-		return nil, nil
+		return nil
 	}
 	slog.Info("relay: UDP receive buffer", "size", desc)
 
@@ -88,7 +89,7 @@ func customQUICListener() (func(string, *tls.Config, *quic.Config) (transport.QU
 			return nil, fmt.Errorf("quic.ListenEarly: %w", err)
 		}
 		return &rcvbufListener{ln: ln}, nil
-	}, nil
+	}
 }
 
 // ---- listener wrapper ----
@@ -207,7 +208,11 @@ type sendStreamWrapper struct{ *quic.SendStream }
 type receiveStreamWrapper struct{ *quic.ReceiveStream }
 
 // compile-time assertions that the wrappers satisfy the transport interfaces.
+// These also guard against silent breakage if gomoqt/quic-go change the
+// transport.StreamConn / QUICListener / stream method signatures.
 var (
+	_ transport.QUICListener  = (*rcvbufListener)(nil)
+	_ transport.StreamConn    = (*rcvbufConn)(nil)
 	_ transport.Stream        = streamWrapper{}
 	_ transport.SendStream    = sendStreamWrapper{}
 	_ transport.ReceiveStream = receiveStreamWrapper{}
