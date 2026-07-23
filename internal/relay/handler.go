@@ -514,37 +514,43 @@ func (d *trackDistributor) deliverGroup(tw *moqt.TrackWriter, twCtx context.Cont
 
 	start := time.Now()
 
-	// wait blocks for the next trickled frame of a still-filling group, woken by
-	// the per-frame broadcast() notify (the sole wakeup — no poll fallback; see
-	// the egress wait comment). It returns false on cancellation (subscriber gone
-	// or distributor shut down), which ends the iteration; cancelled records that
-	// so we return the right egress verdict below.
-	cancelled := false
-	wait := func() bool {
+	// Inline frame iteration — no heap-allocated closures on the hot path.
+	// Replaces the former wait closure + cache.frames(wait) iterator pair,
+	// which allocated two closures per group delivery (one for wait capturing
+	// d/twCtx/notify/cancelled, one for the range-over-func iterator).
+	// This is the hottest per-subscriber path: at 15K subscribers × 30fps,
+	// that's 450K group deliveries/second, each allocating closures.
+	var i int
+	for {
+		frame := cache.next(i)
+		if frame != nil {
+			if err := gw.WriteFrame(frame); err != nil {
+				return true
+			}
+			n := frame.Len()
+			d.egressCounter.Add(float64(n))
+			if d.session != nil {
+				d.session.addEgress(int64(n))
+			}
+			i++
+			continue
+		}
+		// Frame not yet available; check for completion first so a finished
+		// group with all frames consumed does not enter the select.
+		if cache.isComplete() {
+			break
+		}
+		// Wait for a new frame notification, honouring cancellation.
+		// Return directly instead of setting a cancelled flag — the select
+		// branches are exactly the termination conditions.
 		select {
 		case <-notify:
-			return true
+			// Frame may now be available; retry current index.
 		case <-d.done:
-			cancelled = true
-			return false
+			return true
 		case <-twCtx.Done():
-			cancelled = true
-			return false
-		}
-	}
-
-	for frame := range cache.frames(wait) {
-		if err := gw.WriteFrame(frame); err != nil {
 			return true
 		}
-		n := frame.Len()
-		d.egressCounter.Add(float64(n))
-		if d.session != nil {
-			d.session.addEgress(int64(n))
-		}
-	}
-	if cancelled {
-		return true
 	}
 
 	d.deliveryHistogram.Observe(time.Since(start).Seconds())
