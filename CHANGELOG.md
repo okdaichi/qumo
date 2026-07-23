@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`internal/ingest` RTSP accept loop avoids per-connection `defer`.** The per-connection goroutine in `ListenAndServe` called `connWg.Done()` via `defer`; replaced with an explicit call after `handleConn` returns, removing the defer overhead from the accept hot path. `BenchmarkRTSPConnCycle` is added as a regression/improvement guard.
+
 - **`internal/rtsp` `selectQop` is allocation-free.** The RTSP Digest "qop" parser (run during connection-setup auth header construction) used `strings.Split`, allocating a `[]string` each call. Replaced with an `IndexByte` scan that allocates nothing — 1 → 0 allocs/op and ~75% faster on `BenchmarkSelectQop`.
 
 ### Added

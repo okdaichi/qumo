@@ -71,8 +71,8 @@ func (s *RTSPServer) ListenAndServe(ctx context.Context) error {
 		}
 		s.connWg.Add(1)
 		go func() {
-			defer s.connWg.Done()
 			s.handleConn(connCtx, conn)
+			s.connWg.Done()
 		}()
 	}
 }
