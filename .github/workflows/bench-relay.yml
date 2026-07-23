@@ -3,13 +3,21 @@ name: Relay Bench (nightly + on-demand)
 # Comprehensive relay-chain benchmark run: full fan-out scalability sweep
 # (K=1..128), load × fan-out, object-size × fan-out, series per-hop latency,
 # the reconnect-storm churn characterization, and a long soak. Emits JSONL,
-# CSV + SVG plots, uploads as an artifact.
+# CSV + SVG plots, and one consolidated results/index.html dashboard (capacity
+# headline + decision summary + inline plots); uploads them as an artifact.
 #
 # A second job, `paramexp`, runs a Bayesian-optimization sweep of the relay's
 # tuning knobs (ring size / frame / notify-timeout × fan-out) — the scientific
 # landscape exploration. Each vector runs the same integration fan-out bench
 # via tools/paramexp/example/relay/bench.sh; the GP + analysis produce a report
 # (knees, importance, interactions, stability, suggested-next).
+#
+# A third job, `capacity-sweep`, runs an out-of-process concurrent-session
+# capacity sweep via the `tools/capacity` driver (which drives the `qumo loadgen`
+# primitives): the relay runs as its own process pinned to a disjoint core set
+# from the load, so the measured per-session cost is the relay's (scraped from
+# /metrics), not the load generator's. It produces the same capacity dashboard as
+# the other jobs.
 #
 # Triggers:
 #   - schedule: nightly, 3h soak + paramexp sweep.
@@ -162,7 +170,11 @@ jobs:
         with:
           deno-version: "2.8.1"
 
-      - name: Generate CSV + plots
+      # Builds results/index.html — the one consolidated dashboard (capacity
+      # headline + decision summary + every plot inline) alongside the CSVs/SVGs.
+      # The paramexp GP/ML findings live in the separate `paramexp` job's
+      # artifact; fold them in locally with `--paramexp <px-report-dir>`.
+      - name: Generate CSV + plots + dashboard
         if: always()
         run: deno run --allow-read=results --allow-write=results scripts/relay_bench_report.ts results
 
@@ -228,4 +240,64 @@ jobs:
         with:
           name: relay-paramexp
           path: px-results/
+          if-no-files-found: warn
+
+  # Out-of-process capacity sweep via the `tools/capacity` driver, which drives
+  # the `qumo loadgen` primitives. The relay runs as its own subprocess pinned to
+  # a disjoint core set from the load, so the reported per-session cost is the
+  # RELAY's (scraped from /metrics), not the load generator's. Hosted runners are
+  # small (~4 cores) and single-host, so this runs a MODEST sweep to exercise the
+  # path and produce a capacity dashboard artifact; true 25K-scale validation
+  # needs a distributed (multi-machine) run — point the driver at a remote relay
+  # with `--relay <host:port> --ca <cert>` (no `--start-relay`).
+  capacity-sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      RESULTS_DIR: ${{ github.workspace }}/loadgen-results
+    steps:
+      - name: Checkout
+        # SHA: actions/checkout@v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      - name: Set up Go
+        # SHA: actions/setup-go@v6
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Raise UDP buffer limits
+        run: sudo sysctl -w net.core.rmem_max=16777216 net.core.wmem_max=16777216
+
+      - name: Build qumo + capacity driver
+        run: |
+          go build -o qumo .
+          go build -o capacity ./tools/capacity
+
+      - name: Out-of-process capacity sweep (relay pinned apart from load)
+        run: |
+          ulimit -n 1048576 2>/dev/null || true
+          ./capacity --qumo ./qumo \
+            --start-relay --relay-cores 0-1 \
+            --sessions "500 1000 2000" --hold 10s \
+            --results "$RESULTS_DIR"
+
+      - name: Set up Deno
+        if: always()
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: "2.8.1"
+
+      - name: Generate capacity dashboard
+        if: always()
+        run: deno run --allow-read="$RESULTS_DIR" --allow-write="$RESULTS_DIR" scripts/relay_bench_report.ts "$RESULTS_DIR"
+
+      - name: Upload loadgen results
+        if: always()
+        # SHA: actions/upload-artifact@v6
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: relay-loadgen-capacity
+          path: loadgen-results/
           if-no-files-found: warn

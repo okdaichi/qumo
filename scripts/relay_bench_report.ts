@@ -5,12 +5,20 @@
 //   - <dir>/results.csv   — one row per record (the authoritative artifact)
 //   - <dir>/summary.csv   — one row per group + decision-grade derived values
 //                           (per-hop latency slope, fan-out knee K)
+//   - <dir>/derived.csv   — the headline decision numbers in one file
 //   - <dir>/plots/*.svg   — hand-rolled SVG charts (no charting dep):
 //                           line + regression fit, box-and-whisker, bar,
 //                           and a 3-panel overview
+//   - <dir>/index.html    — ONE consolidated, self-contained dashboard: the
+//                           capacity headline (concurrent-session ceiling),
+//                           decision summary, every plot inline, and — when a
+//                           paramexp report dir is supplied — the GP/ML findings
+//                           (knees, η² importance, interactions, suggested-next).
+//                           This is the "easy to see" surface: open it, no server.
 //
 // Usage:
 //   deno run --allow-read=<dir> --allow-write=<dir> scripts/relay_bench_report.ts <dir>
+//   deno run --allow-read --allow-write scripts/relay_bench_report.ts <dir> --paramexp <px-report-dir>
 //
 // SVG is emitted directly (no browser, no native deps) so charts render inline
 // on GitHub and scale crisply. Defensive: a plot with <2 data points is skipped
@@ -41,6 +49,12 @@ interface Rec {
 	goros?: number;
 	cpu_ms?: number;
 	fairness?: number; // Jain's index 0-1
+	// capacity group (BenchmarkRelay_ConnectionCarry): concurrent-session axis.
+	sessions?: number;
+	connected?: number;
+	receiving?: number;
+	per_session_kb?: number;
+	verdict?: string; // HOLDS | CANNOT-HOLD
 }
 
 interface Pt {
@@ -66,6 +80,18 @@ interface Fit {
 }
 
 const dir = Deno.args[0] ?? "results";
+// Optional paramexp report dir (report.json + SVGs from the GP/ML analysis).
+// When present, the consolidated dashboard folds in knees / importance /
+// interactions / suggested-next. Absent → the ML section is simply omitted.
+function argValue(flag: string): string | undefined {
+	const i = Deno.args.indexOf(flag);
+	return i >= 0 && i + 1 < Deno.args.length ? Deno.args[i + 1] : undefined;
+}
+const paramexpDir = argValue("--paramexp");
+
+// Every SVG the report emits is also collected here so the dashboard can inline
+// it (one self-contained index.html, no external image requests).
+const collected: { name: string; svg: string }[] = [];
 
 function readRecords(d: string): Rec[] {
 	const path = `${d}/results.jsonl`;
@@ -117,6 +143,11 @@ const COLUMNS: [string, (r: Rec) => string][] = [
 	["goros", (r) => num(r.goros)],
 	["cpu_ms", (r) => num(r.cpu_ms)],
 	["fairness", (r) => num(r.fairness)],
+	["sessions", (r) => num(r.sessions)],
+	["connected", (r) => num(r.connected)],
+	["receiving", (r) => num(r.receiving)],
+	["per_session_kb", (r) => num(r.per_session_kb)],
+	["verdict", (r) => r.verdict ?? ""],
 ];
 
 function writeCsv(path: string, header: string[], rows: string[][]) {
@@ -587,6 +618,7 @@ function emit(d: string, name: string, svg: string) {
 		return;
 	}
 	Deno.writeTextFileSync(`${d}/plots/${name}.svg`, svg);
+	collected.push({ name, svg });
 	console.log(`  wrote plots/${name}.svg`);
 }
 
@@ -981,5 +1013,343 @@ if (rc) {
 		),
 	);
 }
+
+// ---- consolidated dashboard (index.html) ----
+// One self-contained page: capacity headline + decision summary + every plot
+// inline + (optional) the paramexp GP/ML findings. This is the "easy to see"
+// surface — open results/index.html, no server, no external requests.
+
+interface PxVector {
+	[k: string]: string;
+}
+interface PxKnee {
+	param?: string;
+	value?: string;
+	score?: number;
+}
+interface PxImportance {
+	param?: string;
+	importance?: number;
+}
+interface PxInteraction {
+	param_a?: string;
+	param_b?: string;
+	score?: number;
+}
+interface PxConfigCI {
+	vector?: PxVector;
+	mean?: number;
+	se?: number;
+	n?: number;
+}
+interface PxSuggestion {
+	vector?: PxVector;
+	acq_value?: number;
+	predicted_mean?: number;
+	predicted_std?: number;
+}
+interface PxReport {
+	objective?: string;
+	n_experiments?: number;
+	knees?: PxKnee[];
+	importance?: PxImportance[];
+	interactions?: PxInteraction[];
+	best_config?: PxConfigCI;
+	indistinguishable_peers?: PxConfigCI[];
+	suggested_next?: PxSuggestion[];
+}
+
+function vectorStr(v: PxVector | undefined): string {
+	if (!v) return "";
+	return Object.keys(v).sort().map((k) => `${k}=${v[k]}`).join(" ");
+}
+
+function loadParamexp(
+	d: string | undefined,
+): { report: PxReport; svgs: { name: string; svg: string }[] } | null {
+	if (!d) return null;
+	let report: PxReport;
+	try {
+		report = JSON.parse(Deno.readTextFileSync(`${d}/report.json`)) as PxReport;
+	} catch (e) {
+		const msg = e instanceof Error ? e.message : String(e);
+		console.warn(`paramexp: no report.json at ${d} (${msg}); ML section omitted`);
+		return null;
+	}
+	const svgs: { name: string; svg: string }[] = [];
+	// Preferred order; unknown extras (surface_*, sweep_*) appended after.
+	const preferred = ["importance.svg", "sensitivity.svg", "interactions.svg", "contour.svg"];
+	const seen = new Set<string>();
+	const tryAdd = (fname: string) => {
+		if (seen.has(fname)) return;
+		try {
+			svgs.push({
+				name: fname.replace(/\.svg$/, ""),
+				svg: Deno.readTextFileSync(`${d}/${fname}`),
+			});
+			seen.add(fname);
+		} catch { /* not present: skip */ }
+	};
+	for (const f of preferred) tryAdd(f);
+	try {
+		for (const e of Deno.readDirSync(d)) {
+			if (e.isFile && e.name.endsWith(".svg")) tryAdd(e.name);
+		}
+	} catch { /* dir unreadable: keep whatever we have */ }
+	return { report, svgs };
+}
+
+function fmt(v: number | undefined, digits = 2): string {
+	return v === undefined ? "—" : (+v.toFixed(digits)).toString();
+}
+
+function buildDashboard(): string {
+	const cap = recs
+		.filter((r) => r.group === "capacity" && r.sessions !== undefined)
+		.sort((a, b) => (a.sessions ?? 0) - (b.sessions ?? 0));
+	const held = cap.filter((r) => (r.verdict ?? "").toUpperCase() === "HOLDS");
+	const ceiling = held.length ? Math.max(...held.map((r) => r.sessions ?? 0)) : undefined;
+	const px = loadParamexp(paramexpDir);
+
+	const parts: string[] = [];
+	parts.push(`<!doctype html><html lang="en"><head><meta charset="utf-8">`);
+	parts.push(`<meta name="viewport" content="width=device-width,initial-scale=1">`);
+	parts.push(`<title>Relay bench dashboard</title><style>
+:root{--fg:#1a1a2e;--muted:#5b5b7a;--bg:#f6f7fb;--card:#fff;--line:#e2e4ee;--accent:#1f77b4;--ok:#2ca02c;--bad:#d62728}
+*{box-sizing:border-box}body{margin:0;font:14px/1.5 system-ui,sans-serif;color:var(--fg);background:var(--bg)}
+.wrap{max-width:1080px;margin:0 auto;padding:24px}
+h1{font-size:22px;margin:0 0 4px}h2{font-size:17px;margin:32px 0 12px;padding-bottom:6px;border-bottom:2px solid var(--line)}
+.sub{color:var(--muted);margin:0 0 18px}
+.cards{display:flex;flex-wrap:wrap;gap:12px;margin:12px 0}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;min-width:150px;flex:1 1 150px}
+.card .k{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+.card .v{font-size:24px;font-weight:700;margin:4px 0 2px}
+.card .n{color:var(--muted);font-size:12px}
+.hero{background:linear-gradient(135deg,#1f2a44,#243b6b);color:#fff;border:none}
+.hero .k{color:#b9c6e8}.hero .n{color:#c9d4ef}
+table{border-collapse:collapse;width:100%;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+th,td{padding:8px 12px;text-align:right;border-bottom:1px solid var(--line)}th:first-child,td:first-child{text-align:left}
+th{background:#eef0f7;font-size:12px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted)}
+tr:last-child td{border-bottom:none}
+.badge{display:inline-block;padding:2px 9px;border-radius:20px;font-size:12px;font-weight:600}
+.badge.ok{background:#e6f5e9;color:var(--ok)}.badge.bad{background:#fce8e8;color:var(--bad)}
+.plot{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px;margin:14px 0;overflow-x:auto}
+.plot svg{max-width:100%;height:auto;display:block;margin:0 auto}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:14px}
+.note{color:var(--muted);font-size:13px;background:#fff8e6;border:1px solid #f0e2b6;border-radius:8px;padding:10px 12px;margin:12px 0}
+.muted{color:var(--muted)}code{background:#eceef5;padding:1px 5px;border-radius:4px;font-size:13px}
+.bar{height:10px;border-radius:5px;background:var(--accent)}
+</style></head><body><div class="wrap">`);
+
+	parts.push(`<h1>Relay benchmark dashboard</h1>`);
+	parts.push(
+		`<p class="sub">Generated ${esc(new Date().toISOString())} · ${recs.length} records${
+			px ? ` · ML: ${px.report.n_experiments ?? "?"} experiments` : ""
+		}</p>`,
+	);
+
+	// ---- Capacity headline ----
+	parts.push(`<h2>Capacity — concurrent sessions</h2>`);
+	if (cap.length) {
+		parts.push(`<div class="cards">`);
+		parts.push(
+			`<div class="card hero"><div class="k">Session ceiling (HOLDS)</div><div class="v">${
+				ceiling !== undefined ? ceiling.toLocaleString() : "none held"
+			}</div><div class="n">highest S with ≥99% receiving</div></div>`,
+		);
+		const top = cap[cap.length - 1];
+		parts.push(
+			`<div class="card"><div class="k">Per session</div><div class="v">${
+				fmt(top.per_session_kb, 1)
+			} KB</div><div class="n">heap at S=${top.sessions?.toLocaleString()}</div></div>`,
+		);
+		if (top.sessions && top.goros !== undefined) {
+			parts.push(
+				`<div class="card"><div class="k">Goroutines / session</div><div class="v">${
+					fmt(top.goros / top.sessions, 1)
+				}</div><div class="n">at S=${top.sessions.toLocaleString()}</div></div>`,
+			);
+		}
+		parts.push(`</div>`);
+		parts.push(
+			`<table><thead><tr><th>Sessions</th><th>Connected</th><th>Receiving</th><th>Heap MB</th><th>KB/session</th><th>Goros</th><th>Verdict</th></tr></thead><tbody>`,
+		);
+		for (const r of cap) {
+			const ok = (r.verdict ?? "").toUpperCase() === "HOLDS";
+			parts.push(
+				`<tr><td>${r.sessions?.toLocaleString()}</td><td>${num(r.connected)}</td><td>${
+					num(r.receiving)
+				}</td><td>${fmt(r.heap_mb, 0)}</td><td>${fmt(r.per_session_kb, 1)}</td><td>${
+					num(r.goros)
+				}</td><td><span class="badge ${ok ? "ok" : "bad"}">${
+					esc(r.verdict ?? "?")
+				}</span></td></tr>`,
+			);
+		}
+		parts.push(`</tbody></table>`);
+		parts.push(
+			`<p class="note">Capacity is measured in-process (clients + relay share one process), so KB/session and goros/session include client-side cost — read the <em>shape</em> across S and the HOLDS/CANNOT-HOLD boundary, not absolutes. WSL2/loaded VMs swing ±10×; rerun on bare-metal Linux for a hard ceiling.</p>`,
+		);
+	} else {
+		parts.push(
+			`<p class="muted">No capacity records. Run <code>BenchmarkRelay_ConnectionCarry</code> with <code>BENCH_RESULTS_DIR</code> set (SESSIONS sweep) to populate this section.</p>`,
+		);
+	}
+
+	// ---- Decision summary ----
+	parts.push(`<h2>Decision summary</h2><div class="cards">`);
+	if (perHop) {
+		parts.push(
+			`<div class="card"><div class="k">Per-hop latency</div><div class="v">${
+				perHop.slope.toFixed(3)
+			} ms</div><div class="n">per relay hop · R²=${perHop.r2.toFixed(3)}</div></div>`,
+		);
+	}
+	parts.push(
+		`<div class="card"><div class="k">Fan-out knee</div><div class="v">${
+			kneeRec ? "K=" + kneeRec.k : "none"
+		}</div><div class="n">first K with loss≥${KNEE_LOSS_PCT}%</div></div>`,
+	);
+	if (maxK?.p99_ms !== undefined && maxK?.median_ms !== undefined) {
+		parts.push(
+			`<div class="card"><div class="k">Jitter @ max K</div><div class="v">${
+				(maxK.p99_ms - maxK.median_ms).toFixed(2)
+			} ms</div><div class="n">p99−median at K=${maxK.k}</div></div>`,
+		);
+	}
+	if (maxK?.k && maxK.heap_mb !== undefined) {
+		parts.push(
+			`<div class="card"><div class="k">Heap / subscriber</div><div class="v">${
+				(maxK.heap_mb / maxK.k).toFixed(2)
+			} MB</div><div class="n">at K=${maxK.k}</div></div>`,
+		);
+	}
+	if (maxK?.fairness !== undefined) {
+		parts.push(
+			`<div class="card"><div class="k">Fairness @ max K</div><div class="v">${
+				maxK.fairness.toFixed(3)
+			}</div><div class="n">Jain, 1=perfect</div></div>`,
+		);
+	}
+	parts.push(`</div>`);
+	if (floored.length > 0) {
+		parts.push(
+			`<p class="note">⚠ ${floored.length} record(s) have median latency ≈ 0 — timer-floored on fast loopback. Absolute latencies are NOT representative; read p99/tail and shape across K.</p>`,
+		);
+	}
+
+	// ---- Plots (overview first) ----
+	parts.push(`<h2>Benchmark plots</h2>`);
+	const ordered = [
+		...collected.filter((p) => p.name === "overview"),
+		...collected.filter((p) => p.name !== "overview"),
+	];
+	if (ordered.length) {
+		for (const p of ordered) parts.push(`<div class="plot">${p.svg}</div>`);
+	} else {
+		parts.push(`<p class="muted">No plots (insufficient data).</p>`);
+	}
+
+	// ---- ML analysis (paramexp) ----
+	parts.push(`<h2>ML analysis — GP surrogate (paramexp)</h2>`);
+	if (px) {
+		const r = px.report;
+		parts.push(
+			`<p class="sub">Objective <code>${esc(r.objective ?? "?")}</code> · ${
+				r.n_experiments ?? "?"
+			} experiments · Gaussian-process response-surface fit.</p>`,
+		);
+		if (r.best_config?.vector) {
+			const bc = r.best_config;
+			parts.push(
+				`<div class="cards"><div class="card hero"><div class="k">Best config</div><div class="v" style="font-size:16px">${
+					esc(vectorStr(bc.vector))
+				}</div><div class="n">${fmt(bc.mean, 3)} ± ${fmt(bc.se, 2)} (n=${bc.n ?? "?"})${
+					r.indistinguishable_peers?.length
+						? ` · ${r.indistinguishable_peers.length} statistically tied`
+						: ""
+				}</div></div></div>`,
+			);
+		}
+		if (r.importance?.length) {
+			const maxImp = Math.max(...r.importance.map((i) => i.importance ?? 0), 1e-9);
+			parts.push(
+				`<h3 style="font-size:15px;margin:18px 0 8px">Parameter importance (η²)</h3><table><tbody>`,
+			);
+			for (
+				const i of [...r.importance].sort((a, b) =>
+					(b.importance ?? 0) - (a.importance ?? 0)
+				)
+			) {
+				const w = Math.round(((i.importance ?? 0) / maxImp) * 100);
+				parts.push(
+					`<tr><td>${
+						esc(i.param ?? "?")
+					}</td><td style="width:60%"><div class="bar" style="width:${w}%"></div></td><td>${
+						fmt(i.importance, 3)
+					}</td></tr>`,
+				);
+			}
+			parts.push(`</tbody></table>`);
+		}
+		if (r.knees?.length) {
+			parts.push(
+				`<h3 style="font-size:15px;margin:18px 0 8px">Knees</h3><table><thead><tr><th>Param</th><th>Value</th><th>Score</th></tr></thead><tbody>`,
+			);
+			for (const k of r.knees) {
+				parts.push(
+					`<tr><td>${esc(k.param ?? "?")}</td><td>${esc(k.value ?? "?")}</td><td>${
+						fmt(k.score, 3)
+					}</td></tr>`,
+				);
+			}
+			parts.push(`</tbody></table>`);
+		}
+		if (r.interactions?.length) {
+			parts.push(
+				`<h3 style="font-size:15px;margin:18px 0 8px">Interactions</h3><table><thead><tr><th>Pair</th><th>Score</th></tr></thead><tbody>`,
+			);
+			for (
+				const it of [...r.interactions].sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
+					.slice(0, 8)
+			) {
+				parts.push(
+					`<tr><td>${esc(it.param_a ?? "?")} × ${esc(it.param_b ?? "?")}</td><td>${
+						fmt(it.score, 3)
+					}</td></tr>`,
+				);
+			}
+			parts.push(`</tbody></table>`);
+		}
+		if (r.suggested_next?.length) {
+			parts.push(
+				`<h3 style="font-size:15px;margin:18px 0 8px">Suggested next measurements</h3><table><thead><tr><th>Config</th><th>Pred. mean</th><th>Pred. std</th><th>Acq.</th></tr></thead><tbody>`,
+			);
+			for (const s of r.suggested_next) {
+				parts.push(
+					`<tr><td>${esc(vectorStr(s.vector))}</td><td>${
+						fmt(s.predicted_mean, 2)
+					}</td><td>${fmt(s.predicted_std, 2)}</td><td>${fmt(s.acq_value, 3)}</td></tr>`,
+				);
+			}
+			parts.push(`</tbody></table>`);
+		}
+		if (px.svgs.length) {
+			parts.push(`<div class="grid2">`);
+			for (const s of px.svgs) parts.push(`<div class="plot">${s.svg}</div>`);
+			parts.push(`</div>`);
+		}
+	} else {
+		parts.push(
+			`<p class="muted">No paramexp report supplied. Pass <code>--paramexp &lt;dir&gt;</code> pointing at a paramexp output dir (with <code>report.json</code>) to fold in knees, η² importance, interactions and suggested-next.</p>`,
+		);
+	}
+
+	parts.push(`</div></body></html>`);
+	return parts.join("\n");
+}
+
+Deno.writeTextFileSync(`${dir}/index.html`, buildDashboard());
+console.log(`wrote index.html (consolidated dashboard${paramexpDir ? " + paramexp ML" : ""})`);
 
 console.log("done.");

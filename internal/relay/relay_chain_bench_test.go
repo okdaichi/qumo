@@ -395,7 +395,11 @@ type benchResult struct {
 	Goros    int     `json:"goros,omitempty"`
 	CpuMs    float64 `json:"cpu_ms,omitempty"`
 	Fairness float64 `json:"fairness,omitempty"` // Jain's index, 0-1 (1=perfectly fair fan-out)
-	JitterMs  float64 `json:"jitter_ms,omitempty"`
+	JitterMs float64 `json:"jitter_ms,omitempty"`
+	// The capacity group (concurrent-session ceiling) is produced out-of-process
+	// by `qumo loadgen` (internal/loadgen), which writes its own record shape;
+	// the in-process capacity benchmarks were removed as unable to reach the
+	// relay's true ceiling (client establishment cost dominated).
 }
 
 func recordBench(tb testing.TB, r benchResult) {
@@ -473,7 +477,7 @@ func reportChainStats(b *testing.B, cfg chainConfig, st chainStats, hopsOrFanout
 		MinMs: min.Seconds() * 1000, P25Ms: p25.Seconds() * 1000,
 		MedianMs: median.Seconds() * 1000, P75Ms: p75.Seconds() * 1000,
 		P95Ms: p95.Seconds() * 1000, P99Ms: p99.Seconds() * 1000,
-		MaxMs: maxLat.Seconds() * 1000,
+		MaxMs:  maxLat.Seconds() * 1000,
 		HeapMB: float64(st.heapDelta) / (1024 * 1024), Goros: st.gorosDelta,
 	}
 	if cfg.fanout > 0 {

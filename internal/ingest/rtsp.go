@@ -122,6 +122,12 @@ func (s *RTSPServer) handleConn(ctx context.Context, conn *rtsp.Conn) {
 		sdp    *rtsp.SDP
 	)
 
+	defer func() {
+		if sess != nil {
+			sess.Close()
+		}
+	}()
+
 	for {
 		req, frame, err := conn.ReadRequest()
 		if err != nil {
@@ -163,13 +169,15 @@ func (s *RTSPServer) handleConn(ctx context.Context, conn *rtsp.Conn) {
 			if path == "" {
 				path = "/live/stream"
 			}
+			if sess != nil {
+				sess.Close()
+			}
 			sess, err = NewSession(s.config.TrackMux, path)
 			if err != nil {
 				slog.Error("failed to create ingest session", "error", err)
 				resp.StatusCode = rtsp.StatusInternalServerError
 				break
 			}
-			defer sess.Close()
 
 		case rtsp.MethodSetup:
 			if sdp == nil || sess == nil {

@@ -27,6 +27,20 @@ linters:
       - linters: [gosec]
         path: "internal/playground/"
         text: "G304"
+      # False positive: the load generator's --ca / --results paths come from CLI
+      # flags run by an operator, not external user input.
+      - linters: [gosec]
+        path: "internal/loadgen/"
+        text: "G304"
+      # False positive: the capacity driver launches `qumo relay` / `qumo loadgen`
+      # (the --qumo path) optionally under taskset, and reads results.jsonl from
+      # the --results dir — all operator-supplied CLI paths, not external input.
+      - linters: [gosec]
+        path: "tools/capacity/"
+        text: "G204"
+      - linters: [gosec]
+        path: "tools/capacity/"
+        text: "G304"
       # False positive: slice bounds are guaranteed by the RTMP/QUIC encoding protocol logic
       - linters: [gosec]
         text: "G602"
@@ -57,3 +71,9 @@ linters:
       # later via Drain or context.AfterFunc; gosec cannot trace cross-function ownership.
       - linters: [gosec]
         text: "G118"
+      # G404 (math/rand used): non-security jitter and desynchronization delays
+      # in the relay's backoff and reconnect logic — crypto-strength randomness
+      # is unnecessary here and 20× more expensive (101 ns vs 5 ns per op).
+      - linters: [gosec]
+        path: "internal/relay/"
+        text: "G404"
