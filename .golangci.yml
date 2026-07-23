@@ -32,12 +32,15 @@ linters:
       - linters: [gosec]
         path: "internal/loadgen/"
         text: "G304"
-      # False positive: `loadgen sweep --start-relay` launches the relay binary
-      # (--relay-bin / this executable) optionally under taskset (resolved via
-      # LookPath) — an operator-driven local subprocess, not external input.
+      # False positive: the capacity driver launches `qumo relay` / `qumo loadgen`
+      # (the --qumo path) optionally under taskset, and reads results.jsonl from
+      # the --results dir — all operator-supplied CLI paths, not external input.
       - linters: [gosec]
-        path: "internal/loadgen/"
+        path: "tools/capacity/"
         text: "G204"
+      - linters: [gosec]
+        path: "tools/capacity/"
+        text: "G304"
       # False positive: slice bounds are guaranteed by the RTMP/QUIC encoding protocol logic
       - linters: [gosec]
         text: "G602"

@@ -1,23 +1,22 @@
-// Package loadgen drives an out-of-process capacity load against a running qumo
-// relay. It has two subcommands:
+// Package loadgen provides two out-of-process capacity primitives that connect
+// to a running qumo relay:
 //
-//	loadgen publish    — one trickle publisher (a small group every 1/GPS s)
-//	loadgen subscribe  — launch N subscriber sessions and measure the hold
+//	loadgen publish        — one trickle publisher (a small group every 1/GPS s)
+//	loadgen subscribe <N>  — launch N subscriber sessions and measure the hold
 //
-// The point of running out-of-process is measurement fidelity: the earlier
-// in-process capacity benchmark ran the relay and all N clients in one process
-// on shared cores, so client-side QUIC-handshake CPU — not the relay — capped
-// establishment (~6K on an 8-core VM). It was removed in favor of this tool.
-// Here the relay is a separate process (ideally a separate host), and
-// `subscribe` reports the
-// RELAY's own per-session cost by scraping its /metrics endpoint
-// (go_goroutines, process_resident_memory_bytes, qumo_relay_sessions_active)
-// before and after the run — the number reflects the relay, not the load
-// generator.
+// Both are pure remote clients: they dial the relay you point them at (--relay
+// + --ca) and never spawn a relay or a cert of their own. Orchestration —
+// sweeping a list of session counts, or climbing to find the ceiling — lives in
+// a separate driver (tools/capacity) that composes these primitives, keeping
+// the CLI itself small.
 //
-// `subscribe` emits a capacity-group JSONL record (when --results is set) in the
-// same schema the relay-bench dashboard reads, so a sweep lands in the same
-// consolidated index.html as the rest of the benchmarks.
+// The point of measuring out-of-process is fidelity: with the relay in its own
+// process (ideally its own host), `subscribe` reports the RELAY's own
+// per-session cost by scraping its /metrics endpoint (go_goroutines,
+// process_resident_memory_bytes, qumo_relay_sessions_active) before and after
+// the run — the number reflects the relay, not the load generator. With
+// --results it also appends a capacity-group JSONL record in the schema the
+// relay-bench dashboard reads.
 package loadgen
 
 import (
@@ -60,8 +59,6 @@ func Run(args []string) error {
 		return runSubscribe(rest)
 	case "publish":
 		return runPublish(rest)
-	case "sweep":
-		return runSweep(rest)
 	case "-h", "--help", "help":
 		usage(os.Stdout)
 		return nil
@@ -74,14 +71,14 @@ func Run(args []string) error {
 func usage(w io.Writer) {
 	_, _ = io.WriteString(w, `Usage: qumo loadgen <subcommand> [flags]
 
-Out-of-process capacity load against a running qumo relay.
+Out-of-process capacity primitives against a running qumo relay. Both are pure
+remote clients — they dial --relay (trusting --ca) and never spawn a relay.
 
 Subcommands:
-  publish    Publish one trickle track to the relay (keep running during a sweep)
-  subscribe  Launch N subscriber sessions and measure the relay's hold + per-session cost
-  sweep      Run a session-count sweep (publisher + subscribe per point), optionally
-             starting a local relay subprocess (--start-relay); emits a dashboard-ready
-             capacity JSONL. Point it at a remote relay for a true two-host run.
+  publish          Publish one trickle track to the relay (keep running during a run)
+  subscribe <N>    Launch N subscriber sessions and measure the relay's hold + per-session cost
+
+To sweep a list of counts or auto-find the ceiling, use the driver: tools/capacity.
 
 Run "qumo loadgen <subcommand> -h" for that subcommand's flags.
 `)
@@ -228,11 +225,18 @@ func publishTrickle(ctx context.Context, target dialTarget, gps float64, size in
 func runSubscribe(args []string) error {
 	fs := flag.NewFlagSet("loadgen subscribe", flag.ContinueOnError)
 	finalize := bindCommon(fs)
-	sessions := fs.Int("sessions", 1000, "number of subscriber sessions")
 	hold := fs.Duration("hold", 30*time.Second, "how long to hold sessions after establishment")
 	resultsDir := fs.String("results", "", "dir to append a capacity JSONL record (optional)")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	// N is a positional arg (flags precede it): `loadgen subscribe <flags> N`.
+	if fs.NArg() != 1 {
+		return errors.New("usage: loadgen subscribe [flags] <N>  (N = number of subscriber sessions)")
+	}
+	sessions, err := strconv.Atoi(fs.Arg(0))
+	if err != nil || sessions < 1 {
+		return fmt.Errorf("invalid session count %q (want a positive integer)", fs.Arg(0))
 	}
 	target, err := finalize()
 	if err != nil {
@@ -242,13 +246,13 @@ func runSubscribe(args []string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	res, err := runCarry(ctx, target, *sessions, *hold)
+	res, err := runCarry(ctx, target, sessions, *hold)
 	if err != nil {
 		return err
 	}
-	report(target, *sessions, res)
+	report(target, sessions, res)
 	if *resultsDir != "" {
-		if err := emitJSONL(*resultsDir, *sessions, res); err != nil {
+		if err := emitJSONL(*resultsDir, sessions, res); err != nil {
 			slog.Warn("loadgen results emission failed", "err", err)
 		}
 	}
