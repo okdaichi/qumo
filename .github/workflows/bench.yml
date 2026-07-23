@@ -86,11 +86,33 @@ jobs:
         run: |
           # cwd is the base worktree; pkgs.txt and result files live in the
           # workspace root, so reference them by absolute path.
+          #
+          # A changed package may live in a nested Go module (e.g.
+          # tools/paramexp has its own go.mod, separate from the repo-root
+          # module). Resolve the nearest enclosing module dir per package and
+          # run go test from there; otherwise nested modules fail with "main
+          # module does not contain package".
+          modroot() {
+            local d="./$1"
+            while true; do
+              [ -f "$d/go.mod" ] && { printf '%s\n' "$d"; return; }
+              [ "$d" = "." ] && { printf '%s\n' "."; return; }
+              d=$(dirname "$d")
+            done
+          }
           rm -f "$GITHUB_WORKSPACE/base.txt" "$GITHUB_WORKSPACE/build-errors.md"
           while IFS= read -r pkg; do
-            [ -d "./$pkg" ] || continue
-            echo "::group::Base benchmark: $pkg"
-            if out=$(go test -count="$BENCH_COUNT" -benchtime="$BENCH_TIME" -bench=. -benchmem -run=^$ -timeout="$BENCH_TIMEOUT" "./$pkg" 2>&1); then
+            mod="$(modroot "$pkg")"
+            if [ "$mod" = "." ]; then
+              target="./$pkg"
+            elif [ "$pkg" = "${mod#./}" ]; then
+              target="."
+            else
+              target="./${pkg#"${mod#./}"/}"
+            fi
+            [ "$target" = "." ] || [ -d "$mod/${target#./}" ] || continue
+            echo "::group::Base benchmark: $pkg (module: $mod)"
+            if out=$(cd "$mod" && go test -count="$BENCH_COUNT" -benchtime="$BENCH_TIME" -bench=. -benchmem -run=^$ -timeout="$BENCH_TIMEOUT" "$target" 2>&1); then
               # Drop "go:" module-download/tool noise (merged in via 2>&1). It
               # isn't benchmark data and breaks benchstat's base↔PR pairing,
               # which makes real deltas report as "no significant changes".
@@ -105,9 +127,29 @@ jobs:
       - name: Run PR benchmarks
         if: steps.changed.outputs.any == 'true'
         run: |
+          # Same nested-module resolution as the base step (see comment there):
+          # run go test from the nearest enclosing module dir so packages in
+          # tools/paramexp (a separate module) are benchmarked.
+          modroot() {
+            local d="./$1"
+            while true; do
+              [ -f "$d/go.mod" ] && { printf '%s\n' "$d"; return; }
+              [ "$d" = "." ] && { printf '%s\n' "."; return; }
+              d=$(dirname "$d")
+            done
+          }
           while IFS= read -r pkg; do
-            echo "::group::PR benchmark: $pkg"
-            if out=$(go test -count="$BENCH_COUNT" -benchtime="$BENCH_TIME" -bench=. -benchmem -run=^$ -timeout="$BENCH_TIMEOUT" "./$pkg" 2>&1); then
+            mod="$(modroot "$pkg")"
+            if [ "$mod" = "." ]; then
+              target="./$pkg"
+            elif [ "$pkg" = "${mod#./}" ]; then
+              target="."
+            else
+              target="./${pkg#"${mod#./}"/}"
+            fi
+            [ "$target" = "." ] || [ -d "$mod/${target#./}" ] || continue
+            echo "::group::PR benchmark: $pkg (module: $mod)"
+            if out=$(cd "$mod" && go test -count="$BENCH_COUNT" -benchtime="$BENCH_TIME" -bench=. -benchmem -run=^$ -timeout="$BENCH_TIMEOUT" "$target" 2>&1); then
               # Drop "go:" module-download/tool noise (merged in via 2>&1). It
               # isn't benchmark data and breaks benchstat's base↔PR pairing,
               # which makes real deltas report as "no significant changes".
