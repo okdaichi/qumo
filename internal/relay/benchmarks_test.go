@@ -219,6 +219,30 @@ func BenchmarkGroupRing_Fill_VariableSize(b *testing.B) {
 
 // func BenchmarkTrackDistributor_Broadcast removed: subscribe/unsubscribe API replaced by broadcastNotify
 
+// BenchmarkTrackDistributor_Broadcast measures dist.broadcast() — the new-data
+// fan-out call — swept across subscriber counts. It replaces the pre-#332 O(N)
+// benchmark that sent on a per-subscriber channel slice under an RWMutex.
+// broadcast() is now a single broadcastNotify.notify() (atomic seq bump +
+// close-and-recreate), so ns/op must stay FLAT across the sweep — that flatness
+// is the invariant being guarded: if a future change re-introduces per-
+// subscriber work, ns/op will scale with N and benchstat will flag it. There
+// are no live waiter goroutines by design: close() is non-blocking and the wake
+// is async, so waiters would only add scheduler noise without changing the
+// measured call (the old benchmark made the same choice).
+func BenchmarkTrackDistributor_Broadcast(b *testing.B) {
+	for _, n := range []int{1, 10, 100, 1000} {
+		b.Run(fmt.Sprintf("%d_subscribers", n), func(b *testing.B) {
+			dist := &trackDistributor{}
+			dist.notify.init()
+			b.ResetTimer()
+			b.ReportAllocs()
+			for range b.N {
+				dist.broadcast()
+			}
+		})
+	}
+}
+
 // BenchmarkBroadcastNotify_Listen measures the cost of a single listen() — the
 // read-side primitive every egress goroutine calls on each wakeup (and that the
 // deliverGroup seq-guard adds one extra call of per trickle wakeup). It is a
@@ -273,6 +297,22 @@ func BenchmarkBroadcastNotify_Listen_Parallel(b *testing.B) {
 	b.StopTimer()
 	close(stop)
 	wg.Wait()
+}
+
+// BenchmarkBroadcastNotify_Notify measures the write-side primitive — the cost
+// of one broadcast: an atomic seq bump plus a close-and-recreate channel swap
+// under the serialize mutex. This is what every delivered group pays (once per
+// group, single-writer) and it allocates a fresh channel + notifyState each
+// call — allocations inherent to the wake-all design, so this bench guards both
+// the cost and the alloc count.
+func BenchmarkBroadcastNotify_Notify(b *testing.B) {
+	var n broadcastNotify
+	n.init()
+	b.ResetTimer()
+	b.ReportAllocs()
+	for range b.N {
+		n.notify()
+	}
 }
 
 // ============================================================================
