@@ -154,6 +154,7 @@ qumo/
 ├── magefiles/                  # Build automation (Mage tasks)
 │
 ├── scripts/                    # Bench dashboard generator (Deno)
+├── tools/capacity/             # Capacity driver: sweeps/ceiling-finds by driving `qumo loadgen`
 ├── tools/paramexp/             # Parameter-space explorer (GP surrogate; separate module)
 ├── docs/                       # Design docs
 ├── playground/                 # Web demo / relay test client (Deno + Solid)
@@ -188,40 +189,47 @@ deno run --allow-read=<dir> --allow-write=<dir> scripts/relay_bench_report.ts <d
 #   plus the paramexp GP/ML findings when passed --paramexp <report-dir>.
 ```
 
-**Concurrent-session capacity is measured out-of-process** with `qumo loadgen`.
-Running the relay and the load clients in one process makes client-side
-QUIC-handshake CPU — not the relay — the bottleneck, so `loadgen` drives a
-*separately running* relay and reports the **relay's own** per-session cost by
+**Concurrent-session capacity is measured out-of-process.** Running the relay
+and the load clients in one process makes client-side QUIC-handshake CPU — not
+the relay — the bottleneck, so the load runs against a *separately running*
+relay and the measurement reports the **relay's own** per-session cost by
 scraping its `/metrics` (`go_goroutines`, `process_resident_memory_bytes`,
-`qumo_relay_sessions_active`) before/after a ramp:
+`qumo_relay_sessions_active`) before/after the run.
+
+The `qumo loadgen` CLI is two small primitives — pure remote clients that dial
+the relay you point them at and never spawn one:
 
 ```bash
-qumo loadgen publish   --relay <host:4433> --ca <relay-cert.pem>   # trickle source
-qumo loadgen subscribe --relay <host:4433> --ca <relay-cert.pem> \
-  --sessions 12000 --ramp 2000 --hold 15s --results ./out         # ramp + measure
+qumo loadgen publish       --relay <host:4433> --ca <cert.pem>              # trickle source
+qumo loadgen subscribe --relay <host:4433> --ca <cert.pem> --hold 15s 12000 # measure N=12000
 ```
 
-`qumo loadgen sweep` wraps this into a session-count sweep (publisher + a
-subscribe measurement per point). It runs two ways:
+`subscribe --results <dir>` appends a `capacity`-group record to
+`results.jsonl`, which the dashboard renders.
 
-- **One box:** `--start-relay` spawns a local relay subprocess (self-signed cert
-  generated in-process — no `openssl`) pinned via `--relay-cores` so its CPU is
-  isolated from the load — a single-box stand-in for two hosts. This is what the
-  `loadgen-sweep` job in `.github/workflows/bench-relay.yml` runs (a modest
-  sweep; hosted runners are small and single-host):
+**Sweeping / finding the ceiling** is orchestration, so it lives in a separate
+driver — `tools/capacity` — that composes the primitives (starts a relay +
+publisher, then probes session counts). Build it with `go build -o capacity
+./tools/capacity`. It runs two ways:
+
+- **One box:** `--start-relay` spawns a local relay (self-signed cert generated
+  in-process — no `openssl`) pinned via `--relay-cores` so its CPU is isolated
+  from the load — a single-box stand-in for two hosts. `--sessions` probes an
+  explicit list; `--auto` climbs until the relay can't hold to find the ceiling
+  (`--bisect` pins the boundary). This is what the `capacity-sweep` job in
+  `.github/workflows/bench-relay.yml` runs:
 
   ```bash
-  qumo loadgen sweep --start-relay --relay-cores 0-1 \
-    --sessions "500 1000 2000" --hold 10s --results ./out
+  ./capacity --start-relay --relay-cores 0-1 --sessions "500 1000 2000" --hold 10s
+  ./capacity --start-relay --relay-cores 0-1 --auto --start 2000 --max 50000 --bisect
   ```
 
 - **Two hosts:** point it at a relay running elsewhere; it only generates load:
 
   ```bash
-  qumo loadgen sweep --relay relay.example.net:4433 --ca relay-cert.pem \
-    --sessions "5000 10000 25000" --results ./out
+  ./capacity --relay relay.example.net:4433 --ca cert.pem --auto --start 5000 --max 30000
   ```
 
-Every point appends a `capacity`-group record to `results.jsonl`, so a sweep
-renders in the same dashboard. A distributed (multi-machine) run is what a
-25K-session ceiling claim needs to be *confirmed* rather than extrapolated.
+Every probe appends to `results.jsonl`, so a run renders in the same dashboard.
+A distributed (multi-machine) run is what a 25K-session ceiling claim needs to
+be *confirmed* rather than extrapolated.
