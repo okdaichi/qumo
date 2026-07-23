@@ -215,15 +215,25 @@ func Run(args []string) error {
 		dialerTLS.RootCAs = caPool
 	}
 
+	// Override the QUIC listener's UDP receive buffer (SO_RCVBUF) to a
+	// burst-safe size. RELAY_UDP_RCVBUF env var controls the value in bytes;
+	// defaults to 256 KB (262144) which is well above the Windows default
+	// (~8 KB) and matches Linux auto-tuning. Set to 0 to disable the override
+	// and use the OS default.
+	customLN := customQUICListener()
+	moqtServer := &moqt.Server{
+		Addr:               addr,
+		TLSConfig:          tlsConfig,
+		QUICConfig:         quicConfig,
+		WebTransportServer: moqt.NewWebTransportServer(httpMux),
+		NextSessionURI:     relayCfg.NextSessionURI,
+	}
+	if customLN != nil {
+		moqtServer.ListenFunc = customLN
+	}
 	trackMux := moqt.NewTrackMux(moqt.NewHopID())
 	relayServer := &Server{
-		MOQServer: &moqt.Server{
-			Addr:               addr,
-			TLSConfig:          tlsConfig,
-			QUICConfig:         quicConfig,
-			WebTransportServer: moqt.NewWebTransportServer(httpMux),
-			NextSessionURI:     relayCfg.NextSessionURI,
-		},
+		MOQServer: moqtServer,
 		MOQDialer: &moqt.Dialer{
 			TLSConfig:  dialerTLS,
 			QUICConfig: quicConfig,
