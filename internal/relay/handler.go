@@ -563,7 +563,7 @@ func (d *trackDistributor) deliverGroup(tw *moqt.TrackWriter, twCtx context.Cont
 			return true
 		}
 		n := int64(frame.Len())
-			egressTotal += n
+		egressTotal += n
 		if d.session != nil {
 			d.session.addEgress(int64(n))
 		}
