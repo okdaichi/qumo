@@ -217,60 +217,101 @@ func BenchmarkGroupRing_Fill_VariableSize(b *testing.B) {
 // Broadcast Operation Benchmarks
 // ============================================================================
 
+// func BenchmarkTrackDistributor_Broadcast removed: subscribe/unsubscribe API replaced by broadcastNotify
+
+// BenchmarkTrackDistributor_Broadcast measures dist.broadcast() — the new-data
+// fan-out call — swept across subscriber counts. It replaces the pre-#332 O(N)
+// benchmark that sent on a per-subscriber channel slice under an RWMutex.
+// broadcast() is now a single broadcastNotify.notify() (atomic seq bump +
+// close-and-recreate), so ns/op must stay FLAT across the sweep — that flatness
+// is the invariant being guarded: if a future change re-introduces per-
+// subscriber work, ns/op will scale with N and benchstat will flag it. There
+// are no live waiter goroutines by design: close() is non-blocking and the wake
+// is async, so waiters would only add scheduler noise without changing the
+// measured call (the old benchmark made the same choice).
 func BenchmarkTrackDistributor_Broadcast(b *testing.B) {
-	tests := []struct {
-		name        string
-		subscribers int
-	}{
-		{"1_subscriber", 1},
-		{"10_subscribers", 10},
-		{"100_subscribers", 100},
-		{"1000_subscribers", 1000},
+	for _, n := range []int{1, 10, 100, 1000} {
+		b.Run(fmt.Sprintf("%d_subscribers", n), func(b *testing.B) {
+			dist := &trackDistributor{}
+			dist.notify.init()
+			b.ResetTimer()
+			b.ReportAllocs()
+			for range b.N {
+				dist.broadcast()
+			}
+		})
 	}
+}
 
-	// broadcast() notifies cap-1 signal channels. Two states matter for any
-	// "skip the select when len(ch)>0" fast path:
-	//
-	//   - drained: subscribers keep up, so the channel is empty on the next
-	//     broadcast — the common steady state. The fast path adds a len() load
-	//     + branch before a send that still succeeds.
-	//   - full: the channel already holds a pending signal (backpressure). The
-	//     fast path skips the select entirely.
-	//
-	// Measuring only "full" overstates such an optimization (it is the sole
-	// case it helps), so both states are swept. The drained drain runs inside
-	// the timed loop but is invariant across base/PR, so it cancels in a delta.
-	for _, state := range []string{"drained", "full"} {
-		for _, tt := range tests {
-			b.Run(state+"/"+tt.name, func(b *testing.B) {
-				dist := &trackDistributor{}
+// BenchmarkBroadcastNotify_Listen measures the cost of a single listen() — the
+// read-side primitive every egress goroutine calls on each wakeup (and that the
+// deliverGroup seq-guard adds one extra call of per trickle wakeup). It is a
+// pure atomic.Pointer load returning a notifyState value, so this is the floor
+// cost of participating in the broadcast. A regression here scales directly
+// into fan-out: it is paid by every subscriber, every wakeup.
+func BenchmarkBroadcastNotify_Listen(b *testing.B) {
+	var n broadcastNotify
+	n.init()
+	b.ResetTimer()
+	b.ReportAllocs()
+	for range b.N {
+		_ = n.listen()
+	}
+}
 
-				chs := make([]chan struct{}, 0, tt.subscribers)
-				for i := 0; i < tt.subscribers; i++ {
-					ch := make(chan struct{}, 1)
-					dist.subscribers = append(dist.subscribers, ch)
-					chs = append(chs, ch)
-					if state == "full" {
-						ch <- struct{}{} // pre-fill: stays full across iterations
-					}
-				}
+// BenchmarkBroadcastNotify_Listen_Parallel measures listen() under the relay's
+// actual access pattern: many readers (one egress goroutine per subscriber)
+// reading concurrently with a single writer calling notify(). The writer's
+// Store invalidates the cache line the readers Load, modeling the real fan-out
+// cost; a regression here flags growing read-side contention. The notifier runs
+// hot, so its allocations (a channel + state per notify) appear in the harness
+// but not in the measured ns/op, which is the reader-side load only.
+func BenchmarkBroadcastNotify_Listen_Parallel(b *testing.B) {
+	var n broadcastNotify
+	n.init()
 
-				b.ResetTimer()
-				b.ReportAllocs()
-
-				for range b.N {
-					dist.broadcast()
-					if state == "drained" {
-						for _, ch := range chs {
-							select {
-							case <-ch:
-							default:
-							}
-						}
-					}
-				}
-			})
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				n.notify()
+			}
 		}
+	}()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			s := n.listen()
+			_ = s.seq
+		}
+	})
+
+	b.StopTimer()
+	close(stop)
+	wg.Wait()
+}
+
+// BenchmarkBroadcastNotify_Notify measures the write-side primitive — the cost
+// of one broadcast: an atomic seq bump plus a close-and-recreate channel swap
+// under the serialize mutex. This is what every delivered group pays (once per
+// group, single-writer) and it allocates a fresh channel + notifyState each
+// call — allocations inherent to the wake-all design, so this bench guards both
+// the cost and the alloc count.
+func BenchmarkBroadcastNotify_Notify(b *testing.B) {
+	var n broadcastNotify
+	n.init()
+	b.ResetTimer()
+	b.ReportAllocs()
+	for range b.N {
+		n.notify()
 	}
 }
 
@@ -278,31 +319,9 @@ func BenchmarkTrackDistributor_Broadcast(b *testing.B) {
 // Subscribe/Unsubscribe Benchmarks
 // ============================================================================
 
-func BenchmarkTrackDistributor_SubscribeUnsubscribe(b *testing.B) {
-	dist := &trackDistributor{}
+// func BenchmarkTrackDistributor_SubscribeUnsubscribe removed: subscribe/unsubscribe API replaced by broadcastNotify
 
-	b.ResetTimer()
-	b.ReportAllocs()
-
-	for i := 0; i < b.N; i++ {
-		ch := dist.subscribe()
-		dist.unsubscribe(ch)
-	}
-}
-
-func BenchmarkTrackDistributor_SubscribeUnsubscribe_Parallel(b *testing.B) {
-	dist := &trackDistributor{}
-
-	b.ResetTimer()
-	b.ReportAllocs()
-
-	b.RunParallel(func(pb *testing.PB) {
-		for pb.Next() {
-			ch := dist.subscribe()
-			dist.unsubscribe(ch)
-		}
-	})
-}
+// func BenchmarkTrackDistributor_SubscribeUnsubscribe_Parallel removed: subscribe/unsubscribe API replaced by broadcastNotify
 
 // ============================================================================
 // Memory Allocation Tracking Benchmarks
@@ -415,37 +434,7 @@ func BenchmarkLockPressure_GroupCache(b *testing.B) {
 	}
 }
 
-func BenchmarkLockPressure_TrackDistributor_Subscribe(b *testing.B) {
-	tests := []struct {
-		name  string
-		count int
-	}{
-		{"10_goroutines", 10},
-		{"100_goroutines", 100},
-		{"1000_goroutines", 1000},
-	}
-
-	for _, tt := range tests {
-		b.Run(tt.name, func(b *testing.B) {
-			dist := &trackDistributor{}
-
-			b.ResetTimer()
-			b.ReportAllocs()
-
-			var wg sync.WaitGroup
-			for g := 0; g < tt.count; g++ {
-				wg.Go(func() {
-					for i := 0; i < b.N/tt.count; i++ {
-						ch := dist.subscribe()
-						dist.unsubscribe(ch)
-					}
-				})
-			}
-
-			wg.Wait()
-		})
-	}
-}
+// func BenchmarkLockPressure_TrackDistributor_Subscribe removed: subscribe/unsubscribe API replaced by broadcastNotify
 
 // ============================================================================
 // Ring Contention Benchmarks
