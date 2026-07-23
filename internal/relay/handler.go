@@ -568,10 +568,10 @@ func (d *trackDistributor) deliverGroup(tw *moqt.TrackWriter, twCtx context.Cont
 			d.session.addEgress(int64(n))
 		}
 	}
+	d.egressCounter.Add(float64(egressTotal))
 	if cancelled {
 		return true
 	}
-	d.egressCounter.Add(float64(egressTotal))
 
 	d.deliveryHistogram.Observe(time.Since(start).Seconds())
 	return false
