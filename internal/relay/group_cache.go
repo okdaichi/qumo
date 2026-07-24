@@ -53,6 +53,13 @@ type groupCache struct {
 	// len(slots).
 	count atomic.Int32
 
+	// ingressArrivalNano is the UnixNano instant the group was reserved into the
+	// ring (stage-latency instrumentation; see stage_latency.go). Written only by
+	// the instrument build's stampArrival, read by egress ringResidence; atomic
+	// because fill and egress goroutines access it concurrently. Always present
+	// (8 bytes) so the field layout is build-independent.
+	ingressArrivalNano atomic.Int64
+
 	seq      moqt.GroupSequence
 	complete atomic.Bool // True when all frames have been added
 	refCount atomic.Int32
@@ -82,6 +89,7 @@ func (gc *groupCache) resetForReuse() {
 		gc.slots[i].Store(nil)
 	}
 	gc.count.Store(0)
+	gc.ingressArrivalNano.Store(0)
 }
 
 // isComplete returns true if the group has finished receiving all frames.
@@ -190,6 +198,10 @@ type groupRing struct {
 	size   int
 	pos    atomic.Uint64
 	gcPool sync.Pool
+
+	// stages is the stage-latency collector shared with the owning distributor
+	// (set in newTrackDistributor). Nil-safe no-op in the default build.
+	stages *stageCollector
 }
 
 // reserve atomically allocates a ring slot for seq and returns the new cache.
@@ -242,7 +254,9 @@ func (ring *groupRing) fill(group frameSource, cache *groupCache, onFrame func(n
 	for frame := range group.Frames(buf) {
 		frameCount++
 		n := frame.Len()
+		t0 := ring.stages.now()
 		cache.append(frame, ring.pool)
+		ring.stages.ingressFrame(t0)
 		if onFrame != nil {
 			onFrame(n)
 		}

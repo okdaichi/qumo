@@ -45,7 +45,12 @@ func BenchmarkRelayChain_FanoutSingleRelay(b *testing.B) {
 			dur = parsed
 		}
 	}
-	const gap = 2 * time.Millisecond
+	gap := 2 * time.Millisecond
+	if g := os.Getenv("FANOUT_GAP"); g != "" {
+		if parsed, err := time.ParseDuration(g); err == nil {
+			gap = parsed
+		}
+	}
 	const sz = 1200
 
 	ks := parseIntListEnv("FANOUT_KS", []int{1, 2, 4, 8, 16, 32, 64})
@@ -117,6 +122,15 @@ func singleRelayFanoutRun(tb testing.TB, cert tls.Certificate, pool *x509.CertPo
 		time.Sleep(20 * time.Millisecond)
 	}
 
+	// Settle window: stage histograms are reset and e2e samples discarded until
+	// settleAt, so percentiles reflect steady state, not connection ramp-up.
+	settle := duration / 4
+	if settle > 5*time.Second {
+		settle = 5 * time.Second
+	}
+	settleAt := time.Now().Add(settle)
+	time.AfterFunc(settle, relay.StageLatencyReset)
+
 	before := snapshotBefore()
 	results := make([][]time.Duration, K)
 	var wg sync.WaitGroup
@@ -125,12 +139,24 @@ func singleRelayFanoutRun(tb testing.TB, cert tls.Certificate, pool *x509.CertPo
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			results[i] = subscribeAndRead(tb, relayAddr, pool, duration+5*time.Second)
+			results[i] = subscribeAndRead(tb, relayAddr, pool, duration+5*time.Second, settleAt)
 		}()
 	}
 	wg.Wait()
 	after := snapshotBefore()
 	_ = pubSess.CloseWithError(moqt.NoError, "done")
+
+	if rep := relay.StageLatency(); rep != nil {
+		logStage := func(name string, s StageSnapshot) {
+			log.Printf("stage %-14s n=%-9d p50=%-10s p95=%-10s p99=%-10s max=%s",
+				name, s.N, s.P50, s.P95, s.P99, s.Max)
+		}
+		log.Printf("--- stage latency (K=%d, steady-state after %s settle) ---", K, settle)
+		logStage("A ingress", rep.IngressService)
+		logStage("R ring-wait", rep.RingResidence)
+		logStage("O group-open", rep.GroupOpen)
+		logStage("C write-frame", rep.EgressService)
+	}
 
 	var allLats []time.Duration
 	totalRecv := 0
@@ -172,7 +198,7 @@ func singleRelayFanoutRun(tb testing.TB, cert tls.Certificate, pool *x509.CertPo
 
 // subscribeAndRead dials a relay, subscribes, reads groups until timeout,
 // returns per-group latencies.
-func subscribeAndRead(tb testing.TB, addr string, pool *x509.CertPool, timeout time.Duration) []time.Duration {
+func subscribeAndRead(tb testing.TB, addr string, pool *x509.CertPool, timeout time.Duration, settleAt time.Time) []time.Duration {
 	tb.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -196,6 +222,9 @@ func subscribeAndRead(tb testing.TB, addr string, pool *x509.CertPool, timeout t
 		for frame := range gr.Frames(buf) {
 			body := frame.Body()
 			if len(body) >= chainFrameHeader {
+				if time.Now().Before(settleAt) {
+					continue // ramp-up sample: excluded from steady-state stats
+				}
 				pubNs := int64(binary.BigEndian.Uint64(body[8:16]))
 				lats = append(lats, time.Since(time.Unix(0, pubNs)))
 			}

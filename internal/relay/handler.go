@@ -398,6 +398,10 @@ type trackDistributor struct {
 	// O(N) channel sends per broadcast and the associated RWMutex contention.
 	notify broadcastNotify
 
+	// stages is the server-wide stage-latency collector (nil-safe; no-op in the
+	// default build — see stage_latency.go). Shared with ring for ingress stamps.
+	stages *stageCollector
+
 	done chan struct{} // closed when ingest returns
 }
 
@@ -414,8 +418,10 @@ func newTrackDistributor(manager *trackManager, trackID string, broadSess *broad
 		session:           broadSess,
 		fillSem:           make(chan struct{}, nWorkers),
 		fillJobs:          make(chan fillJob, nWorkers),
+		stages:            sampler.stagesRef(),
 		done:              make(chan struct{}),
 	}
+	d.ring.stages = d.stages
 	// Fixed worker pool: these goroutines live for the lifetime of the
 	// distributor, eliminating per-group goroutine creation/destruction and the
 	// per-fill closure allocation. Concurrency is still bounded to nWorkers
@@ -455,6 +461,11 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 	// sequence and waiting on the channel.
 	lastState := d.notify.listen()
 
+	// Reusable OpenGroupAt deadline for this subscriber (see openTimeout):
+	// avoids a context.WithTimeout construction per delivered group.
+	openTO := newOpenTimeout(twCtx)
+	defer openTO.release()
+
 	last := d.ring.head()
 	if last > 0 {
 		last--
@@ -477,7 +488,7 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 			}
 
 			if cache := d.ring.get(last); cache != nil {
-				if d.deliverGroup(tw, twCtx, cache) {
+				if d.deliverGroup(tw, twCtx, openTO, cache) {
 					return
 				}
 				continue
@@ -523,19 +534,25 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 // returns true if the egress loop should exit — the subscribe stream was closed
 // or cancelled (OpenGroupAt/WriteFrame error, twCtx.Done, or d.done) — or false
 // if the group was delivered completely and the loop should advance to the next.
-func (d *trackDistributor) deliverGroup(tw *moqt.TrackWriter, twCtx context.Context, cache *groupCache) bool {
+func (d *trackDistributor) deliverGroup(tw *moqt.TrackWriter, twCtx context.Context, openTO *openTimeout, cache *groupCache) bool {
+	// Stage stamps (no-op in the default build): tEnter closes the R stage
+	// (group arrival → egress pickup) and opens the O stage (OpenGroupAt).
+	tEnter := d.stages.now()
+	d.stages.ringResidence(cache, tEnter)
+
 	// OpenGroupAt opens a new QUIC uni-stream per group. gomoqt's OpenUniStreamSync
 	// blocks when the peer's MAX_STREAMS limit is reached — this is the designed
-	// backpressure. A deadline-bearing context bounds the block: if the peer can't
-	// accept a new stream within the timeout, the group is dropped (MoQ semi-reliable).
-	// Without a deadline, OpenGroupAt blocks indefinitely, pinning the egress
-	// goroutine and accumulating stream objects until the ring evicts everything.
-	openCtx, cancel := context.WithTimeout(twCtx, defaultGroupTimeout)
-	defer cancel()
-	gw, err := tw.OpenGroupAt(openCtx, cache.seq)
+	// backpressure. openTO bounds the block with defaultGroupTimeout (reusing the
+	// subscriber's timer/context instead of a per-delivery context.WithTimeout):
+	// if the peer can't accept a new stream within the timeout, the group is
+	// dropped (MoQ semi-reliable). Without a deadline, OpenGroupAt blocks
+	// indefinitely, pinning the egress goroutine and accumulating stream objects
+	// until the ring evicts everything.
+	gw, err := tw.OpenGroupAt(openTO.start(), cache.seq)
+	timedOut := openTO.done()
 	if err != nil {
 		d.ring.decrRef(cache)
-		if errors.Is(err, context.DeadlineExceeded) {
+		if timedOut && twCtx.Err() == nil {
 			// Backpressure: peer's MAX_STREAMS is exhausted. Drop this group
 			// (MoQ semi-reliable) and continue to the next.
 			metricSubscriberSkipsTotal.Inc()
@@ -546,6 +563,8 @@ func (d *trackDistributor) deliverGroup(tw *moqt.TrackWriter, twCtx context.Cont
 	}
 	defer gw.Close()
 	defer d.ring.decrRef(cache)
+
+	d.stages.groupOpen(tEnter)
 
 	start := time.Now()
 
@@ -586,6 +605,7 @@ func (d *trackDistributor) deliverGroup(tw *moqt.TrackWriter, twCtx context.Cont
 	// Batch egress bytes locally per group delivery to reduce atomic CAS contention.
 	var egressTotal int64
 	for frame := range cache.frames(wait) {
+		tWrite := d.stages.now()
 		if err := gw.WriteFrame(frame); err != nil {
 			// Flush bytes written before the failure: these frames were already
 			// handed to QUIC, so they count against egress (and metering) even
@@ -593,6 +613,7 @@ func (d *trackDistributor) deliverGroup(tw *moqt.TrackWriter, twCtx context.Cont
 			d.egressCounter.Add(float64(egressTotal))
 			return true
 		}
+		d.stages.egressFrame(tWrite)
 		n := int64(frame.Len())
 		egressTotal += n
 		if d.session != nil {
@@ -654,6 +675,7 @@ func (d *trackDistributor) processGroup(ctx context.Context, seq moqt.GroupSeque
 
 	// Reserve ring slot synchronously to preserve group ordering.
 	cache := d.ring.reserve(seq)
+	d.stages.stampArrival(cache)
 	metricGroupFillsInflight.Inc()
 
 	// Dispatch to the worker pool (guaranteed non-blocking; see fillSem).
