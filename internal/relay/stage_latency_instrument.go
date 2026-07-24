@@ -87,7 +87,7 @@ func percentileFromCounts(counts []int64, total int64, p float64) time.Duration 
 	return stageBucketUpper(stageBuckets - 1)
 }
 
-func (h *stageHist) snapshot() stageSnapshot {
+func (h *stageHist) snapshot() StageSnapshot {
 	counts := make([]int64, stageBuckets)
 	var total int64
 	for i := range h.buckets {
@@ -95,7 +95,7 @@ func (h *stageHist) snapshot() stageSnapshot {
 		counts[i] = c
 		total += c
 	}
-	return stageSnapshot{
+	return StageSnapshot{
 		N:   total,
 		P50: percentileFromCounts(counts, total, 50),
 		P95: percentileFromCounts(counts, total, 95),
@@ -169,11 +169,11 @@ func (c *stageCollector) egressFrame(t0 time.Time) {
 	c.egress.observe(time.Since(t0))
 }
 
-func (c *stageCollector) report() *stageReport {
+func (c *stageCollector) report() *StageReport {
 	if c == nil {
 		return nil
 	}
-	return &stageReport{
+	return &StageReport{
 		IngressService: c.ingress.snapshot(),
 		RingResidence:  c.ring.snapshot(),
 		GroupOpen:      c.open.snapshot(),

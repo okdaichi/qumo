@@ -11,8 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Stage-latency instrumentation (`-tags instrument`)** — per-stage relay
   pipeline latency histograms (ingress append, ring residence, group open,
   frame write) behind a build tag; zero-overhead no-op in the default build.
-  Benchmarks read steady-state p50/p95/p99/max from the server's stage report
-  for latency attribution (internal diagnostic, not public API).
+  Benchmarks read steady-state p50/p95/p99/max via `Server.StageLatency()` /
+  `StageLatencyReset()` for latency attribution (benchmark-time diagnostic).
 
 ### Changed
 - **Reusable OpenGroupAt deadline** — egress delivery no longer constructs a

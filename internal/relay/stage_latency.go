@@ -23,34 +23,39 @@ import "time"
 // source, now()) compile to nothing, so production carries no overhead. Build
 // with -tags instrument to record real histograms. This file holds the shared,
 // build-independent surface.
+//
+// The report types and Server methods are exported even though their only
+// in-repo callers are the integration-tagged benchmarks: the default-build
+// unused linter cannot see build-tag-gated consumers, and the export marks the
+// surface as consumed outside the default compilation unit.
 
-// stageSnapshot is one stage's recorded latency distribution.
-type stageSnapshot struct {
+// StageSnapshot is one stage's recorded latency distribution.
+type StageSnapshot struct {
 	N                  int64
 	P50, P95, P99, Max time.Duration
 }
 
-// stageReport is a snapshot of all pipeline stages. Returned by
-// Server.stageLatency; nil unless built with -tags instrument.
-type stageReport struct {
-	IngressService stageSnapshot
-	RingResidence  stageSnapshot
-	GroupOpen      stageSnapshot
-	EgressService  stageSnapshot
+// StageReport is a snapshot of all pipeline stages. Returned by
+// Server.StageLatency; nil unless built with -tags instrument.
+type StageReport struct {
+	IngressService StageSnapshot
+	RingResidence  StageSnapshot
+	GroupOpen      StageSnapshot
+	EgressService  StageSnapshot
 }
 
-// stageLatency returns the per-stage latency distributions recorded since the
+// StageLatency returns the per-stage latency distributions recorded since the
 // last reset. It returns nil in the default build (no instrumentation).
-func (s *Server) stageLatency() *stageReport {
+func (s *Server) StageLatency() *StageReport {
 	if s == nil || s.sampler == nil {
 		return nil
 	}
 	return s.sampler.stageAgg.report()
 }
 
-// stageLatencyReset discards recorded stage samples so a benchmark can exclude
+// StageLatencyReset discards recorded stage samples so a benchmark can exclude
 // its ramp-up phase. No-op in the default build.
-func (s *Server) stageLatencyReset() {
+func (s *Server) StageLatencyReset() {
 	if s == nil || s.sampler == nil {
 		return
 	}
