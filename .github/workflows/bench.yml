@@ -80,86 +80,75 @@ jobs:
           git worktree add "$RUNNER_TEMP/base" "$BASE_SHA"
           echo "BASE_DIR=$RUNNER_TEMP/base" >> "$GITHUB_ENV"
 
-      - name: Run base benchmarks
+      - name: Run interleaved benchmarks (base and PR alternating)
         if: steps.changed.outputs.any == 'true'
-        working-directory: ${{ env.BASE_DIR }}
         run: |
-          # cwd is the base worktree; pkgs.txt and result files live in the
-          # workspace root, so reference them by absolute path.
+          # Interleaved sampling: BENCH_COUNT rounds, each running ONE -count=1
+          # pass over the base tree and then ONE over the PR tree. The former
+          # two-block design (all base samples, then all PR samples) let slow
+          # runner drift — shared-runner co-tenancy, thermal — land entirely as
+          # a fake base-vs-PR delta with a confident p-value: on PR #348 an
+          # untouched stdlib benchmark "regressed" +2.8% (p=0.000) and untouched
+          # subsystems +16-22%. Alternating rounds spreads drift evenly across
+          # both sides, restoring the sample exchangeability benchstat assumes.
           #
           # A changed package may live in a nested Go module (e.g.
           # tools/paramexp has its own go.mod, separate from the repo-root
           # module). Resolve the nearest enclosing module dir per package and
           # run go test from there; otherwise nested modules fail with "main
           # module does not contain package".
-          modroot() {
-            local d="./$1"
-            while true; do
-              [ -f "$d/go.mod" ] && { printf '%s\n' "$d"; return; }
-              [ "$d" = "." ] && { printf '%s\n' "."; return; }
-              d=$(dirname "$d")
-            done
+          #
+          # run_suite <tree-root> <output-file> <side-label>: one -count=1 pass
+          # over every changed package inside tree-root. A package that fails to
+          # build/run is reported once per side (marker file) and skipped in
+          # later rounds; "go:" module-download noise is stripped because it
+          # breaks benchstat's base<->PR pairing.
+          run_suite() {
+            local root="$1" outfile="$2" side="$3"
+            while IFS= read -r pkg; do
+              if grep -qxF "$side:$pkg" "$GITHUB_WORKSPACE/.bench-failed" 2>/dev/null; then
+                continue
+              fi
+              (
+                cd "$root"
+                d="./$pkg"
+                while true; do
+                  [ -f "$d/go.mod" ] && break
+                  [ "$d" = "." ] && break
+                  d=$(dirname "$d")
+                done
+                mod="$d"
+                if [ "$mod" = "." ] && [ ! -f "./go.mod" ]; then
+                  exit 0
+                fi
+                if [ "$mod" = "." ]; then
+                  target="./$pkg"
+                elif [ "$pkg" = "${mod#./}" ]; then
+                  target="."
+                else
+                  target="./${pkg#"${mod#./}"/}"
+                fi
+                [ "$target" = "." ] || [ -d "$mod/${target#./}" ] || exit 0
+                if out=$(cd "$mod" && go test -count=1 -benchtime="$BENCH_TIME" -bench=. -benchmem -run='^$' -timeout="$BENCH_TIMEOUT" "$target" 2>&1); then
+                  printf '%s\n' "$out" | grep -vE '^go:' >> "$outfile"
+                else
+                  echo "$side:$pkg" >> "$GITHUB_WORKSPACE/.bench-failed"
+                  echo "::error::$side benchmark/build failed for $pkg"
+                  { echo "### ❌ \`$pkg\` — $side build/run failed"; echo '```text'; printf '%s\n' "$out" | tail -n 25; echo '```'; } >> "$GITHUB_WORKSPACE/build-errors.md"
+                fi
+              )
+            done < "$GITHUB_WORKSPACE/pkgs.txt"
           }
-          rm -f "$GITHUB_WORKSPACE/base.txt" "$GITHUB_WORKSPACE/build-errors.md"
-          while IFS= read -r pkg; do
-            mod="$(modroot "$pkg")"
-            if [ "$mod" = "." ]; then
-              target="./$pkg"
-            elif [ "$pkg" = "${mod#./}" ]; then
-              target="."
-            else
-              target="./${pkg#"${mod#./}"/}"
-            fi
-            [ "$target" = "." ] || [ -d "$mod/${target#./}" ] || continue
-            echo "::group::Base benchmark: $pkg (module: $mod)"
-            if out=$(cd "$mod" && go test -count="$BENCH_COUNT" -benchtime="$BENCH_TIME" -bench=. -benchmem -run=^$ -timeout="$BENCH_TIMEOUT" "$target" 2>&1); then
-              # Drop "go:" module-download/tool noise (merged in via 2>&1). It
-              # isn't benchmark data and breaks benchstat's base↔PR pairing,
-              # which makes real deltas report as "no significant changes".
-              printf '%s\n' "$out" | grep -vE '^go:' >> "$GITHUB_WORKSPACE/base.txt"
-            else
-              echo "::error::Base benchmark/build failed for $pkg"
-              { echo "### ❌ \`$pkg\` — base build/run failed"; echo '```text'; printf '%s\n' "$out" | tail -n 25; echo '```'; } >> "$GITHUB_WORKSPACE/build-errors.md"
-            fi
-            echo "::endgroup::"
-          done < "$GITHUB_WORKSPACE/pkgs.txt"
 
-      - name: Run PR benchmarks
-        if: steps.changed.outputs.any == 'true'
-        run: |
-          # Same nested-module resolution as the base step (see comment there):
-          # run go test from the nearest enclosing module dir so packages in
-          # tools/paramexp (a separate module) are benchmarked.
-          modroot() {
-            local d="./$1"
-            while true; do
-              [ -f "$d/go.mod" ] && { printf '%s\n' "$d"; return; }
-              [ "$d" = "." ] && { printf '%s\n' "."; return; }
-              d=$(dirname "$d")
-            done
-          }
-          while IFS= read -r pkg; do
-            mod="$(modroot "$pkg")"
-            if [ "$mod" = "." ]; then
-              target="./$pkg"
-            elif [ "$pkg" = "${mod#./}" ]; then
-              target="."
-            else
-              target="./${pkg#"${mod#./}"/}"
-            fi
-            [ "$target" = "." ] || [ -d "$mod/${target#./}" ] || continue
-            echo "::group::PR benchmark: $pkg (module: $mod)"
-            if out=$(cd "$mod" && go test -count="$BENCH_COUNT" -benchtime="$BENCH_TIME" -bench=. -benchmem -run=^$ -timeout="$BENCH_TIMEOUT" "$target" 2>&1); then
-              # Drop "go:" module-download/tool noise (merged in via 2>&1). It
-              # isn't benchmark data and breaks benchstat's base↔PR pairing,
-              # which makes real deltas report as "no significant changes".
-              printf '%s\n' "$out" | grep -vE '^go:' >> pr.txt
-            else
-              echo "::error::PR benchmark/build failed for $pkg"
-              { echo "### ❌ \`$pkg\` — PR build/run failed"; echo '```text'; printf '%s\n' "$out" | tail -n 25; echo '```'; } >> build-errors.md
-            fi
+          rm -f base.txt pr.txt build-errors.md .bench-failed
+          i=1
+          while [ "$i" -le "$BENCH_COUNT" ]; do
+            echo "::group::Round $i/$BENCH_COUNT (base then PR)"
+            run_suite "$BASE_DIR" "$GITHUB_WORKSPACE/base.txt" base
+            run_suite "$GITHUB_WORKSPACE" "$GITHUB_WORKSPACE/pr.txt" PR
             echo "::endgroup::"
-          done < pkgs.txt
+            i=$((i + 1))
+          done
 
       - name: Install benchstat
         if: steps.changed.outputs.any == 'true'
