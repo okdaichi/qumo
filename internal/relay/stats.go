@@ -61,6 +61,10 @@ type statsSampler struct {
 	// teardowns can never drop a deletion.
 	reapMu sync.Mutex
 	reap   []func()
+
+	// stageAgg is the server-wide stage-latency collector (see stage_latency.go).
+	// Zero-size no-op in the default build; real histograms with -tags instrument.
+	stageAgg stageCollector
 }
 
 // queueReap enqueues fn to run on the sampler goroutine after the next sweep.

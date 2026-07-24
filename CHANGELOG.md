@@ -7,7 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_No changes yet._
+### Added
+- **Stage-latency instrumentation (`-tags instrument`)** — per-stage relay
+  pipeline latency histograms (ingress append, ring residence, group open,
+  frame write) behind a build tag; zero-overhead no-op in the default build.
+  Benchmarks read steady-state p50/p95/p99/max via `Server.StageLatency()` /
+  `StageLatencyReset()` for latency attribution (benchmark-time diagnostic).
+
+### Changed
+- **Reusable OpenGroupAt deadline** — egress delivery no longer constructs a
+  `context.WithTimeout` per delivered group; a per-subscriber reusable
+  timer/context bounds the open instead. 354.8→57.8 ns and 4→0 allocs per
+  delivery (benchstat, n=10); −32% `deliverGroup` CPU at 1000-subscriber
+  fan-out. Efficiency change only: measured e2e latency is unchanged.
+  Backpressure semantics (30 ms bound, drop-group-and-continue) preserved.
 
 ## [v0.5.0] - 2026-07-24
 
