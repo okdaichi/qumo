@@ -124,12 +124,19 @@ func singleRelayFanoutRun(tb testing.TB, cert tls.Certificate, pool *x509.CertPo
 
 	// Settle window: stage histograms are reset and e2e samples discarded until
 	// settleAt, so percentiles reflect steady state, not connection ramp-up.
+	// sentAtSettle snapshots the publish counter at the same instant so loss%
+	// and fps are computed over the steady-state window only — without it, the
+	// dropped ramp-up samples would masquerade as ~settle/duration loss.
 	settle := duration / 4
 	if settle > 5*time.Second {
 		settle = 5 * time.Second
 	}
 	settleAt := time.Now().Add(settle)
-	time.AfterFunc(settle, relay.StageLatencyReset)
+	var sentAtSettle uint64
+	time.AfterFunc(settle, func() {
+		atomic.StoreUint64(&sentAtSettle, atomic.LoadUint64(&sentCounter))
+		relay.StageLatencyReset()
+	})
 
 	before := snapshotBefore()
 	results := make([][]time.Duration, K)
@@ -166,13 +173,17 @@ func singleRelayFanoutRun(tb testing.TB, cert tls.Certificate, pool *x509.CertPo
 		totalRecv += len(lats)
 		perSubRecv[i] = float64(len(lats))
 	}
-	sent := atomic.LoadUint64(&sentCounter)
+	// Steady-state accounting: frames sent before the settle snapshot were
+	// deliberately discarded by subscribeAndRead, so only post-settle sends
+	// count toward loss and fps (see sentAtSettle).
+	steadySent := atomic.LoadUint64(&sentCounter) - atomic.LoadUint64(&sentAtSettle)
+	steadyWindow := duration - settle
 	avgRecv := totalRecv / K
 	lossPct := 0.0
-	if sent > 0 {
-		lossPct = (float64(sent) - float64(avgRecv)) / float64(sent) * 100
+	if steadySent > 0 {
+		lossPct = (float64(steadySent) - float64(avgRecv)) / float64(steadySent) * 100
 	}
-	fps := float64(avgRecv) / duration.Seconds()
+	fps := float64(avgRecv) / steadyWindow.Seconds()
 	heapMB, goros, cpu := before.delta(after)
 
 	var sum, sumSq float64

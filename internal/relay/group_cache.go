@@ -53,18 +53,21 @@ type groupCache struct {
 	// len(slots).
 	count atomic.Int32
 
-	// ingressArrivalNano is the UnixNano instant the group was reserved into the
-	// ring (stage-latency instrumentation; see stage_latency.go). Written only by
-	// the instrument build's stampArrival, read by egress ringResidence; atomic
-	// because fill and egress goroutines access it concurrently. Always present
-	// (8 bytes) so the field layout is build-independent.
-	ingressArrivalNano atomic.Int64
-
 	seq      moqt.GroupSequence
 	complete atomic.Bool // True when all frames have been added
 	refCount atomic.Int32
 	evicted  atomic.Bool
 	released atomic.Bool
+
+	// ingressArrivalNano is the UnixNano instant the group was reserved into the
+	// ring (stage-latency instrumentation; see stage_latency.go). Written only by
+	// the instrument build's stampArrival/clearArrival, read by egress
+	// ringResidence; atomic because fill and egress goroutines access it
+	// concurrently. Always present (8 bytes) so the field layout is
+	// build-independent, and deliberately last so it does not displace the hot
+	// fields above across cache lines.
+	//nolint:unused // accessed only by the -tags instrument build (stage_latency_instrument.go), invisible to the default-build linter
+	ingressArrivalNano atomic.Int64
 }
 
 // newGroupCache allocates a groupCache whose slot backing array is exactly
@@ -89,7 +92,6 @@ func (gc *groupCache) resetForReuse() {
 		gc.slots[i].Store(nil)
 	}
 	gc.count.Store(0)
-	gc.ingressArrivalNano.Store(0)
 }
 
 // isComplete returns true if the group has finished receiving all frames.
@@ -217,6 +219,11 @@ func (ring *groupRing) reserve(seq moqt.GroupSequence) *groupCache {
 	// Reinitialize content state so the read contract does not depend on
 	// releaseCache having cleaned up: clear the slots and reset count to 0.
 	cache.resetForReuse()
+
+	// Clear any stale arrival stamp from the cache's previous generation
+	// (no-op in the default build, so reserve pays nothing for the
+	// instrument-only field; the instrument build re-stamps in processGroup).
+	ring.stages.clearArrival(cache)
 
 	idx := int(ring.pos.Add(1) % uint64(ring.size))
 

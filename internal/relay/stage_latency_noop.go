@@ -17,6 +17,8 @@ func (*stageCollector) ingressFrame(time.Time) {}
 
 func (*stageCollector) stampArrival(*groupCache) {}
 
+func (*stageCollector) clearArrival(*groupCache) {}
+
 func (*stageCollector) ringResidence(*groupCache, time.Time) {}
 
 func (*stageCollector) groupOpen(time.Time) {}

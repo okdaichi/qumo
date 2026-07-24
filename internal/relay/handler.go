@@ -555,6 +555,11 @@ func (d *trackDistributor) deliverGroup(tw *moqt.TrackWriter, twCtx context.Cont
 		if timedOut && twCtx.Err() == nil {
 			// Backpressure: peer's MAX_STREAMS is exhausted. Drop this group
 			// (MoQ semi-reliable) and continue to the next.
+			//
+			// A non-timeout failure (e.g. session death) that coincides with a
+			// timer fire is also classified here; the next delivery then fails
+			// fast with timedOut=false and terminates, so a dead session costs
+			// at most one extra loop iteration.
 			metricSubscriberSkipsTotal.Inc()
 			return false
 		}

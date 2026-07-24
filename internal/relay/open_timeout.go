@@ -36,13 +36,19 @@ func newOpenTimeout(parent context.Context) *openTimeout {
 	return o
 }
 
+// armIdleDuration is the placeholder deadline a freshly built timer is created
+// with before being stopped. Far larger than any real deadline so that even a
+// pathological descheduling between AfterFunc and Stop cannot fire the timer
+// and cancel a context that was never used; start's Reset sets the real bound.
+const armIdleDuration = 24 * time.Hour
+
 // arm builds a fresh context and its cancel timer (stopped). The timer's
 // callback captures the cancel of the context built alongside it, so a late
 // fire from a previous generation can only cancel its own, already-discarded
 // context.
 func (o *openTimeout) arm() {
 	o.ctx, o.cancel = context.WithCancel(o.parent)
-	o.timer = time.AfterFunc(defaultGroupTimeout, o.cancel)
+	o.timer = time.AfterFunc(armIdleDuration, o.cancel)
 	o.timer.Stop()
 }
 

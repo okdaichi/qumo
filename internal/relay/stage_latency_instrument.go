@@ -144,6 +144,16 @@ func (c *stageCollector) stampArrival(gc *groupCache) {
 	gc.ingressArrivalNano.Store(time.Now().UnixNano())
 }
 
+// clearArrival zeroes a reused cache's stale arrival stamp so ringResidence
+// never measures against a previous generation. Called from reserve; the
+// default build's no-op keeps the reserve path free of this cost.
+func (c *stageCollector) clearArrival(gc *groupCache) {
+	if c == nil || gc == nil {
+		return
+	}
+	gc.ingressArrivalNano.Store(0)
+}
+
 func (c *stageCollector) ringResidence(gc *groupCache, t time.Time) {
 	if c == nil || gc == nil || t.IsZero() {
 		return
