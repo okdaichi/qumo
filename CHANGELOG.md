@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Release notes — relay performance cycle
+
+A focused relay-side optimization + capacity-characterization cycle. After it,
+the relay's own hot-path code is **<1% of CPU and <2.5% of allocations** under
+load — the remaining costs live in quic-go (egress/handshake) and the Go
+runtime. Full evidence in `docs/perf/`.
+
+Landed optimizations (measured):
+- **O(1) broadcast notification (#332)** — atomic-seqnum + close-and-recreate
+  fan-out, ~82–86 ns flat across 1–1000 subscribers (was O(N), ~32 µs at 1000).
+  Also closes a missed-wakeup window in the trickle wait.
+- **Fixed worker pool for group fills (#338)** — per-group goroutine+closure
+  spawn replaced by a long-lived worker pool: 11→9 allocs/op (−18%), ~15% faster
+  on `BenchmarkProcessGroup`, no regression on ring fill.
+- **Batched egress counter (#333)** — one Prometheus `Add` per group (was per
+  frame); flushes on mid-group error so written bytes stay counted
+  (metering-accurate). Marginal throughput impact (the counter was never the
+  bottleneck) — primarily correctness/alloc hygiene.
+- **Configurable UDP receive buffer `RELAY_UDP_RCVBUF` (#329)** — burst-safe
+  `SO_RCVBUF` (default 256 KB); kernel-capped by `net.core.rmem_max` on Linux.
+- **Opt-in pprof endpoint `RELAY_PPROF` (#339)** — `/debug/pprof/*` for profiling
+  the relay under out-of-process load.
+
+Characterized capacity envelope (WSL2 single-host; **shape-valid, ±noise — not a
+bare-metal claim**):
+- Sustainable HOLD **~13K** concurrent subscriber sessions; establishment peak
+  **~15K**.
+- Throughput **≥200K objects/sec** at 2000 subscribers (no cliff reached at that
+  fan-out).
+- Per session: **~7 goroutines**, **~468 KB RSS** (steady-state, GOGC=800).
+- At the ceiling the relay is **not the bottleneck**: ~30% CPU/core, GC p99
+  ≤6.7 ms, 11 FDs. The ~13K attrition mechanism is a **leading hypothesis
+  (recv-buffer), unconfirmed** — see #343.
+
+Tuning options (all opt-in; defaults unchanged):
+- **`RELAY_GOGC`** — raises the HOLD ceiling on bare metal (~13–15K → ~18–20K at
+  GOGC 600–1600); on single-host WSL the ceiling is establishment/recv-buffer-
+  bound so GOGC has only ~±5% effect there.
+- **`RELAY_UDP_RCVBUF`** — UDP `SO_RCVBUF`; raise `net.core.rmem_max` on Linux to
+  let a large value take effect.
+- **`RELAY_PPROF`** — off by default; enable on a trusted interface only.
+
+Deferred validation (estimates/hypotheses, **not yet measured**):
+- Bare-metal envelope (#341); distributed-load true ceiling (#342); recv-buffer
+  hypothesis (#343); multi-publisher throughput scaling + exact PPS cliff (#344).
+- The "~25K sessions" figure is a CPU extrapolation, **not measured**.
+
 ### Changed
 
 - **`internal/relay` group fills use a fixed worker pool instead of a per-group goroutine.** `processGroup` previously did `wg.Go(func(){...})` per accepted group — spawning a goroutine and allocating two closures (the dispatch body + the per-frame fill callback) on every group, on the ingest hot path. It now dispatches a `fillJob` struct to a pool of `MaxGroupFillsInFlight` long-lived worker goroutines (created once per `trackDistributor`), and the per-frame callback is the `onFrame` method. Concurrency is bounded identically (one in-flight fill per worker via the existing `fillSem`), shutdown order is explicit (`close(fillJobs)` → `fillWg.Wait()` → `close(done)` so every reserved cache is filled before egress sees `done`), and the slot is acquired before `ring.reserve` so cancellation never leaks a reserved cache. Measured on `BenchmarkProcessGroup`: 11 → 9 allocs/op (−18%), 454 → 377 B/op (−17%), ~15% faster; no regression on `BenchmarkGroupRing_Fill`. Supersedes #336 (rebased onto the #332 atomic-seqnum notify API).
