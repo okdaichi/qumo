@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+_No changes yet._
+
+## [v0.5.0] - 2026-07-24
+
 ### Release notes — relay performance cycle
 
 A focused relay-side optimization + capacity-characterization cycle. After it,
