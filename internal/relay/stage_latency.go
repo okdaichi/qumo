@@ -24,33 +24,33 @@ import "time"
 // with -tags instrument to record real histograms. This file holds the shared,
 // build-independent surface.
 
-// StageSnapshot is one stage's recorded latency distribution.
-type StageSnapshot struct {
+// stageSnapshot is one stage's recorded latency distribution.
+type stageSnapshot struct {
 	N                  int64
 	P50, P95, P99, Max time.Duration
 }
 
-// StageReport is a snapshot of all pipeline stages. Returned by
-// Server.StageLatency; nil unless built with -tags instrument.
-type StageReport struct {
-	IngressService StageSnapshot
-	RingResidence  StageSnapshot
-	GroupOpen      StageSnapshot
-	EgressService  StageSnapshot
+// stageReport is a snapshot of all pipeline stages. Returned by
+// Server.stageLatency; nil unless built with -tags instrument.
+type stageReport struct {
+	IngressService stageSnapshot
+	RingResidence  stageSnapshot
+	GroupOpen      stageSnapshot
+	EgressService  stageSnapshot
 }
 
-// StageLatency returns the per-stage latency distributions recorded since the
+// stageLatency returns the per-stage latency distributions recorded since the
 // last reset. It returns nil in the default build (no instrumentation).
-func (s *Server) StageLatency() *StageReport {
+func (s *Server) stageLatency() *stageReport {
 	if s == nil || s.sampler == nil {
 		return nil
 	}
 	return s.sampler.stageAgg.report()
 }
 
-// StageLatencyReset discards recorded stage samples so a benchmark can exclude
+// stageLatencyReset discards recorded stage samples so a benchmark can exclude
 // its ramp-up phase. No-op in the default build.
-func (s *Server) StageLatencyReset() {
+func (s *Server) stageLatencyReset() {
 	if s == nil || s.sampler == nil {
 		return
 	}

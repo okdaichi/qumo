@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestOpenTimeout_FastPath(t *testing.T) {
+func TestOpenTimeout_Done_FastPath(t *testing.T) {
 	o := newOpenTimeout(context.Background())
 	defer o.release()
 
@@ -26,7 +26,7 @@ func TestOpenTimeout_FastPath(t *testing.T) {
 	assert.False(t, o.done())
 }
 
-func TestOpenTimeout_Fires(t *testing.T) {
+func TestOpenTimeout_Done_TimerFired(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		o := newOpenTimeout(context.Background())
 		defer o.release()
@@ -47,7 +47,7 @@ func TestOpenTimeout_Fires(t *testing.T) {
 	})
 }
 
-func TestOpenTimeout_ParentCancelPropagates(t *testing.T) {
+func TestOpenTimeout_Start_ParentCancelled(t *testing.T) {
 	parent, cancel := context.WithCancel(context.Background())
 	o := newOpenTimeout(parent)
 	defer o.release()
@@ -76,7 +76,7 @@ func BenchmarkOpenDeadline(b *testing.B) {
 		b.ReportAllocs()
 		for b.Loop() {
 			ctx, cancel := context.WithTimeout(parent, defaultGroupTimeout)
-			_ = ctx.Err()
+			_ = ctx.Err() // not actionable: sink so the deadline check stays in the measured loop
 			cancel()
 		}
 	})
@@ -86,7 +86,7 @@ func BenchmarkOpenDeadline(b *testing.B) {
 		b.ReportAllocs()
 		for b.Loop() {
 			ctx := o.start()
-			_ = ctx.Err()
+			_ = ctx.Err() // not actionable: sink so the deadline check stays in the measured loop
 			_ = o.done()
 		}
 	})

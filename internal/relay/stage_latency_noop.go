@@ -23,6 +23,6 @@ func (*stageCollector) groupOpen(time.Time) {}
 
 func (*stageCollector) egressFrame(time.Time) {}
 
-func (*stageCollector) report() *StageReport { return nil }
+func (*stageCollector) report() *stageReport { return nil }
 
 func (*stageCollector) reset() {}

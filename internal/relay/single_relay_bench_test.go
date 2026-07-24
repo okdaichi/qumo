@@ -129,7 +129,7 @@ func singleRelayFanoutRun(tb testing.TB, cert tls.Certificate, pool *x509.CertPo
 		settle = 5 * time.Second
 	}
 	settleAt := time.Now().Add(settle)
-	time.AfterFunc(settle, relay.StageLatencyReset)
+	time.AfterFunc(settle, relay.stageLatencyReset)
 
 	before := snapshotBefore()
 	results := make([][]time.Duration, K)
@@ -146,8 +146,8 @@ func singleRelayFanoutRun(tb testing.TB, cert tls.Certificate, pool *x509.CertPo
 	after := snapshotBefore()
 	_ = pubSess.CloseWithError(moqt.NoError, "done")
 
-	if rep := relay.StageLatency(); rep != nil {
-		logStage := func(name string, s StageSnapshot) {
+	if rep := relay.stageLatency(); rep != nil {
+		logStage := func(name string, s stageSnapshot) {
 			log.Printf("stage %-14s n=%-9d p50=%-10s p95=%-10s p99=%-10s max=%s",
 				name, s.N, s.P50, s.P95, s.P99, s.Max)
 		}
