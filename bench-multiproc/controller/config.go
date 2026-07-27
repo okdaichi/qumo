@@ -1,0 +1,140 @@
+// Package controller implements a multi-process qumo relay benchmark harness. It
+// replaces the previous bash-based orchestration (run-level.sh, run-sweep.sh)
+// with a native Go controller that manages relay subprocesses, goroutine-based
+// subscriber load, Prometheus metric scraping, and JSONL result output.
+//
+// The controller builds the topology:
+//
+//	publisher → hub(4433)
+//	              ├── edge0(4434) → X subscribers (goroutines)
+//	              ├── edge1(4435) → X subscribers
+//	              └── edge2(4436) → X subscribers
+//
+// Each edge runs as an independent OS process with its own PEERS config.
+// Subscribers are goroutines within the controller process — no subprocess
+// per subscriber, eliminating the MSYS2 process-management overhead that
+// caused the P≥3 failure in the earlier bash-based harness.
+package controller
+
+import (
+	"errors"
+	"flag"
+	"fmt"
+	"math/rand/v2"
+	"time"
+)
+
+// Config describes one (P, X) cell of the benchmark experiment.
+type Config struct {
+	// P is the number of edge relay processes (≥1). Total relays = 1 hub + P edges.
+	P int
+	// X is the number of subscribers per edge (≥1). Total subscribers = P × X.
+	X int
+
+	// Workload parameters.
+	GPS       float64       // groups per second (default 30)
+	FrameSize int           // frame payload bytes (default 1200)
+	Hold      time.Duration // subscriber hold duration (default 30s)
+
+	// Paths.
+	QumoBin   string // path to qumo binary (auto-detected if empty)
+	CertDir   string // directory for generated TLS certs (defaults to bench-multiproc/)
+	Results   string // output directory for JSONL + logs (defaults to bench-multiproc/results/)
+
+	// Ports.
+	HubPort  int   // hub listen port (default 4433)
+	EdgeBase int   // first edge listen port (default 4434; subsequent edges +1)
+
+	// Latency probe: after measurement, run e2e latency probe on a sample edge.
+	LatencyProbe bool
+
+	// Core pinning: pin relays to dedicated cores when true.
+	PinRelays bool
+}
+
+// DefaultConfig returns a Config with sensible defaults.
+func DefaultConfig() Config {
+	return Config{
+		GPS:       30,
+		FrameSize: 1200,
+		Hold:      30 * time.Second,
+		QumoBin:   "",
+		CertDir:   "",
+		Results:   "",
+		HubPort:   4433,
+		EdgeBase:  4434,
+
+		LatencyProbe: false,
+		PinRelays:    true,
+	}
+}
+
+// ParseFlags fills a Config from command-line flags. It returns the remaining
+// positional args (P, X) and any parse error.
+func (c *Config) ParseFlags(args []string) (posArgs []string, err error) {
+	fs := flag.NewFlagSet("benchctl", flag.ContinueOnError)
+	fs.Float64Var(&c.GPS, "gps", c.GPS, "groups per second")
+	fs.IntVar(&c.FrameSize, "size", c.FrameSize, "frame payload bytes")
+	fs.DurationVar(&c.Hold, "hold", c.Hold, "subscriber hold duration")
+	fs.StringVar(&c.QumoBin, "qumo", c.QumoBin, "path to qumo binary")
+	fs.StringVar(&c.CertDir, "cert-dir", c.CertDir, "directory for TLS certs")
+	fs.StringVar(&c.Results, "results", c.Results, "output directory")
+	fs.IntVar(&c.HubPort, "hub-port", c.HubPort, "hub listen port")
+	fs.IntVar(&c.EdgeBase, "edge-base", c.EdgeBase, "first edge listen port")
+	fs.BoolVar(&c.LatencyProbe, "latency-probe", c.LatencyProbe, "run e2e latency probe")
+	fs.BoolVar(&c.PinRelays, "pin", c.PinRelays, "pin relays to dedicated cores")
+
+	if err := fs.Parse(args); err != nil {
+		return nil, err
+	}
+	return fs.Args(), nil
+}
+
+// Validate checks the config for obvious errors.
+func (c *Config) Validate() error {
+	if c.P < 1 {
+		return errors.New("P must be >= 1")
+	}
+	if c.X < 1 {
+		return errors.New("X must be >= 1")
+	}
+	if c.GPS <= 0 {
+		return errors.New("GPS must be positive")
+	}
+	if c.FrameSize < 16 {
+		return errors.New("frame size must be >= 16")
+	}
+	if c.Hold <= 0 {
+		return errors.New("hold must be positive")
+	}
+	if c.HubPort < 1 || c.HubPort > 65535 {
+		return fmt.Errorf("invalid hub port: %d", c.HubPort)
+	}
+	if c.EdgeBase < 1 || c.EdgeBase > 65535 {
+		return fmt.Errorf("invalid edge base port: %d", c.EdgeBase)
+	}
+	return nil
+}
+
+// RandomizePorts picks a random port base for this cell to avoid TIME_WAIT
+// conflicts between consecutive sweep iterations. The hub gets a random port
+// in [40000, 50000), edges are contiguous from there.
+func (c *Config) RandomizePorts() {
+	c.HubPort = 40000 + rand.IntN(10000)
+	c.EdgeBase = c.HubPort + 1
+}
+
+// EdgePort returns the port for edge index i (0-indexed).
+func (c *Config) EdgePort(i int) int {
+	return c.EdgeBase + i
+}
+
+// TotalSubs returns the total number of subscribers P × X.
+func (c *Config) TotalSubs() int {
+	return c.P * c.X
+}
+
+// TotalRelays returns the number of relay processes: 1 hub + P edges.
+func (c *Config) TotalRelays() int {
+	return c.P + 1
+}
