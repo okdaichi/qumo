@@ -538,6 +538,16 @@ func report(target dialTarget, sessions int, r carryResult) {
 		fmt.Printf("  relay cost       : unavailable (/metrics unreadable — see warning)\n")
 	}
 	fmt.Printf("  verdict          : %s\n", verdict)
+	// Machine-readable result line for the benchmark controller. The prefix
+	// "RESULT " lets the controller find this line reliably regardless of other
+	// output. The order of keys is deterministic because Go's json.Marshal
+	// sorts map keys; we use a struct for clarity.
+	type resultLine struct {
+		Connected int `json:"connected"`
+		Receiving int `json:"receiving"`
+	}
+	b, _ := json.Marshal(resultLine{Connected: r.connected, Receiving: r.receiving})
+	fmt.Printf("RESULT %s\n", string(b))
 }
 
 // jsonlRecord is the capacity-group record the relay-bench dashboard reads, so a

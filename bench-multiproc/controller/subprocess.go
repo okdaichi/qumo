@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -23,7 +24,11 @@ type ProcessState struct {
 	Done    chan struct{} // closed when process exits
 }
 
-var httpClient = &http.Client{Timeout: 5 * time.Second}
+// httpClient lazily returns an HTTP client with a 5-second timeout.
+// Wrapped in a function to avoid mutable package-level state (Go skill rule 1).
+func httpClient() *http.Client {
+	return &http.Client{Timeout: 5 * time.Second}
+}
 
 // startRelay launches one relay process with the given configuration.
 func startRelay(ctx context.Context, bin string, node *RelayNode, certDir string, top *Topology) (*ProcessState, error) {
@@ -100,18 +105,22 @@ func stopRelay(ps *ProcessState, timeout time.Duration) {
 	}
 	proc.Signal(syscall.SIGTERM)
 
+	graceTimer := time.NewTimer(timeout)
+	defer graceTimer.Stop()
 	select {
 	case <-ps.Done:
 		slog.Info("relay stopped gracefully", "node", ps.Node.Name)
 		return
-	case <-time.After(timeout):
+	case <-graceTimer.C:
 	}
 
 	proc.Signal(syscall.SIGKILL)
+	killTimer := time.NewTimer(2 * time.Second)
+	defer killTimer.Stop()
 	select {
 	case <-ps.Done:
 		slog.Info("relay killed", "node", ps.Node.Name)
-	case <-time.After(2 * time.Second):
+	case <-killTimer.C:
 		slog.Warn("relay did not respond to SIGKILL", "node", ps.Node.Name)
 	}
 }
@@ -149,7 +158,7 @@ func getOK(ctx context.Context, url string) error {
 	if err != nil {
 		return err
 	}
-	resp, err := httpClient.Do(req)
+	resp, err := httpClient().Do(req)
 	if err != nil {
 		return err
 	}
@@ -170,7 +179,7 @@ func fetchMetricsBody(ctx context.Context, port int) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	resp, err := httpClient.Do(req)
+	resp, err := httpClient().Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -246,9 +255,62 @@ func waitBroadcastActive(ctx context.Context, ps *ProcessState, timeout time.Dur
 	}
 }
 
-// killPortProcesses kills any process listening on the given TCP port (Linux).
+// killPortProcesses kills any process listening on the given TCP port. It tries
+// multiple strategies in order of reliability and logs each attempt. After
+// killing, it waits for the port to become free with a short retry loop.
 func killPortProcesses(port int) {
+	portStr := fmt.Sprintf("%d", port)
+
+	// Strategy 1: fuser -k (fast, targets port directly).
 	if _, err := exec.LookPath("fuser"); err == nil {
-		exec.Command("fuser", "-k", fmt.Sprintf("%d/tcp", port)).Run()
+		cmd := exec.Command("fuser", "-k", portStr+"/tcp")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			slog.Debug("killPortProcesses: fuser -k failed", "port", port, "err", err, "output", strings.TrimSpace(string(out)))
+		} else {
+			slog.Debug("killPortProcesses: fuser -k succeeded", "port", port, "output", strings.TrimSpace(string(out)))
+		}
+	}
+
+	// Strategy 2: lsof -ti :port | xargs kill -9.
+	if _, err := exec.LookPath("lsof"); err == nil {
+		// List PIDs with -F p for parser-friendly output, pipe to kill.
+		cmd := exec.Command("sh", "-c", fmt.Sprintf("lsof -ti :%s 2>/dev/null | xargs -r kill -9 2>/dev/null", portStr))
+		if out, err := cmd.CombinedOutput(); err != nil {
+			slog.Debug("killPortProcesses: lsof fallback failed", "port", port, "err", err, "output", strings.TrimSpace(string(out)))
+		} else {
+			slog.Debug("killPortProcesses: lsof fallback succeeded", "port", port, "output", strings.TrimSpace(string(out)))
+		}
+	}
+
+	// Wait for the port to become free (up to ~3 seconds).
+	waitPortClosed(port, 3*time.Second)
+}
+
+// waitPortClosed polls until no process is listening on the given TCP port or
+// the timeout expires. It tries a TCP dial first, then falls back to ss/lsof.
+func waitPortClosed(port int, timeout time.Duration) {
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+
+	poll := time.NewTicker(200 * time.Millisecond)
+	defer poll.Stop()
+
+	for {
+		// Quick check: can we connect?
+		conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 500*time.Millisecond)
+		if err != nil {
+			// Connection refused → port is free.
+			return
+		}
+		conn.Close()
+
+		select {
+		case <-deadline.C:
+			slog.Warn("killPortProcesses: port still in use after timeout", "port", port)
+			return
+		case <-poll.C:
+			// Retry.
+		}
 	}
 }
+

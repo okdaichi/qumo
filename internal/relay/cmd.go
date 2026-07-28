@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -252,6 +253,28 @@ func Run(args []string) error {
 	httpMux.HandleFunc("/", relayServer.HandleWebTransport)
 	httpMux.HandleFunc("/health", relayServer.ServeHealth)
 	httpMux.Handle("/metrics", promhttp.Handler())
+
+	// Debug endpoint exposing per-stage accept pipeline counters. These counters
+	// are embedded in the gomoqt Server struct and are only available when the
+	// instrumented gomoqt build is linked (nil-safe; returns zero values otherwise).
+	httpMux.HandleFunc("/debug/stages", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if relayServer.MOQServer == nil || relayServer.MOQServer.Counters == nil {
+			_, _ = w.Write([]byte("{}"))
+			return
+		}
+		c := relayServer.MOQServer.Counters
+		enc := json.NewEncoder(w)
+		_ = enc.Encode(map[string]any{
+			"quic_accepts":         c.QUICAccepts.Load(),
+			"native_sessions":      c.NativeSessions.Load(),
+			"bi_stream_accepts":    c.BiStreamAccepts.Load(),
+			"subscribes_received":  c.SubscribesReceived.Load(),
+			"subscribes_served":    c.SubscribesServed.Load(),
+			"accept_errors":        c.AcceptErrors.Load(),
+			"subscribe_errors":     c.SubscribeErrors.Load(),
+		})
+	})
 
 	// Optional net/http/pprof endpoints, off by default. pprof exposes runtime
 	// internals (heap object graphs, goroutine stacks) so it is gated behind

@@ -68,6 +68,21 @@ type groupCache struct {
 	// fields above across cache lines.
 	//nolint:unused // accessed only by the -tags instrument build (stage_latency_instrument.go), invisible to the default-build linter
 	ingressArrivalNano atomic.Int64
+
+	// Mechanism-investigation stamps (instrument build only; see
+	// stage_latency.go). All UnixNano, atomic (fill worker + N egress goroutines
+	// touch them concurrently), zeroed in clearArrival on reserve.
+	//   firstBroadcastNano: when fill first broadcast this generation's data
+	//     (reserve→here = fill/ingest latency; here→pickup = egress wake latency).
+	//   firstPickupNano:    first egress goroutine to enter deliverGroup for this
+	//     generation (drives the concurrent-active-groups gauge).
+	//   lastEndNano:        latest deliverGroup end across the fleet (group span).
+	//nolint:unused // instrument-build only
+	firstBroadcastNano atomic.Int64
+	//nolint:unused // instrument-build only
+	firstPickupNano atomic.Int64
+	//nolint:unused // instrument-build only
+	lastEndNano atomic.Int64
 }
 
 // newGroupCache allocates a groupCache whose slot backing array is exactly
@@ -264,6 +279,9 @@ func (ring *groupRing) fill(group frameSource, cache *groupCache, onFrame func(n
 		t0 := ring.stages.now()
 		cache.append(frame, ring.pool)
 		ring.stages.ingressFrame(t0)
+		// Stamp the first-broadcast instant (splits ring residence into fill vs
+		// egress-wake latency); onFrame triggers the broadcast right after.
+		ring.stages.groupBroadcast(cache)
 		if onFrame != nil {
 			onFrame(n)
 		}
@@ -307,6 +325,7 @@ func (ring *groupRing) releaseCache(gc *groupCache) {
 	if !gc.released.CompareAndSwap(false, true) {
 		return // already released by another goroutine
 	}
+	ring.stages.groupReleased(gc) // generation done: drop the active-groups gauge
 
 	// No lock: releaseCache runs at most once (released CAS above) and only when
 	// refCount == 0, so no reader is observing this cache. In a single pass,

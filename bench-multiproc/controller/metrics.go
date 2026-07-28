@@ -22,6 +22,8 @@ type RelaySnapshot struct {
 
 	// Relay-specific metrics.
 	SessionsActive    float64 // qumo_relay_sessions_active
+	SubscribersActive float64 // qumo_relay_subscribers_active
+	SubscriberSkips   float64 // qumo_relay_subscriber_skips_total
 	EgressBytesTotal  float64 // qumo_relay_egress_bytes_total (sum across all tracks)
 	PeersConnected    float64 // qumo_relay_peers_connected
 	BroadcastsActive  float64 // qumo_relay_broadcasts_active
@@ -76,11 +78,21 @@ func parseRelayMetrics(text string) (*RelaySnapshot, error) {
 		case name == "qumo_relay_sessions_active":
 			snap.SessionsActive = f
 			found++
+		case name == "qumo_relay_subscribers_active":
+			snap.SubscribersActive = f
+			found++
+		case name == "qumo_relay_subscriber_skips_total":
+			snap.SubscriberSkips = f
+			found++
 		case name == "qumo_relay_peers_connected":
 			snap.PeersConnected = f
 			found++
 		case name == "qumo_relay_broadcasts_active":
 			snap.BroadcastsActive = f
+			found++
+		case strings.HasPrefix(name, "qumo_relay_egress_bytes_total{"):
+			// Per-track egress bytes, e.g. qumo_relay_egress_bytes_total{track="/bench/carry/data"}
+			snap.EgressBytesTotal += f
 			found++
 		case strings.HasPrefix(name, "go_gc_duration_seconds_sum"):
 			snap.GCDurationSecSum = f

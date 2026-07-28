@@ -79,9 +79,9 @@ func RunCell(ctx context.Context, cfg *Config, qumoBin, certDir string) (*CellRe
 		}
 	}
 
-	// ---- Step 6: Start publisher (goroutine inside controller) ----
+	// ---- Step 6: Start publisher (subprocess) ----
 	slog.Info("starting publisher", "hub", fmt.Sprintf("127.0.0.1:%d", cfg.HubPort))
-	pubCancel, err := PublishTrack(ctx,
+	pubCancel, err := PublishSubprocess(ctx, qumoBin,
 		fmt.Sprintf("127.0.0.1:%d", cfg.HubPort),
 		certs.Cert,
 		"/bench/carry",
@@ -127,7 +127,8 @@ func RunCell(ctx context.Context, cfg *Config, qumoBin, certDir string) (*CellRe
 	for i, ps := range edgePS {
 		go func(idx int, ps *ProcessState) {
 			addr := fmt.Sprintf("127.0.0.1:%d", ps.Node.Port)
-			res, err := SubscribeGroup(ctx, addr, certs.Cert, "/bench/carry", "data", cfg.X, cfg.Hold)
+			res, err := SubscribeGroupSubprocess(ctx, qumoBin, addr, certs.Cert,
+				"/bench/carry", "data", cfg.X, cfg.Hold)
 			subCh <- &subMsg{idx: idx, res: res, err: err}
 		}(i, ps)
 	}
@@ -225,15 +226,17 @@ func buildResult(cfg *Config, before, after *scrapeSet, subResults map[int]*SubR
 			a := after.edges[i]
 			if b != nil && a != nil {
 				em = &RelayMetrics{
-					CPUDeltaS:   clampPos(a.CPUSeconds - b.CPUSeconds),
-					RSSMB:       clampPos(a.RSSBytes / 1_000_000),
-					HeapMB:      clampPos(a.HeapAllocBytes / 1_000_000),
-					Goros:       a.Goroutines,
-					Sessions:    a.SessionsActive,
-					EgressBytes: int64(clampPos(a.EgressBytesTotal - b.EgressBytesTotal)),
-					GCMaxMS:     a.GCDurationMax * 1000,
-					GCCount:     int64(clampPos(a.GCDurationCount - b.GCDurationCount)),
-					GCCPUS:      clampPos(a.GCDurationSecSum - b.GCDurationSecSum),
+					CPUDeltaS:         clampPos(a.CPUSeconds - b.CPUSeconds),
+					RSSMB:             clampPos(a.RSSBytes / 1_000_000),
+					HeapMB:            clampPos(a.HeapAllocBytes / 1_000_000),
+					Goros:             a.Goroutines,
+					Sessions:          a.SessionsActive,
+					SubscribersActive: a.SubscribersActive,
+					SubscriberSkips:   int64(clampPos(a.SubscriberSkips - b.SubscriberSkips)),
+					EgressBytes:       int64(clampPos(a.EgressBytesTotal - b.EgressBytesTotal)),
+					GCMaxMS:           a.GCDurationMax * 1000,
+					GCCount:           int64(clampPos(a.GCDurationCount - b.GCDurationCount)),
+					GCCPUS:            clampPos(a.GCDurationSecSum - b.GCDurationSecSum),
 				}
 			}
 		}
@@ -252,8 +255,15 @@ func buildResult(cfg *Config, before, after *scrapeSet, subResults map[int]*SubR
 			peakRSS = em.RSSMB
 		}
 
-		// Check edge participation.
-		if em.EgressBytes == 0 {
+		// Check edge participation: the relay's own metrics (egress bytes flowing
+		// and active subscriber count) are the authoritative signal. Use a minimum
+		// threshold (≥5 active subscribers OR ≥1KB egress) to avoid false negatives
+		// from scrape-timing race conditions where a near-perfect edge briefly
+		// reports zero during shutdown interleaving. The subscriber-side receiving
+		// count is NOT used here because transient subscriber errors (e.g. a single
+		// dial timeout) can set it to 0 even while the relay is actively forwarding
+		// data to other subscribers on that edge.
+		if em.EgressBytes < 1000 && em.SubscribersActive < 5 {
 			r.AllEdgesActive = false
 		}
 	}

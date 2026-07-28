@@ -42,6 +42,10 @@ type RelayMetrics struct {
 	GCCPUS      float64 `json:"gc_cpu_s"`
 	Connected   int     `json:"connected,omitempty"`
 	Receiving   int     `json:"receiving,omitempty"`
+
+	// Subscriber-pipeline metrics.
+	SubscribersActive float64 `json:"subs_active,omitempty"` // qumo_relay_subscribers_active (relay gauge)
+	SubscriberSkips   int64   `json:"subs_skips,omitempty"`  // qumo_relay_subscriber_skips_total (relay count)
 }
 
 // EdgeMap returns a map of edge index to RelayMetrics for easy access.
@@ -112,51 +116,158 @@ func PrintTable(results []*CellResult) {
 	fmt.Println()
 }
 
+// PrintEdgeDistribution prints a per-edge metrics breakdown to verify that
+// traffic is evenly distributed across all edge processes in each cell.
+func PrintEdgeDistribution(results []*CellResult) {
+	fmt.Println()
+	fmt.Println("============================================================")
+	fmt.Println("  Per-Edge Traffic Distribution")
+	fmt.Println("============================================================")
+	fmt.Println("  For each cell, the per-edge breakdown below verifies that every")
+	fmt.Println("  edge process participates in forwarding. If any edge shows zero")
+	fmt.Println("  connected subscribers or zero egress bytes, the experiment is")
+	fmt.Println("  invalid — that edge is idle.")
+	fmt.Println()
+
+	for _, r := range results {
+		if len(r.Edges) == 0 {
+			continue
+		}
+		fmt.Printf("  P=%d X=%d total=%d conn=%d — Edge Breakdown:\n",
+			r.P, r.X, r.TotalSubs, r.Connected)
+
+		// Column header.
+		fmt.Printf("    %-6s %-7s %-7s %-8s %-8s %-7s %-8s %-6s\n",
+			"edge", "subs-act", "conn", "recv", "egrMB", "cpu_s", "rssMB", "skips")
+		fmt.Printf("    %-6s %-7s %-7s %-8s %-8s %-7s %-8s %-6s\n",
+			"------", "-------", "-------", "--------", "--------", "-------", "--------", "------")
+
+		subCounts := make([]int, len(r.Edges))
+		for i, e := range r.Edges {
+			if e == nil {
+				fmt.Printf("    %-6d %-7s %-7s %-8s %-8s %-7s %-8s %-6s\n",
+					i, "—", "—", "—", "—", "—", "—", "—")
+				continue
+			}
+			egrMB := float64(e.EgressBytes) / 1_000_000
+			connStr := fmt.Sprintf("%d", e.Connected)
+			recvStr := fmt.Sprintf("%d", e.Receiving)
+			subAct := fmt.Sprintf("%.0f", e.SubscribersActive)
+			cpuStr := fmt.Sprintf("%.2f", e.CPUDeltaS)
+			rssStr := fmt.Sprintf("%.0f", e.RSSMB)
+			skipStr := fmt.Sprintf("%d", e.SubscriberSkips)
+
+			// Mark zero egress or zero subscribers as MISSING.
+			if e.EgressBytes == 0 || e.Receiving == 0 {
+				connStr = "IDLE"
+				recvStr = "IDLE"
+				egrMB = 0
+			}
+
+			fmt.Printf("    %-6d %-7s %-7s %-8s %-8.2f %-7s %-8s %-6s\n",
+				i, subAct, connStr, recvStr, egrMB, cpuStr, rssStr, skipStr)
+			subCounts[i] = e.Connected
+		}
+
+		// Balance analysis: check if one edge is overloaded vs another.
+		mean, minSubs, maxSubs := summarize(subCounts)
+		if mean > 0 {
+			imbalance := float64(maxSubs-minSubs) / float64(mean) * 100
+			fmt.Printf("    → mean-edge: %.0f subs, range: %d–%d, imbalance: %.1f%%\n",
+				mean, minSubs, maxSubs, imbalance)
+			if imbalance > 20 {
+				fmt.Printf("    ⚠  Imbalance >20%% indicates an edge is a bottleneck.\n")
+			} else {
+				fmt.Printf("    ✅ Distribution is balanced (imbalance <20%%).\n")
+			}
+		}
+		fmt.Println()
+	}
+}
+
+// summarize returns the mean, min, and max of a non-empty int slice.
+func summarize(vals []int) (mean float64, min, max int) {
+	if len(vals) == 0 {
+		return 0, 0, 0
+	}
+	min = vals[0]
+	max = vals[0]
+	sum := 0
+	for _, v := range vals {
+		if v < min {
+			min = v
+		}
+		if v > max {
+			max = v
+		}
+		sum += v
+	}
+	return float64(sum) / float64(len(vals)), min, max
+}
+
 // PrintScalingSummary prints the scaling efficiency analysis.
-func PrintScalingSummary(results []*CellResult) {
+// Uses the spec definition: ScalingEfficiency = Connected / (P × Max(P=1)).
+// If refMaxP1 > 0, it uses that as the baseline instead of auto-detecting from
+// the P=1 cells in results (useful when results don't contain P=1 cells).
+func PrintScalingSummary(results []*CellResult, refMaxP1 int) {
 	// Group by P to find max passing X per P.
 	type pEntry struct {
 		P       int
 		MaxTot  int
 		MaxX    int
+		MaxConn int
 	}
 	byP := make(map[int]*pEntry)
 	for _, r := range results {
 		if r.Sustained {
 			e, ok := byP[r.P]
-			if !ok || r.TotalSubs > e.MaxTot {
-				byP[r.P] = &pEntry{P: r.P, MaxTot: r.TotalSubs, MaxX: r.X}
+			if !ok || r.Connected > e.MaxConn {
+				byP[r.P] = &pEntry{P: r.P, MaxTot: r.TotalSubs, MaxX: r.X, MaxConn: r.Connected}
 			}
+		}
+	}
+
+	// Determine Max(P=1): prefer the caller-supplied value, fall back to
+	// auto-detecting from P=1 cells in the sweep results.
+	maxP1 := refMaxP1
+	if maxP1 <= 0 {
+		if e, ok := byP[1]; ok {
+			maxP1 = e.MaxConn
 		}
 	}
 
 	fmt.Println()
 	fmt.Println("============================================================")
-	fmt.Println("  Per-edge ceiling (max X that holds per P)")
+	fmt.Println("  Scaling Efficiency Analysis")
 	fmt.Println("============================================================")
-	fmt.Printf("%-6s %-10s %-12s %-10s\n", "P", "X/edge", "total_subs", "scaling")
-	fmt.Println("------ ---------- ------------ ----------")
+	fmt.Println()
+	fmt.Printf("  Baseline: Max(P=1) = %d subscribers per edge\n", maxP1)
+	fmt.Printf("  Expected aggregate = P × %d\n", maxP1)
+	fmt.Printf("  Efficiency = Connected / (P × Max(P=1))\n")
+	fmt.Println()
+	fmt.Printf("%-6s %-10s %-12s %-12s %-10s\n", "P", "X/edge", "total_subs", "connected", "efficiency")
+	fmt.Println("------ ---------- ------------ ------------ ----------")
 
-	p1Tot := 0
-	if e, ok := byP[1]; ok {
-		p1Tot = e.MaxTot
-	}
 	for _, p := range []int{1, 2, 3, 4} {
 		e, ok := byP[p]
 		if !ok {
 			continue
 		}
-		ratio := "?"
-		if p1Tot > 0 {
-			ratio = fmt.Sprintf("%.2fx", float64(e.MaxTot)/float64(p1Tot))
+		eff := "?"
+		if maxP1 > 0 && p > 0 {
+			expected := p * maxP1
+			if expected > 0 {
+				eff = fmt.Sprintf("%.1f%%", float64(e.MaxConn)/float64(expected)*100)
+			}
 		}
-		fmt.Printf("%-6d %-10d %-12d %-10s\n", p, e.MaxX, e.MaxTot, ratio)
+		fmt.Printf("%-6d %-10d %-12d %-12d %-10s\n", p, e.MaxX, e.MaxTot, e.MaxConn, eff)
 	}
+
 	fmt.Println()
-	fmt.Println("  If total_subs scales linearly with P → process scaling works")
-	fmt.Println("  If total_subs plateaus → shared infrastructure bottleneck")
+	fmt.Println("  Ideal: efficiency ≈ 100% for all P (linear scaling)")
+	fmt.Println("  If efficiency drops as P grows → shared infrastructure bottleneck")
+	fmt.Println("  If efficiency < 50% at P=2 → relay code has a fundamental scaling issue")
 	fmt.Println("  If hub_cpu_s is high for low P → hub is the bottleneck")
-	fmt.Println("  If edges_active=false → topology broken (not fanning out)")
 	fmt.Println()
 }
 

@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -84,6 +85,18 @@ func singleRelayFanoutRun(tb testing.TB, cert tls.Certificate, pool *x509.CertPo
 	runCtx, runCancel := context.WithTimeout(ctx, duration)
 	defer runCancel()
 
+	// framesPerGroup models the Group/Frame ratio. 1 = one group per frame
+	// (the group-lifecycle stress test); >1 = a GOP-style group carrying N
+	// frames on one stream (realistic video: FANOUT_FPG=30 → 1s GOP at 30fps,
+	// 60 → 2s GOP). Intra-group pacing stays at `gap` so the frame rate is
+	// unchanged; only the group-open (stream-open) rate changes (30/FPG per sec).
+	framesPerGroup := 1
+	if v := os.Getenv("FANOUT_FPG"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 1 {
+			framesPerGroup = n
+		}
+	}
+
 	var sentCounter uint64
 	pubMux := moqt.NewTrackMux(moqt.NewHopID())
 	pubMux.PublishFunc(runCtx, chainBroadcastPath, func(tw *moqt.TrackWriter) {
@@ -93,19 +106,26 @@ func singleRelayFanoutRun(tb testing.TB, cert tls.Certificate, pool *x509.CertPo
 			if runCtx.Err() != nil {
 				return
 			}
-			atomic.AddUint64(&sentCounter, 1)
-			binary.BigEndian.PutUint64(payload[8:16], uint64(time.Now().UnixNano()))
 			gw, err := tw.OpenGroup(runCtx)
 			if err != nil {
 				return
 			}
-			fr := moqt.NewFrame(frameSize)
-			_, _ = fr.Write(payload)
-			_ = gw.WriteFrame(fr)
-			_ = gw.Close()
-			if gap > 0 {
-				time.Sleep(gap)
+			for f := 0; f < framesPerGroup; f++ {
+				if runCtx.Err() != nil {
+					break
+				}
+				atomic.AddUint64(&sentCounter, 1)
+				binary.BigEndian.PutUint64(payload[8:16], uint64(time.Now().UnixNano()))
+				fr := moqt.NewFrame(frameSize)
+				_, _ = fr.Write(payload)
+				if gw.WriteFrame(fr) != nil {
+					break
+				}
+				if gap > 0 {
+					time.Sleep(gap) // maintain the per-frame rate within the group
+				}
 			}
+			_ = gw.Close()
 		}
 	})
 
@@ -163,6 +183,17 @@ func singleRelayFanoutRun(tb testing.TB, cert tls.Certificate, pool *x509.CertPo
 		logStage("R ring-wait", rep.RingResidence)
 		logStage("O group-open", rep.GroupOpen)
 		logStage("C write-frame", rep.EgressService)
+		log.Printf("--- MECHANISM (A: serialization vs B: shared-resource) K=%d ---", K)
+		logStage("R.fill  (reserve->bcast)", rep.RingFill)
+		logStage("R.wake  (bcast->pickup)", rep.RingWake)
+		logStage("R.behind(direct pickup)", rep.RingBehind)
+		logStage("R.woken (after wait)", rep.RingWoken)
+		logStage("deliverSpan(entry->end)", rep.DeliverSpan)
+		logStage("broadcast dur", rep.BroadcastDur)
+		logStage("fillSem wait", rep.FillSemWait)
+		logStage("GROUP inter-arrival", rep.GroupInterArrival)
+		log.Printf("mechanism gauges: maxConcurrentGroups=%d maxConcurrentDeliveries=%d broadcasts=%d subs=%d",
+			rep.MaxConcurrentGroups, rep.MaxConcurrentDeliveries, rep.BroadcastN, K)
 	}
 
 	var allLats []time.Duration

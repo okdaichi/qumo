@@ -11,6 +11,9 @@ require (
 	golang.org/x/sync v0.22.0
 )
 
+// Local development: instrumented gomoqt with accept pipeline counters.
+replace github.com/qumo-dev/gomoqt => /mnt/d/gomoqt
+
 require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
