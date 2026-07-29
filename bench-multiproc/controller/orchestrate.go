@@ -110,17 +110,43 @@ func RunCell(ctx context.Context, cfg *Config, qumoBin, certDir string) (*CellRe
 	}
 	time.Sleep(3 * time.Second) // let stream state propagate
 
-	// ---- Step 9: Snapshot before metrics ----
+	// ---- Step 9a: Pre-warm latency probe (before main subscriber batch) ----
+	// Launch the latency subscriber early (while the relay is nearly empty) so
+	// it connects, subscribes, and starts collecting fresh frames BEFORE the
+	// thundering herd of main subscribers arrives. This avoids the stale-frame
+	// artifact where a late-starting subscriber receives old buffered groups
+	// from the ring cache and reports multi-second latency.
+	//
+	// The probe runs in its own subprocess with N=1, --latency, and the same
+	// hold duration as the main subscribers. It runs concurrently through
+	// Step 9–12, and we read its result at Step 13.
+	var latProbeRes *SubResult
+	latProbeCh := make(chan *SubResult, 1)
+	if cfg.LatencyProbe && len(edgePS) > 0 {
+		slog.Info("pre-warming latency probe on edge 0 (before main subscriber batch)",
+			"port", edgePS[0].Node.Port)
+		go func() {
+			latAddr := fmt.Sprintf("127.0.0.1:%d", edgePS[0].Node.Port)
+			res, err := SubscribeGroupSubprocess(ctx, qumoBin, latAddr, certs.Cert,
+				"/bench/carry", "data", 1, cfg.Hold, true,
+			)
+			if err != nil {
+				slog.Warn("pre-warmed latency probe failed", "err", err)
+				latProbeCh <- nil
+				return
+			}
+			latProbeCh <- res
+		}()
+	}
+
+	// ---- Step 9b: Snapshot before metrics ----
 	before, err := scrapeAll(ctx, top, hubPS, edgePS)
 	if err != nil {
 		slog.Warn("pre-scrape metrics", "err", err)
 	}
 
 	// ---- Step 10: Launch subscribers (one group per edge, simultaneously) ----
-	slog.Info("launching subscribers",
-		"per_edge", cfg.X,
-		"total", cfg.TotalSubs(),
-	)
+	slog.Info("launching subscribers", "per_edge", cfg.X, "total", cfg.TotalSubs())
 
 	subCh := make(chan *subMsg, cfg.P)
 
@@ -153,6 +179,36 @@ func RunCell(ctx context.Context, cfg *Config, qumoBin, certDir string) (*CellRe
 
 	// ---- Step 12: Build result ----
 	result := buildResult(cfg, before, after, subResults)
+
+	// ---- Step 13: Read pre-warmed latency probe result ----
+	// The probe started before the main subscriber batch (Step 9a) and ran
+	// concurrently through the hold period. By now it should have finished;
+	// we read the result with a short timeout as a safety net.
+	if cfg.LatencyProbe {
+		select {
+		case latProbeRes = <-latProbeCh:
+		case <-time.After(3 * time.Second):
+			slog.Warn("latency probe did not finish in time — using best-effort result")
+		}
+	}
+
+	if latProbeRes != nil && latProbeRes.LatencySamples > 0 {
+		slog.Info("e2e latency from pre-warmed probe",
+			"samples", latProbeRes.LatencySamples,
+			"p50_ms", fmt.Sprintf("%.3f", latProbeRes.LatencyP50Ms),
+			"p95_ms", fmt.Sprintf("%.3f", latProbeRes.LatencyP95Ms),
+			"p99_ms", fmt.Sprintf("%.3f", latProbeRes.LatencyP99Ms),
+		)
+		result.LatencySamples = latProbeRes.LatencySamples
+		result.LatencyP50Ms = latProbeRes.LatencyP50Ms
+		result.LatencyP95Ms = latProbeRes.LatencyP95Ms
+		result.LatencyP99Ms = latProbeRes.LatencyP99Ms
+		result.LatencyMinMs = latProbeRes.LatencyMinMs
+		result.LatencyMaxMs = latProbeRes.LatencyMaxMs
+		result.LatencyMeanMs = latProbeRes.LatencyMeanMs
+	} else if cfg.LatencyProbe {
+		slog.Warn("latency probe: no samples collected")
+	}
 
 	slog.Info("cell complete",
 		"P", cfg.P, "X", cfg.X,

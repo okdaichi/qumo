@@ -34,6 +34,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -227,6 +228,7 @@ func runSubscribe(args []string) error {
 	finalize := bindCommon(fs)
 	hold := fs.Duration("hold", 30*time.Second, "how long to hold sessions after establishment")
 	resultsDir := fs.String("results", "", "dir to append a capacity JSONL record (optional)")
+	latency := fs.Bool("latency", false, "collect e2e latency (publisher→subscriber) from frame timestamps")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -246,11 +248,11 @@ func runSubscribe(args []string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	res, err := runCarry(ctx, target, sessions, *hold)
+	res, err := runCarry(ctx, target, sessions, *hold, *latency)
 	if err != nil {
 		return err
 	}
-	report(target, sessions, res)
+	report(target, sessions, res, *latency)
 	if *resultsDir != "" {
 		if err := emitJSONL(*resultsDir, sessions, res); err != nil {
 			slog.Warn("loadgen results emission failed", "err", err)
@@ -270,9 +272,22 @@ type carryResult struct {
 	metricsScraped  bool    // false if the relay /metrics could not be read
 	perSessionKB    float64 // relayRSSMB*1024 / connected
 	perSessionGoros float64 // relayGoros / connected
+
+	// E2E latency percentiles (publisher→subscriber, milliseconds), populated
+	// when the --latency flag is set. Computed from the publisher's embedded
+	// UnixNano timestamp in frame bytes [8:16] vs subscriber arrival time.
+	latencySamples int
+	latencyMinMs   float64
+	latencyP25Ms   float64
+	latencyP50Ms   float64
+	latencyP75Ms   float64
+	latencyP95Ms   float64
+	latencyP99Ms   float64
+	latencyMaxMs   float64
+	latencyMeanMs  float64
 }
 
-func runCarry(ctx context.Context, target dialTarget, sessions int, hold time.Duration) (carryResult, error) {
+func runCarry(ctx context.Context, target dialTarget, sessions int, hold time.Duration, wantLatency bool) (carryResult, error) {
 	client := &http.Client{Timeout: 5 * time.Second}
 
 	// Let the relay's RSS settle before taking the baseline snapshot. Without
@@ -312,12 +327,39 @@ func runCarry(ctx context.Context, target dialTarget, sessions int, hold time.Du
 	// Launch all sessions at once (burst). The exponential backoff in
 	// dialWithRetry spreads out the QUIC handshake load so the relay is not
 	// overwhelmed by synchronized re-dials.
+	//
+	// When --latency is set, the first subscriber also collects e2e latency
+	// samples from the publisher's embedded timestamps. A shared result
+	// channel (size 1) allows the latency-collecting subscriber to return
+	// its sample slice without a per-subscriber mutex.
+	type latencyResult struct {
+		samples []float64
+	}
+	latCh := make(chan latencyResult, 1)
+
 	for range sessions {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if subscribeOne(subCtx, target, safety, &connCount) > 0 {
+			frames := subscribeOne(subCtx, target, safety, &connCount)
+			if frames > 0 {
 				receivingCount.Add(1)
+			}
+		}()
+	}
+
+	// When latency collection is requested, launch one additional subscriber
+	// dedicated to latency measurement (does not duplicate the connected count,
+	// runs alongside the main subscriber batch). Uses a separate mux so the
+	// subscribe is independent.
+	if wantLatency {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			lats := collectLatency(subCtx, target, safety)
+			select {
+			case latCh <- latencyResult{samples: lats}:
+			default:
 			}
 		}()
 	}
@@ -340,6 +382,14 @@ func runCarry(ctx context.Context, target dialTarget, sessions int, hold time.Du
 		connected: int(connCount.Load()),
 		receiving: int(receivingCount.Load()),
 	}
+
+	// Collect latency results (non-blocking select — may be empty if --latency not set).
+	select {
+	case lr := <-latCh:
+		res.computeLatency(lr.samples)
+	default:
+	}
+
 	if baseErr == nil && steadyErr == nil {
 		res.metricsScraped = true
 		// Clamp at zero: RSS/goroutines can never decrease from adding sessions.
@@ -396,6 +446,81 @@ func subscribeOne(ctx context.Context, target dialTarget, dur time.Duration, con
 		}
 	}
 	return n
+}
+
+// collectLatency subscribes and collects e2e latency samples from the
+// publisher's embedded UnixNano timestamp (bytes [8:16] of each frame body).
+// Returns a slice of latencies in milliseconds. The publisher formats frames
+// compatibly with the latency-probe tool: bytes [0:8] = group seq, [8:16] =
+// publish UnixNano.
+func collectLatency(ctx context.Context, target dialTarget, dur time.Duration) []float64 {
+	dctx, cancel := context.WithTimeout(ctx, dur)
+	defer cancel()
+	sess, err := dialWithRetry(dctx, target)
+	if err != nil {
+		return nil
+	}
+	defer sess.CloseWithError(moqt.NoError, "done")
+	tr, err := sess.Subscribe(dctx, moqt.BroadcastPath(target.path), moqt.TrackName(target.track), nil)
+	if err != nil {
+		return nil
+	}
+	defer tr.Close()
+	buf := moqt.NewFrame(1500)
+	var lats []float64
+	for {
+		gr, err := tr.AcceptGroup(dctx)
+		if err != nil {
+			break
+		}
+		for frame := range gr.Frames(buf) {
+			body := frame.Body()
+			if len(body) < 16 {
+				continue
+			}
+			pubNs := int64(binary.BigEndian.Uint64(body[8:16]))
+			lat := time.Since(time.Unix(0, pubNs))
+			lats = append(lats, lat.Seconds()*1000) // store as ms
+		}
+	}
+	return lats
+}
+
+// computeLatency sorts collected samples and fills the latency percentiles.
+func (r *carryResult) computeLatency(samples []float64) {
+	if len(samples) == 0 {
+		return
+	}
+	sort.Float64s(samples)
+	r.latencySamples = len(samples)
+	r.latencyMinMs = samples[0]
+	r.latencyMaxMs = samples[len(samples)-1]
+
+	var sum float64
+	for _, v := range samples {
+		sum += v
+	}
+	r.latencyMeanMs = sum / float64(len(samples))
+	r.latencyP25Ms = percentile(samples, 25)
+	r.latencyP50Ms = percentile(samples, 50)
+	r.latencyP75Ms = percentile(samples, 75)
+	r.latencyP95Ms = percentile(samples, 95)
+	r.latencyP99Ms = percentile(samples, 99)
+}
+
+// percentile returns the p-th percentile from a sorted slice of ms values.
+func percentile(sorted []float64, p float64) float64 {
+	if len(sorted) == 0 {
+		return 0
+	}
+	idx := p / 100 * float64(len(sorted)-1)
+	lo := int(idx)
+	hi := lo + 1
+	if hi >= len(sorted) {
+		return sorted[lo]
+	}
+	frac := idx - float64(lo)
+	return sorted[lo]*(1-frac) + sorted[hi]*frac
 }
 
 // dialWithRetry dials the relay with exponential backoff + jitter on failure.
@@ -524,7 +649,7 @@ func verdictFor(receiving, sessions int) string {
 	return "HOLDS"
 }
 
-func report(target dialTarget, sessions int, r carryResult) {
+func report(target dialTarget, sessions int, r carryResult, showLatency bool) {
 	verdict := verdictFor(r.receiving, sessions)
 	fmt.Printf("loadgen subscribe → relay %s (path %s)\n", target.relay, target.path)
 	fmt.Printf("  offered sessions : %d\n", sessions)
@@ -537,16 +662,49 @@ func report(target dialTarget, sessions int, r carryResult) {
 	} else {
 		fmt.Printf("  relay cost       : unavailable (/metrics unreadable — see warning)\n")
 	}
+	if showLatency && r.latencySamples > 0 {
+		fmt.Printf("  latency samples  : %d\n", r.latencySamples)
+		fmt.Printf("  latency min      : %.3f ms\n", r.latencyMinMs)
+		fmt.Printf("  latency p50      : %.3f ms\n", r.latencyP50Ms)
+		fmt.Printf("  latency p95      : %.3f ms\n", r.latencyP95Ms)
+		fmt.Printf("  latency p99      : %.3f ms\n", r.latencyP99Ms)
+		fmt.Printf("  latency max      : %.3f ms\n", r.latencyMaxMs)
+		fmt.Printf("  latency mean     : %.3f ms\n", r.latencyMeanMs)
+		jitter := r.latencyP95Ms - r.latencyP50Ms
+		if jitter < 0 {
+			jitter = 0
+		}
+		fmt.Printf("  latency jitter   : %.3f ms\n", jitter)
+	}
 	fmt.Printf("  verdict          : %s\n", verdict)
 	// Machine-readable result line for the benchmark controller. The prefix
 	// "RESULT " lets the controller find this line reliably regardless of other
-	// output. The order of keys is deterministic because Go's json.Marshal
-	// sorts map keys; we use a struct for clarity.
+	// output.
 	type resultLine struct {
-		Connected int `json:"connected"`
-		Receiving int `json:"receiving"`
+		Connected      int     `json:"connected"`
+		Receiving      int     `json:"receiving"`
+		LatencySamples int     `json:"latency_samples,omitempty"`
+		LatencyP50Ms   float64 `json:"latency_p50_ms,omitempty"`
+		LatencyP95Ms   float64 `json:"latency_p95_ms,omitempty"`
+		LatencyP99Ms   float64 `json:"latency_p99_ms,omitempty"`
+		LatencyMinMs   float64 `json:"latency_min_ms,omitempty"`
+		LatencyMaxMs   float64 `json:"latency_max_ms,omitempty"`
+		LatencyMeanMs  float64 `json:"latency_mean_ms,omitempty"`
 	}
-	b, _ := json.Marshal(resultLine{Connected: r.connected, Receiving: r.receiving})
+	rl := resultLine{
+		Connected: r.connected,
+		Receiving: r.receiving,
+	}
+	if showLatency && r.latencySamples > 0 {
+		rl.LatencySamples = r.latencySamples
+		rl.LatencyP50Ms = r.latencyP50Ms
+		rl.LatencyP95Ms = r.latencyP95Ms
+		rl.LatencyP99Ms = r.latencyP99Ms
+		rl.LatencyMinMs = r.latencyMinMs
+		rl.LatencyMaxMs = r.latencyMaxMs
+		rl.LatencyMeanMs = r.latencyMeanMs
+	}
+	b, _ := json.Marshal(rl)
 	fmt.Printf("RESULT %s\n", string(b))
 }
 

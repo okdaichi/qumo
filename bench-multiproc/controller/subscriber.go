@@ -16,15 +16,24 @@ import (
 
 // SubResult is the measured outcome of a subscriber group.
 type SubResult struct {
-	Connected   int
-	Receiving   int
-	TotalFrames int64
+	Connected      int
+	Receiving      int
+	TotalFrames    int64
+	LatencySamples int     `json:"latency_samples,omitempty"`
+	LatencyP50Ms   float64 `json:"latency_p50_ms,omitempty"`
+	LatencyP95Ms   float64 `json:"latency_p95_ms,omitempty"`
+	LatencyP99Ms   float64 `json:"latency_p99_ms,omitempty"`
+	LatencyMinMs   float64 `json:"latency_min_ms,omitempty"`
+	LatencyMaxMs   float64 `json:"latency_max_ms,omitempty"`
+	LatencyMeanMs  float64 `json:"latency_mean_ms,omitempty"`
 }
 
 // SubscribeGroupSubprocess launches subscribers as out-of-process subprocesses
 // using "qumo loadgen subscribe". This ensures client and server never share a
 // Go runtime — the load generator runs in its own OS process.
-func SubscribeGroupSubprocess(ctx context.Context, qumoBin, relayAddr, caFile, path, track string, n int, hold time.Duration) (*SubResult, error) {
+// When collectLatency is true, it passes --latency to enable e2e frame timestamp
+// latency measurement (adds one extra subscriber connection for sampling).
+func SubscribeGroupSubprocess(ctx context.Context, qumoBin, relayAddr, caFile, path, track string, n int, hold time.Duration, collectLatency ...bool) (*SubResult, error) {
 	args := []string{
 		"loadgen", "subscribe",
 		"--relay", relayAddr,
@@ -32,8 +41,15 @@ func SubscribeGroupSubprocess(ctx context.Context, qumoBin, relayAddr, caFile, p
 		"--path", path,
 		"--track", track,
 		"--hold", hold.String(),
-		strconv.Itoa(n),
 	}
+
+	// Optional latency collection; must appear BEFORE the positional N arg
+	// because Go's flag.Parse stops at the first non-flag argument.
+	if len(collectLatency) > 0 && collectLatency[0] {
+		args = append(args, "--latency")
+	}
+
+	args = append(args, strconv.Itoa(n))
 
 	logFile := filepath.Join(os.TempDir(), fmt.Sprintf("subprocess_%d.log", time.Now().UnixNano()))
 	f, err := os.Create(logFile)
@@ -64,7 +80,7 @@ func SubscribeGroupSubprocess(ctx context.Context, qumoBin, relayAddr, caFile, p
 	// this version). This is the preferred parsing path because it does not
 	// depend on human-readable output format stability.
 	res := parseResultLine(output)
-	if res.Connected > 0 || res.Receiving > 0 {
+	if res.Connected > 0 || res.Receiving > 0 || res.LatencySamples > 0 {
 		return res, nil
 	}
 
@@ -90,8 +106,9 @@ func SubscribeGroupSubprocess(ctx context.Context, qumoBin, relayAddr, caFile, p
 	return res, nil
 }
 
-// parseResultLine looks for a line matching "RESULT {\"connected\":N,\"receiving\":M}"
-// in the subprocess output and returns a SubResult if found.
+// parseResultLine looks for a line matching "RESULT {...}" in the subprocess
+// output and returns a SubResult with connected, receiving, and (optionally)
+// latency percentiles.
 func parseResultLine(output string) *SubResult {
 	for _, line := range strings.Split(output, "\n") {
 		line = strings.TrimSpace(line)
@@ -100,14 +117,31 @@ func parseResultLine(output string) *SubResult {
 		}
 		jsonPart := strings.TrimPrefix(line, "RESULT ")
 		var parsed struct {
-			Connected int `json:"connected"`
-			Receiving int `json:"receiving"`
+			Connected      int     `json:"connected"`
+			Receiving      int     `json:"receiving"`
+			LatencySamples int     `json:"latency_samples,omitempty"`
+			LatencyP50Ms   float64 `json:"latency_p50_ms,omitempty"`
+			LatencyP95Ms   float64 `json:"latency_p95_ms,omitempty"`
+			LatencyP99Ms   float64 `json:"latency_p99_ms,omitempty"`
+			LatencyMinMs   float64 `json:"latency_min_ms,omitempty"`
+			LatencyMaxMs   float64 `json:"latency_max_ms,omitempty"`
+			LatencyMeanMs  float64 `json:"latency_mean_ms,omitempty"`
 		}
 		if err := json.Unmarshal([]byte(jsonPart), &parsed); err != nil {
 			slog.Debug("failed to parse RESULT JSON line", "line", line, "err", err)
 			continue
 		}
-		return &SubResult{Connected: parsed.Connected, Receiving: parsed.Receiving}
+		return &SubResult{
+			Connected:      parsed.Connected,
+			Receiving:      parsed.Receiving,
+			LatencySamples: parsed.LatencySamples,
+			LatencyP50Ms:   parsed.LatencyP50Ms,
+			LatencyP95Ms:   parsed.LatencyP95Ms,
+			LatencyP99Ms:   parsed.LatencyP99Ms,
+			LatencyMinMs:   parsed.LatencyMinMs,
+			LatencyMaxMs:   parsed.LatencyMaxMs,
+			LatencyMeanMs:  parsed.LatencyMeanMs,
+		}
 	}
 	return &SubResult{}
 }

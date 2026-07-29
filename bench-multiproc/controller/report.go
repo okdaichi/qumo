@@ -27,6 +27,17 @@ type CellResult struct {
 
 	Hub    *RelayMetrics   `json:"hub"`
 	Edges  []*RelayMetrics `json:"edges"`
+
+	// E2E latency percentiles (publisher→subscriber, milliseconds), populated
+	// when --latency-probe is enabled during the run. Measured from the
+	// publisher's embedded UnixNano timestamp in frame bytes [8:16].
+	LatencySamples int     `json:"latency_samples,omitempty"`
+	LatencyP50Ms   float64 `json:"latency_p50_ms,omitempty"`
+	LatencyP95Ms   float64 `json:"latency_p95_ms,omitempty"`
+	LatencyP99Ms   float64 `json:"latency_p99_ms,omitempty"`
+	LatencyMinMs   float64 `json:"latency_min_ms,omitempty"`
+	LatencyMaxMs   float64 `json:"latency_max_ms,omitempty"`
+	LatencyMeanMs  float64 `json:"latency_mean_ms,omitempty"`
 }
 
 // RelayMetrics holds the parsed metrics for one relay process.

@@ -18,7 +18,10 @@ import (
 // stream within this window, the group is dropped rather than blocking the
 // egress goroutine indefinitely. Should be generous enough to absorb normal
 // scheduling jitter (GC pauses, ACK round-trips) — 30ms ≈ one frame at 30fps
-// or ~15 group intervals at 500fps.
+// or ~15 group intervals at 500fps. Counterintuitively, a longer timeout
+// degrades throughput at high fan-out: more egress goroutines block
+// simultaneously in quic-go's stream multiplexer, holding goroutine stacks
+// and stream objects longer, which increases memory pressure and GC cost.
 var defaultGroupTimeout = 30 * time.Millisecond
 
 // DrainTimeout is the grace period given to a displaced relayHandler before
