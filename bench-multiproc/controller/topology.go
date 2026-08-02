@@ -60,9 +60,7 @@ func BuildTopology(cfg *Config) *Topology {
 func (top *Topology) AllRelays() []*RelayNode {
 	out := make([]*RelayNode, 0, 1+len(top.Edges))
 	out = append(out, top.Hub)
-	for i := range top.Edges {
-		out = append(out, top.Edges[i])
-	}
+	out = append(out, top.Edges...)
 	return out
 }
 

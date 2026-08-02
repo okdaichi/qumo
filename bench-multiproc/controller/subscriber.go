@@ -61,10 +61,9 @@ func SubscribeGroupSubprocess(ctx context.Context, qumoBin, relayAddr, caFile, p
 	cmd.Stdout = f
 	cmd.Stderr = f
 
-	if err := cmd.Run(); err != nil {
-		// not actionable: the process might have been killed by ctx cancellation;
-		// parse whatever output was captured before termination.
-	}
+	// not actionable: the process might have been killed by ctx cancellation;
+	// parse whatever output was captured before termination.
+	_ = cmd.Run()
 
 	// This log file is the primary parse source (it holds the structured RESULT
 	// JSON line emitted by loadgen), not merely diagnostics. Close it before the
@@ -176,7 +175,7 @@ func PublishSubprocess(ctx context.Context, qumoBin, relayAddr, caFile, path, tr
 	cmd.Stderr = f
 
 	if err := cmd.Start(); err != nil {
-		f.Close()
+		_ = f.Close()
 		pubCancel()
 		return nil, fmt.Errorf("start publisher: %w", err)
 	}
@@ -185,7 +184,7 @@ func PublishSubprocess(ctx context.Context, qumoBin, relayAddr, caFile, path, tr
 
 	// Wait for the process to finish in the background (it runs until cancelled).
 	go func() {
-		cmd.Wait()
+		_ = cmd.Wait()
 		_ = f.Close() // not actionable: log cleanup after publish finishes
 	}()
 

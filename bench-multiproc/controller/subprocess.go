@@ -82,7 +82,7 @@ func startRelay(ctx context.Context, bin string, node *RelayNode, certDir string
 		Done:    make(chan struct{}),
 	}
 	go func() {
-		cmd.Wait()
+		_ = cmd.Wait()
 		close(ps.Done)
 	}()
 
@@ -103,7 +103,7 @@ func stopRelay(ps *ProcessState, timeout time.Duration) {
 	if err != nil {
 		return
 	}
-	proc.Signal(syscall.SIGTERM)
+	_ = proc.Signal(syscall.SIGTERM)
 
 	graceTimer := time.NewTimer(timeout)
 	defer graceTimer.Stop()
@@ -114,7 +114,7 @@ func stopRelay(ps *ProcessState, timeout time.Duration) {
 	case <-graceTimer.C:
 	}
 
-	proc.Signal(syscall.SIGKILL)
+	_ = proc.Signal(syscall.SIGKILL)
 	killTimer := time.NewTimer(2 * time.Second)
 	defer killTimer.Stop()
 	select {
@@ -162,7 +162,7 @@ func getOK(ctx context.Context, url string) error {
 	if err != nil {
 		return err
 	}
-	resp.Body.Close()
+	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("status %d", resp.StatusCode)
 	}
@@ -302,7 +302,7 @@ func waitPortClosed(port int, timeout time.Duration) {
 			// Connection refused → port is free.
 			return
 		}
-		conn.Close()
+		_ = conn.Close()
 
 		select {
 		case <-deadline.C:
@@ -313,4 +313,3 @@ func waitPortClosed(port int, timeout time.Duration) {
 		}
 	}
 }
-

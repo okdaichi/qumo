@@ -43,13 +43,13 @@ type Config struct {
 	Hold      time.Duration // subscriber hold duration (default 30s)
 
 	// Paths.
-	QumoBin   string // path to qumo binary (auto-detected if empty)
-	CertDir   string // directory for generated TLS certs (defaults to bench-multiproc/)
-	Results   string // output directory for JSONL + logs (defaults to bench-multiproc/results/)
+	QumoBin string // path to qumo binary (auto-detected if empty)
+	CertDir string // directory for generated TLS certs (defaults to bench-multiproc/)
+	Results string // output directory for JSONL + logs (defaults to bench-multiproc/results/)
 
 	// Ports.
-	HubPort  int   // hub listen port (default 4433)
-	EdgeBase int   // first edge listen port (default 4434; subsequent edges +1)
+	HubPort  int // hub listen port (default 4433)
+	EdgeBase int // first edge listen port (default 4434; subsequent edges +1)
 
 	// Latency probe: after measurement, run e2e latency probe on a sample edge.
 	LatencyProbe bool
@@ -99,10 +99,10 @@ func (c *Config) ParseFlags(args []string) (posArgs []string, err error) {
 // Validate checks the config for obvious errors.
 func (c *Config) Validate() error {
 	if c.P < 1 {
-		return errors.New("P must be >= 1")
+		return errors.New("edges (P) must be >= 1")
 	}
 	if c.X < 1 {
-		return errors.New("X must be >= 1")
+		return errors.New("subscribers per edge (X) must be >= 1")
 	}
 	if c.GPS <= 0 {
 		return errors.New("GPS must be positive")
