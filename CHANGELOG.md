@@ -37,6 +37,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fan-out. Efficiency change only: measured e2e latency is unchanged.
   Backpressure semantics (30 ms bound, drop-group-and-continue) preserved.
 
+### Fixed
+- **`internal/playground` restricted pull-server CORS origins.** The on-demand
+  RTSP pull ingest server (`:4543`) allowed any WebTransport origin (`"*"`),
+  letting an arbitrary malicious page initiate a Cross-Site WebTransport
+  session to the user's localhost ingest. Replaced with `cors.SameHost`,
+  which permits the browser handshake despite the UI/pull-server port
+  mismatch (port-agnostic hostname comparison) while rejecting cross-origin
+  pages. Access via a distinct hostname string (e.g. `127.0.0.1` vs the
+  `localhost` default of `VITE_RELAY_URL`) is rejected, matching the main
+  relay's existing policy.
+
 ## [v0.5.0] - 2026-07-24
 
 ### Release notes — relay performance cycle
