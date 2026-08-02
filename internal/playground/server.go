@@ -268,9 +268,12 @@ func (s *Server) handlePullStart(w http.ResponseWriter, r *http.Request) {
 		CertFile:      s.certFile,
 		KeyFile:       s.keyFile,
 		// The pull's MoQT server is a localhost dev tool started on-demand from
-		// the UI. Using SameHost avoids same-host mismatches (127.0.0.1 vs
-		// localhost) that would block the browser's WebTransport handshake,
-		// without exposing the playground to arbitrary origins.
+		// the UI. SameHost allows the browser's WebTransport handshake despite a
+		// port mismatch between the UI origin and the :4543 pull server
+		// (equalHost compares hostnames case-insensitively, ignoring port), while
+		// still rejecting cross-origin pages. Note this does NOT bridge distinct
+		// hostnames: access via 127.0.0.1 vs localhost will be rejected, so the
+		// UI must be reached on the same hostname as VITE_RELAY_URL.
 		AllowedOrigins: []string{cors.SameHost},
 	})
 	if err != nil {

@@ -26,6 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`internal/playground` restricted pull-server CORS origins.** The on-demand RTSP pull ingest server (`:4543`) allowed any WebTransport origin (`"*"`), letting an arbitrary malicious page initiate a Cross-Site WebTransport session to the user's localhost ingest. The wildcard is replaced with `cors.SameHost`, which permits the browser handshake despite the UI/pull-server port mismatch (hostname comparison, port-agnostic) while rejecting cross-origin pages. Access via a distinct hostname string (e.g. `127.0.0.1` vs the `localhost` default of `VITE_RELAY_URL`) is rejected, matching the main relay's existing policy.
+
 - **`internal/relay` correct TrackWriter/OpenGroup usage.** `deliverGroup` now passes a deadline-bearing context to `OpenGroupAt` (30ms `defaultGroupTimeout`). When the peer's `MAX_STREAMS` limit is reached, the call blocks up to the timeout (gomoqt's designed backpressure via `OpenUniStreamSync`), then drops the group (MoQ semi-reliable) instead of blocking the egress goroutine indefinitely. Previously, the unbounded block caused stream-object accumulation and a GC-driven degradation spiral. `cmd.go` reverts `MaxIncomingUniStreams`/`MaxIncomingStreams` from `1<<20` back to quic-go defaults (~100) — the `1<<20` value (from #292) removed the backpressure entirely, which was the wrong fix; the timeout context is the correct one.
 
 ### Fixed
