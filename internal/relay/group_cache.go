@@ -58,6 +58,31 @@ type groupCache struct {
 	refCount atomic.Int32
 	evicted  atomic.Bool
 	released atomic.Bool
+
+	// ingressArrivalNano is the UnixNano instant the group was reserved into the
+	// ring (stage-latency instrumentation; see stage_latency.go). Written only by
+	// the instrument build's stampArrival/clearArrival, read by egress
+	// ringResidence; atomic because fill and egress goroutines access it
+	// concurrently. Always present (8 bytes) so the field layout is
+	// build-independent, and deliberately last so it does not displace the hot
+	// fields above across cache lines.
+	//nolint:unused // accessed only by the -tags instrument build (stage_latency_instrument.go), invisible to the default-build linter
+	ingressArrivalNano atomic.Int64
+
+	// Mechanism-investigation stamps (instrument build only; see
+	// stage_latency.go). All UnixNano, atomic (fill worker + N egress goroutines
+	// touch them concurrently), zeroed in clearArrival on reserve.
+	//   firstBroadcastNano: when fill first broadcast this generation's data
+	//     (reserve→here = fill/ingest latency; here→pickup = egress wake latency).
+	//   firstPickupNano:    first egress goroutine to enter deliverGroup for this
+	//     generation (drives the concurrent-active-groups gauge).
+	//   lastEndNano:        latest deliverGroup end across the fleet (group span).
+	//nolint:unused // instrument-build only
+	firstBroadcastNano atomic.Int64
+	//nolint:unused // instrument-build only
+	firstPickupNano atomic.Int64
+	//nolint:unused // instrument-build only
+	lastEndNano atomic.Int64
 }
 
 // newGroupCache allocates a groupCache whose slot backing array is exactly
@@ -190,6 +215,10 @@ type groupRing struct {
 	size   int
 	pos    atomic.Uint64
 	gcPool sync.Pool
+
+	// stages is the stage-latency collector shared with the owning distributor
+	// (set in newTrackDistributor). Nil-safe no-op in the default build.
+	stages *stageCollector
 }
 
 // reserve atomically allocates a ring slot for seq and returns the new cache.
@@ -205,6 +234,11 @@ func (ring *groupRing) reserve(seq moqt.GroupSequence) *groupCache {
 	// Reinitialize content state so the read contract does not depend on
 	// releaseCache having cleaned up: clear the slots and reset count to 0.
 	cache.resetForReuse()
+
+	// Clear any stale arrival stamp from the cache's previous generation
+	// (no-op in the default build, so reserve pays nothing for the
+	// instrument-only field; the instrument build re-stamps in processGroup).
+	ring.stages.clearArrival(cache)
 
 	idx := int(ring.pos.Add(1) % uint64(ring.size))
 
@@ -242,7 +276,12 @@ func (ring *groupRing) fill(group frameSource, cache *groupCache, onFrame func(n
 	for frame := range group.Frames(buf) {
 		frameCount++
 		n := frame.Len()
+		t0 := ring.stages.now()
 		cache.append(frame, ring.pool)
+		ring.stages.ingressFrame(t0)
+		// Stamp the first-broadcast instant (splits ring residence into fill vs
+		// egress-wake latency); onFrame triggers the broadcast right after.
+		ring.stages.groupBroadcast(cache)
 		if onFrame != nil {
 			onFrame(n)
 		}
@@ -286,6 +325,7 @@ func (ring *groupRing) releaseCache(gc *groupCache) {
 	if !gc.released.CompareAndSwap(false, true) {
 		return // already released by another goroutine
 	}
+	ring.stages.groupReleased(gc) // generation done: drop the active-groups gauge
 
 	// No lock: releaseCache runs at most once (released CAS above) and only when
 	// refCount == 0, so no reader is observing this cache. In a single pass,

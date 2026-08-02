@@ -18,7 +18,10 @@ import (
 // stream within this window, the group is dropped rather than blocking the
 // egress goroutine indefinitely. Should be generous enough to absorb normal
 // scheduling jitter (GC pauses, ACK round-trips) — 30ms ≈ one frame at 30fps
-// or ~15 group intervals at 500fps.
+// or ~15 group intervals at 500fps. Counterintuitively, a longer timeout
+// degrades throughput at high fan-out: more egress goroutines block
+// simultaneously in quic-go's stream multiplexer, holding goroutine stacks
+// and stream objects longer, which increases memory pressure and GC cost.
 var defaultGroupTimeout = 30 * time.Millisecond
 
 // DrainTimeout is the grace period given to a displaced relayHandler before
@@ -234,6 +237,7 @@ func (h *relayHandler) RouteStats() RouteStats {
 
 func (h *relayHandler) ServeTrack(tw *moqt.TrackWriter) {
 	logger := slog.With(
+		"node", h.nodeID,
 		"broadcast_path", tw.BroadcastPath,
 		"track_name", tw.TrackName,
 	)
@@ -241,9 +245,12 @@ func (h *relayHandler) ServeTrack(tw *moqt.TrackWriter) {
 	// Fast path: reuse existing distributor
 	trackID := "[" + h.nodeID + "]" + string(tw.BroadcastPath) + "/" + string(tw.TrackName)
 	if d, ok := h.tracks.load(trackID); ok {
+		logger.Debug("relay: ServeTrack fast path — reusing distributor", "track_id", trackID)
 		d.egress(tw)
 		return
 	}
+
+	logger.Debug("relay: ServeTrack — no existing distributor, will subscribe upstream", "track_id", trackID)
 
 	// Dedup: only one upstream subscribe per track name at a time
 	ch := h.flights.DoChan(string(tw.TrackName), func() (any, error) {
@@ -294,9 +301,18 @@ func (h *relayHandler) subscribe(name moqt.TrackName) *trackDistributor {
 		return nil
 	}
 
+	slog.Debug("relay: subscribe — subscribing upstream",
+		"node", h.nodeID,
+		"broadcast_path", announcement.BroadcastPath(),
+		"track", name,
+		"track_id", trackID,
+		"announcement_active", announcement.IsActive(),
+	)
+
 	src, err := session.Subscribe(h.ctx, announcement.BroadcastPath(), name, nil)
 	if err != nil {
 		slog.Warn("relay: upstream subscribe failed",
+			"node", h.nodeID,
 			"broadcast_path", announcement.BroadcastPath(),
 			"track", name,
 			"error", err)
@@ -305,6 +321,10 @@ func (h *relayHandler) subscribe(name moqt.TrackName) *trackDistributor {
 
 	d := newTrackDistributor(h.tracks, trackID, h.broadSession, h.sampler)
 
+	slog.Debug("relay: starting ingest loop",
+		"node", h.nodeID,
+		"track_id", trackID,
+	)
 	go d.ingest(h.ctx, src)
 
 	h.tracks.store(trackID, d)
@@ -349,6 +369,14 @@ func (tm *trackManager) remove(trackID string, d *trackDistributor) {
 	tm.m.CompareAndDelete(trackID, d)
 }
 
+// fillJob is a unit of fill work dispatched to a pool worker goroutine. Using
+// a struct value instead of a closure avoids a heap allocation per group on the
+// ingest hot path.
+type fillJob struct {
+	src   frameSource
+	cache *groupCache
+}
+
 type trackDistributor struct {
 	trackID string
 	ring    *groupRing
@@ -369,18 +397,36 @@ type trackDistributor struct {
 	// session is non-nil when backend metering is active for this broadcast.
 	session *broadcastSession
 
-	// fillSem is a buffered-channel semaphore that limits the number of
-	// concurrently running fill goroutines. Its capacity is set to
-	// MaxGroupFillsInFlight at construction time.
+	// fillSem is a buffered-channel semaphore acquired BEFORE reserving a ring
+	// slot. This guarantees we never leak a reserved cache on context
+	// cancellation — the send may block but no ring slot has been consumed.
+	// Capacity is MaxGroupFillsInFlight.
 	fillSem chan struct{}
 
-	mu          sync.RWMutex
-	subscribers []chan struct{}
+	// fillJobs dispatches fill work to a fixed pool of long-lived worker
+	// goroutines, replacing a per-group go func(). Its capacity equals
+	// MaxGroupFillsInFlight so a send after acquiring fillSem always succeeds
+	// immediately (in-flight jobs ≤ capacity). fillWg tracks the workers for
+	// clean shutdown.
+	fillJobs chan fillJob
+	fillWg   sync.WaitGroup
+
+	// notify broadcasts new-data events to all egress goroutines. Each call to
+	// broadcast() atomically increments a sequence number and closes the
+	// previous notification channel, waking all goroutines waiting on it. This
+	// replaces the former per-subscriber []chan struct{} pattern, eliminating
+	// O(N) channel sends per broadcast and the associated RWMutex contention.
+	notify broadcastNotify
+
+	// stages is the server-wide stage-latency collector (nil-safe; no-op in the
+	// default build — see stage_latency.go). Shared with ring for ingress stamps.
+	stages *stageCollector
 
 	done chan struct{} // closed when ingest returns
 }
 
 func newTrackDistributor(manager *trackManager, trackID string, broadSess *broadcastSession, sampler *statsSampler) *trackDistributor {
+	nWorkers := maxGroupFillsInFlightOrPanic()
 	d := &trackDistributor{
 		trackID:           trackID,
 		ring:              newGroupRing(manager.cacheSize, manager.pool),
@@ -390,8 +436,19 @@ func newTrackDistributor(manager *trackManager, trackID string, broadSess *broad
 		deliveryHistogram: metricGroupDeliveryHistogram.WithLabelValues(trackID),
 		sampler:           sampler,
 		session:           broadSess,
-		fillSem:           make(chan struct{}, maxGroupFillsInFlightOrPanic()),
+		fillSem:           make(chan struct{}, nWorkers),
+		fillJobs:          make(chan fillJob, nWorkers),
+		stages:            sampler.stagesRef(),
 		done:              make(chan struct{}),
+	}
+	d.ring.stages = d.stages
+	// Fixed worker pool: these goroutines live for the lifetime of the
+	// distributor, eliminating per-group goroutine creation/destruction and the
+	// per-fill closure allocation. Concurrency is still bounded to nWorkers
+	// (one in-flight job per worker) via fillSem, matching the former bound.
+	d.fillWg.Add(nWorkers)
+	for range nWorkers {
+		go d.fillWorker()
 	}
 	d.sampler.addTrack(d.trackID, d)
 	return d
@@ -412,20 +469,35 @@ func (d *trackDistributor) sampleCacheDepth() {
 }
 
 func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
-	// Get track writer context once and check if it's valid
 	twCtx := tw.Context()
 
 	metricSubscribersActive.Inc()
 	defer metricSubscribersActive.Dec()
 
-	// Subscribe to notifications
-	notify := d.subscribe()
-	defer d.unsubscribe(notify)
+	// Track the last seen notify sequence so we can detect new data without
+	// per-subscriber channels or RWMutex contention. Each call to broadcast()
+	// advances the sequence and closes the previous notification channel;
+	// listen() returns both atomically so there is no race between reading the
+	// sequence and waiting on the channel.
+	lastState := d.notify.listen()
+
+	// Reusable OpenGroupAt deadline for this subscriber (see openTimeout):
+	// avoids a context.WithTimeout construction per delivered group.
+	openTO := newOpenTimeout(twCtx)
+	defer openTO.release()
 
 	last := d.ring.head()
 	if last > 0 {
 		last--
 	}
+
+	// woken classifies how this subscriber reached the next group (mechanism
+	// instrumentation; free in the default build). true = picked up after a
+	// notify wait (subscriber was caught up; the pickup delay is wake+schedule
+	// latency); false = picked up directly in a delivery loop (subscriber was
+	// behind, still draining queued groups → self-serialization). The first
+	// pickup after startup counts as caught up.
+	woken := true
 
 	for {
 		latest := d.ring.head()
@@ -433,8 +505,6 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 		if last < latest {
 			last++
 
-			// If the subscriber has fallen behind the ring window, jump to the
-			// latest group and let get()/the wait below handle it — don't spin.
 			if earliest := d.ring.earliestAvailable(); last < earliest {
 				slog.Debug("subscriber fell behind; skipping groups",
 					"requested_group", last,
@@ -446,39 +516,45 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 			}
 
 			if cache := d.ring.get(last); cache != nil {
-				if d.deliverGroup(tw, twCtx, cache, notify) {
+				if d.deliverGroup(tw, twCtx, openTO, woken, cache) {
 					return
 				}
-				// Delivered a group; immediately try the next one.
+				woken = false // a subsequent direct iteration means we are behind
 				continue
 			}
-			// No deliverable group right now (caught up but not yet cached, or
-			// still behind) — fall through to the wait.
 		}
 
-		// Single wait + cancellation point. Every non-delivery path flows through
-		// here, so the egress always observes cancellation: twCtx.Done() (subscriber
-		// disconnect, or relay shutdown via conn close → stream-context cancel) or
-		// d.done (upstream ended). The delivery path is covered by OpenGroupAt/
-		// WriteFrame erroring on the same stream reset. Without converging here, a
-		// fell-behind/cache-miss spin could blind-loop past cancellation and pin
-		// gomoqt's stream-handler WaitGroup, hanging Server.Shutdown/Close (#286).
+		// Refresh the notification state and check if new data arrived between
+		// the last iteration and now.
+		state := d.notify.listen()
+		if state.seq > lastState.seq {
+			lastState = state
+			continue
+		}
+
+		// Single wait + cancellation point. Every non-delivery path converges
+		// here so the egress always observes cancellation — twCtx.Done()
+		// (subscriber disconnect, or relay shutdown via conn close → stream-
+		// context cancel) or d.done (upstream ended). The delivery path is
+		// covered by OpenGroupAt/WriteFrame erroring on the same stream reset.
+		// Without this convergence a fell-behind/cache-miss spin could blind-
+		// loop past cancellation and pin gomoqt's stream-handler WaitGroup,
+		// hanging Server.Shutdown/Close (#286).
 		//
-		// No poll-timer fallback: the per-frame broadcast() notify (group_cache.go
-		// fill) wakes egress for every real delivery — a new group advances the ring
-		// head synchronously in reserve() and then broadcasts, the notify channel is
-		// cap-1 buffered and subscribed before this loop (no enter-select race), and
-		// egress re-reads head() fresh each iteration (level-triggered, so coalesced
-		// signals never lose data). Guarded by TestRelayChain_NotifyOnlyDelivery
-		// (delivery is complete and prompt with no poll fallback).
+		// No poll-timer fallback: broadcast() (called on every fill) advances
+		// the notify seq and closes the previous channel, waking this select;
+		// egress re-reads head() fresh each iteration (level-triggered), so
+		// coalesced signals never lose data. Guarded by
+		// TestRelayChain_NotifyOnlyDelivery (delivery is complete and prompt
+		// with no poll fallback).
 		select {
-		case <-notify:
-			// New group/frame available, retry immediately.
+		case <-state.ch:
+			// Channel closed — new data arrived. Refresh state and loop.
+			lastState = d.notify.listen()
+			woken = true // reached the next group via a wait (caught up)
 		case <-d.done:
-			// Distributor shut down (upstream ended).
 			return
 		case <-twCtx.Done():
-			// Client disconnected or relay shutdown.
 			return
 		}
 	}
@@ -488,21 +564,37 @@ func (d *trackDistributor) egress(tw *moqt.TrackWriter) {
 // returns true if the egress loop should exit — the subscribe stream was closed
 // or cancelled (OpenGroupAt/WriteFrame error, twCtx.Done, or d.done) — or false
 // if the group was delivered completely and the loop should advance to the next.
-func (d *trackDistributor) deliverGroup(tw *moqt.TrackWriter, twCtx context.Context, cache *groupCache, notify <-chan struct{}) bool {
+func (d *trackDistributor) deliverGroup(tw *moqt.TrackWriter, twCtx context.Context, openTO *openTimeout, woken bool, cache *groupCache) bool {
+	// Stage stamps (no-op in the default build): tEnter closes the R stage
+	// (group arrival → egress pickup) and opens the O stage (OpenGroupAt).
+	// enterDeliver/exitDeliver bracket the concurrent-delivery gauge and the
+	// deliver-span; ringResidenceSplit records R plus its fill/wake split and the
+	// behind/woken classification.
+	tEnter := d.stages.now()
+	d.stages.enterDeliver(cache)
+	defer d.stages.exitDeliver(cache, tEnter)
+	d.stages.ringResidenceSplit(cache, tEnter, woken)
+
 	// OpenGroupAt opens a new QUIC uni-stream per group. gomoqt's OpenUniStreamSync
 	// blocks when the peer's MAX_STREAMS limit is reached — this is the designed
-	// backpressure. A deadline-bearing context bounds the block: if the peer can't
-	// accept a new stream within the timeout, the group is dropped (MoQ semi-reliable).
-	// Without a deadline, OpenGroupAt blocks indefinitely, pinning the egress
-	// goroutine and accumulating stream objects until the ring evicts everything.
-	openCtx, cancel := context.WithTimeout(twCtx, defaultGroupTimeout)
-	defer cancel()
-	gw, err := tw.OpenGroupAt(openCtx, cache.seq)
+	// backpressure. openTO bounds the block with defaultGroupTimeout (reusing the
+	// subscriber's timer/context instead of a per-delivery context.WithTimeout):
+	// if the peer can't accept a new stream within the timeout, the group is
+	// dropped (MoQ semi-reliable). Without a deadline, OpenGroupAt blocks
+	// indefinitely, pinning the egress goroutine and accumulating stream objects
+	// until the ring evicts everything.
+	gw, err := tw.OpenGroupAt(openTO.start(), cache.seq)
+	timedOut := openTO.done()
 	if err != nil {
 		d.ring.decrRef(cache)
-		if errors.Is(err, context.DeadlineExceeded) {
+		if timedOut && twCtx.Err() == nil {
 			// Backpressure: peer's MAX_STREAMS is exhausted. Drop this group
 			// (MoQ semi-reliable) and continue to the next.
+			//
+			// A non-timeout failure (e.g. session death) that coincides with a
+			// timer fire is also classified here; the next delivery then fails
+			// fast with timedOut=false and terminates, so a dead session costs
+			// at most one extra loop iteration.
 			metricSubscriberSkipsTotal.Inc()
 			return false
 		}
@@ -512,6 +604,8 @@ func (d *trackDistributor) deliverGroup(tw *moqt.TrackWriter, twCtx context.Cont
 	defer gw.Close()
 	defer d.ring.decrRef(cache)
 
+	d.stages.groupOpen(tEnter)
+
 	start := time.Now()
 
 	// wait blocks for the next trickled frame of a still-filling group, woken by
@@ -520,9 +614,24 @@ func (d *trackDistributor) deliverGroup(tw *moqt.TrackWriter, twCtx context.Cont
 	// or distributor shut down), which ends the iteration; cancelled records that
 	// so we return the right egress verdict below.
 	cancelled := false
+	// lastSeen tracks the notify sequence across wait() calls so a wakeup is
+	// never missed. Without it, wait() would read the current channel fresh
+	// inside the select: if a notify landed between frames() deciding to block
+	// and wait() calling listen(), listen() would return the freshly-swapped
+	// (open) channel and the select would block on it — delaying the in-flight
+	// frame until the *next* notify. The seq check catches a notify that already
+	// happened; selecting on the captured state.ch catches one that happens
+	// after. Mirrors the seq guard in the egress loop.
+	lastSeen := d.notify.listen()
 	wait := func() bool {
+		state := d.notify.listen()
+		if state.seq > lastSeen.seq {
+			lastSeen = state
+			return true
+		}
 		select {
-		case <-notify:
+		case <-state.ch:
+			lastSeen = d.notify.listen()
 			return true
 		case <-d.done:
 			cancelled = true
@@ -533,16 +642,25 @@ func (d *trackDistributor) deliverGroup(tw *moqt.TrackWriter, twCtx context.Cont
 		}
 	}
 
+	// Batch egress bytes locally per group delivery to reduce atomic CAS contention.
+	var egressTotal int64
 	for frame := range cache.frames(wait) {
+		tWrite := d.stages.now()
 		if err := gw.WriteFrame(frame); err != nil {
+			// Flush bytes written before the failure: these frames were already
+			// handed to QUIC, so they count against egress (and metering) even
+			// though the group is being abandoned. The failing frame is excluded.
+			d.egressCounter.Add(float64(egressTotal))
 			return true
 		}
-		n := frame.Len()
-		d.egressCounter.Add(float64(n))
+		d.stages.egressFrame(tWrite)
+		n := int64(frame.Len())
+		egressTotal += n
 		if d.session != nil {
 			d.session.addEgress(int64(n))
 		}
 	}
+	d.egressCounter.Add(float64(egressTotal))
 	if cancelled {
 		return true
 	}
@@ -551,97 +669,93 @@ func (d *trackDistributor) deliverGroup(tw *moqt.TrackWriter, twCtx context.Cont
 	return false
 }
 
-// subscribe registers a new subscriber and returns its notification channel.
-func (d *trackDistributor) subscribe() chan struct{} {
-	ch := make(chan struct{}, 1)
-	d.mu.Lock()
-	d.subscribers = append(d.subscribers, ch)
-	d.mu.Unlock()
-	return ch
-}
-
-// unsubscribe removes a subscriber using swap-delete to keep O(1) removal.
-// Order of remaining subscribers is not preserved.
-func (d *trackDistributor) unsubscribe(ch chan struct{}) {
-	d.mu.Lock()
-	s := d.subscribers
-	for i, c := range s {
-		if c == ch {
-			s[i] = s[len(s)-1]
-			s[len(s)-1] = nil // release reference
-			d.subscribers = s[:len(s)-1]
-			break
-		}
-	}
-	d.mu.Unlock()
-}
+// subscribe and unsubscribe are removed. The broadcastNotify mechanism replaces
+// per-subscriber channels with an atomic broadcast, so no per-subscriber state
+// needs to be registered or cleaned up. Egress goroutines obtain (seq, ch) from
+// d.notify.listen() and detect new data by comparing seq against their cached
+// last-seen value. This eliminates the O(N) channel-send loop in broadcast()
+// and the associated RWMutex contention.
 
 func (d *trackDistributor) ingest(ctx context.Context, src *moqt.TrackReader) {
 	defer d.manager.remove(d.trackID, d)
 	defer d.sampler.removeTrack(d.trackID)
-	defer close(d.done)
-
-	// wg tracks in-flight fill goroutines so we can wait for them before
-	// closing d.done (which signals egress goroutines to stop).
-	var wg sync.WaitGroup
-	defer wg.Wait()
+	// Workers must complete before egress is signalled to stop: a single
+	// deferred closure enforces close(fillJobs) → fillWg.Wait() → close(done),
+	// so every reserved cache is filled before any egress goroutine sees done.
+	defer func() {
+		close(d.fillJobs) // signal workers to exit once in-flight jobs drain
+		d.fillWg.Wait()
+		close(d.done)
+	}()
 
 	for {
 		gr, err := src.AcceptGroup(ctx)
 		if err != nil {
 			return
 		}
-		if !d.processGroup(ctx, &wg, gr.GroupSequence(), gr) {
+		if !d.processGroup(ctx, gr.GroupSequence(), gr) {
 			return
 		}
 	}
 }
 
-// processGroup acquires a semaphore slot and launches a fill goroutine for the
-// given group. It is separated from ingest so that tests can drive it directly
-// with a fakeFrameSource without needing a real *moqt.TrackReader.
-// Returns false if ctx is cancelled while waiting for a semaphore slot.
-func (d *trackDistributor) processGroup(ctx context.Context, wg *sync.WaitGroup, seq moqt.GroupSequence, src frameSource) bool {
-	// Acquire a fill semaphore slot before reserving the ring slot.
-	// This bounds in-flight goroutines to MaxGroupFillsInFlight and
-	// prevents unbounded goroutine growth. The semaphore is acquired
-	// after AcceptGroup returns, not before — it does not gate AcceptGroup.
+// processGroup acquires a backpressure slot, reserves a ring slot, and
+// dispatches a fill job to the worker pool. The slot is acquired BEFORE reserve
+// so context cancellation never leaks a reserved cache. The send to fillJobs is
+// non-blocking because fillSem limits in-flight jobs to ≤ channel capacity.
+// It is separated from ingest so tests can drive it directly with a
+// fakeFrameSource without needing a real *moqt.TrackReader.
+// Returns false if ctx is cancelled while waiting for a backpressure slot.
+func (d *trackDistributor) processGroup(ctx context.Context, seq moqt.GroupSequence, src frameSource) bool {
+	tSem := d.stages.now()
 	select {
 	case d.fillSem <- struct{}{}:
 	case <-ctx.Done():
 		return false
 	}
+	d.stages.fillSemWaited(tSem) // ingest backpressure: waiting for a fill slot
 
-	// Reserve a ring slot synchronously to preserve group ordering,
-	// then fill frames concurrently so the next AcceptGroup is not blocked.
+	// Reserve ring slot synchronously to preserve group ordering.
 	cache := d.ring.reserve(seq)
+	d.stages.stampArrival(cache)
 	metricGroupFillsInflight.Inc()
-	wg.Go(func() {
-		defer func() {
-			<-d.fillSem
-			metricGroupFillsInflight.Dec()
-		}()
-		d.ring.fill(src, cache, func(n int) {
-			if n > 0 {
-				d.ingressCounter.Add(float64(n))
-				if d.session != nil {
-					d.session.addIngress(int64(n))
-				}
-			}
-			d.broadcast()
-		})
-	})
+
+	// Dispatch to the worker pool (guaranteed non-blocking; see fillSem).
+	d.fillJobs <- fillJob{src: src, cache: cache}
 	return true
 }
 
-// broadcast notifies all subscribers that new data is available.
-func (d *trackDistributor) broadcast() {
-	d.mu.RLock()
-	for _, ch := range d.subscribers {
-		select {
-		case ch <- struct{}{}:
-		default:
+// fillWorker is a long-lived goroutine processing fill jobs from the pool. It
+// replaces the per-group go func() pattern, eliminating goroutine
+// creation/destruction overhead. Workers exit when fillJobs is closed (on ingest
+// return) after draining in-flight jobs.
+func (d *trackDistributor) fillWorker() {
+	defer d.fillWg.Done()
+	for job := range d.fillJobs {
+		d.ring.fill(job.src, job.cache, d.onFrame)
+		metricGroupFillsInflight.Dec()
+		<-d.fillSem // release backpressure slot
+	}
+}
+
+// onFrame is the per-frame fill callback. Extracted as a method so the worker
+// pool avoids allocating a closure per fill job.
+func (d *trackDistributor) onFrame(n int) {
+	if n > 0 {
+		d.ingressCounter.Add(float64(n))
+		if d.session != nil {
+			d.session.addIngress(int64(n))
 		}
 	}
-	d.mu.RUnlock()
+	d.broadcast()
+}
+
+// broadcast notifies all egress goroutines that new data is available.
+// It atomically advances the notify sequence and closes the previous
+// notification channel, which wakes all goroutines currently waiting on it.
+// This is O(1) — no per-subscriber iteration, no RWMutex contention.
+func (d *trackDistributor) broadcast() {
+	t := d.stages.now()
+	d.notify.notify()
+	d.stages.broadcastTimed(t) // confirm broadcast is O(1) / non-blocking
 }

@@ -8,98 +8,133 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`qumo loadgen` end-to-end latency reporting** — subscribers decode the
+  publisher's UnixNano stamp (payload bytes 8–16) and record delivery latency
+  in a lock-free histogram (0.1 ms buckets, 1 s ceiling); the histogram is
+  reset after the settle phase so reported p50/p95/p99 and frame counts cover
+  the steady-state hold only. Printed in the carry report and emitted to
+  `results.jsonl` (`lat_p50_ms`/`lat_p95_ms`/`lat_p99_ms`/`frames_recv`).
+  Single-host shared-clock semantics: absolute values include co-located
+  loadgen scheduling; cross-topology comparisons under identical load are the
+  intended use.
+- **Stage-latency instrumentation (`-tags instrument`)** — per-stage relay
+  pipeline latency histograms (ingress append, ring residence, group open,
+  frame write) behind a build tag; zero-overhead no-op in the default build.
+  Benchmarks read steady-state p50/p95/p99/max via `Server.StageLatency()` /
+  `StageLatencyReset()` for latency attribution (benchmark-time diagnostic).
+- **Go benchmark controller (`bench-multiproc/cmd/benchctl`)** — replaces the
+  bash orchestration scripts with a native Go controller for multi-relay
+  (hub + P edges) scaling sweeps: hardened multi-strategy port cleanup,
+  AND-checked edge-liveness, subprocess subscriber mode, and a `/debug/stages`
+  accept-pipeline counter endpoint (instrument build only; `{}` stub by
+  default). Report in `docs/perf/MULTI-PROCESS-FANOUT-SCALING.md`.
 
-- **Opt-in GC tuning for high-fan-out capacity (`internal/gctune`, `RELAY_GOGC`).** A fan-out relay holds a large, *stable* live set — one QUIC connection per subscriber, whose ~9 goroutines' stacks dominate RSS (measured: Go heap in-use ~200MB while RSS ~1.4GB at ~14K sessions; the gap is off-heap goroutine stacks). Every GC cycle re-scans all those stacks, so at the default `GOGC=100` the GC-scan CPU grows with connection count and becomes the scaling ceiling (measured on bare-metal 8 cores: default holds ~13–15K sessions; the collapse is GC, not memory exhaustion — RSS/session is flat ~127KB). Because the live set is legitimate and stable, collecting it less often costs only some peak RSS headroom while cutting GC CPU — setting `RELAY_GOGC` to 600–1600 reached **~18–20K concurrent subscriber sessions** on a bare-metal 8-core host (`BenchmarkRelay_ConnectionCarry`, slow-ramp), roughly doubling the default ceiling. The GC-scan mechanism was re-confirmed after the #313 poller consolidation (WSL2, 8-core, valid for shape not absolute ceilings): at 8K held sessions `GOGC=800` cut GC cycles 31→7 and GC CPU ~14%→~3% vs `GOGC=100` (same ~110 MB stacks scanned per cycle), for a higher heap goal (1.3 GB → 2.2 GB) — the documented peak-RSS-for-GC-CPU trade. #313 also lowered per-session goroutines to ~14–16 (from ~18–20), which only moves the GC wall up, so the bare-metal ceiling figures are conservative. The policy is **opt-in**: with neither `GOGC` nor `RELAY_GOGC` set the relay leaves the runtime default (100) untouched — no silent global behavior change; `GOGC` (the runtime's own knob) always wins and is never stomped; a valid positive `RELAY_GOGC` raises the target, and an invalid one warns and no-ops. **`GOMEMLIMIT` is deliberately not used** — capping memory for this large-stable-live-set forces constant GC into a death-spiral (measured: GOMEMLIMIT configs collapsed to ~15–18K while `GOGC=high` held 20K). The policy lives in a small `internal/gctune` package (pure `Resolve` + side-effecting `Apply`, unit-tested for env precedence) so the relay's startup path and the new `doctor` command share one source of truth.
-- **`qumo doctor` command — read-only runtime-config explainer.** Prints the effective GC target, every input (`GOGC`, `RELAY_GOGC`, `GOMEMLIMIT`), which input won and why, any warnings, and workload guidance — without mutating anything. Structured so future checks (sockets, QUIC, kernel) can slot in. Documented in `relay-config.example.env`.
+### Changed
+- **Reusable OpenGroupAt deadline** — egress delivery no longer constructs a
+  `context.WithTimeout` per delivered group; a per-subscriber reusable
+  timer/context bounds the open instead. 354.8→57.8 ns and 4→0 allocs per
+  delivery (benchstat, n=10); −32% `deliverGroup` CPU at 1000-subscriber
+  fan-out. Efficiency change only: measured e2e latency is unchanged.
+  Backpressure semantics (30 ms bound, drop-group-and-continue) preserved.
+
+### Fixed
+- **`internal/playground` restricted pull-server CORS origins.** The on-demand
+  RTSP pull ingest server (`:4543`) allowed any WebTransport origin (`"*"`),
+  letting an arbitrary malicious page initiate a Cross-Site WebTransport
+  session to the user's localhost ingest. Replaced with `cors.SameHost`,
+  which permits the browser handshake despite the UI/pull-server port
+  mismatch (port-agnostic hostname comparison) while rejecting cross-origin
+  pages. Access via a distinct hostname string (e.g. `127.0.0.1` vs the
+  `localhost` default of `VITE_RELAY_URL`) is rejected, matching the main
+  relay's existing policy.
+
+## [v0.5.0] - 2026-07-24
+
+### Release notes — relay performance cycle
+
+A focused relay-side optimization + capacity-characterization cycle. After it,
+the relay's own hot-path code is **<1% of CPU and <2.5% of allocations** under
+load — the remaining costs live in quic-go (egress/handshake) and the Go
+runtime. Full evidence in `docs/perf/`.
+
+Landed optimizations (measured):
+- **O(1) broadcast notification (#332)** — atomic-seqnum + close-and-recreate
+  fan-out, ~82–86 ns flat across 1–1000 subscribers (was O(N), ~32 µs at 1000).
+  Also closes a missed-wakeup window in the trickle wait.
+- **Fixed worker pool for group fills (#338)** — per-group goroutine+closure
+  spawn replaced by a long-lived worker pool: 11→9 allocs/op (−18%), ~15% faster
+  on `BenchmarkProcessGroup`, no regression on ring fill.
+- **Batched egress counter (#333)** — one Prometheus `Add` per group (was per
+  frame); flushes on mid-group error so written bytes stay counted
+  (metering-accurate). Marginal throughput impact (the counter was never the
+  bottleneck) — primarily correctness/alloc hygiene.
+- **Configurable UDP receive buffer `RELAY_UDP_RCVBUF` (#329)** — burst-safe
+  `SO_RCVBUF` (default 256 KB); kernel-capped by `net.core.rmem_max` on Linux.
+- **Opt-in pprof endpoint `RELAY_PPROF` (#339)** — `/debug/pprof/*` for profiling
+  the relay under out-of-process load.
+
+Characterized capacity envelope (WSL2 single-host; **shape-valid, ±noise — not a
+bare-metal claim**):
+- Sustainable HOLD **~13K** concurrent subscriber sessions; establishment peak
+  **~15K**.
+- Throughput **≥200K objects/sec** at 2000 subscribers (no cliff reached at that
+  fan-out).
+- Per session: **~7 goroutines**, **~468 KB RSS** (steady-state, GOGC=800).
+- At the ceiling the relay is **not the bottleneck**: ~30% CPU/core, GC p99
+  ≤6.7 ms, 11 FDs. The ~13K attrition mechanism is a **leading hypothesis
+  (recv-buffer), unconfirmed** — see #343.
+
+Tuning options (all opt-in; defaults unchanged):
+- **`RELAY_GOGC`** — raises the HOLD ceiling on bare metal (~13–15K → ~18–20K at
+  GOGC 600–1600); on single-host WSL the ceiling is establishment/recv-buffer-
+  bound so GOGC has only ~±5% effect there.
+- **`RELAY_UDP_RCVBUF`** — UDP `SO_RCVBUF`; raise `net.core.rmem_max` on Linux to
+  let a large value take effect.
+- **`RELAY_PPROF`** — off by default; enable on a trusted interface only.
+
+Deferred validation (estimates/hypotheses, **not yet measured**):
+- Bare-metal envelope (#341); distributed-load true ceiling (#342); recv-buffer
+  hypothesis (#343); multi-publisher throughput scaling + exact PPS cliff (#344).
+- The "~25K sessions" figure is a CPU extrapolation, **not measured**.
 
 ### Changed
 
-- **`internal/relay` metric sampling consolidated into one server-wide goroutine.** The relay previously spawned three long-lived poller goroutines per entity — `pollConnStats` (per native-QUIC connection), `pollSessionStats` (per session), and `pollCacheDepth` (per track distributor) — each a `for { <-ctx.Done(); <-ticker.C }` loop that sat parked on a 10–30s ticker. At high fan-out that is ~2 goroutines per session plus one per track (~40K+ goroutines at 20K sessions), and the dominant cost is **GC stack-scan**: every parked goroutine's stack is scanned on each GC cycle, so the measured wall at ~10K→20K sessions was off-heap goroutine-stack memory (RSS ~1.4GB vs heap ~200MB), not the heap itself. These are now replaced by a single `statsSampler` that holds three `sync.Map` registries (conns/sessions/tracks) and sweeps them from **one** goroutine per tick; entities register on start and deregister on teardown (connection-context `AfterFunc`, `serveSession` defer, and `ingest` defer respectively). Deregistration removes the registry entry (so the entity stops being sampled) and **queues** the Prometheus `DeleteLabelValues` onto the sampler goroutine, which drains the queue right after each sweep — so a series is never deleted concurrently with the sampler's own `Set` write, which would otherwise resurrect and leak it. A stale queued deletion whose addr was re-registered before it ran (ephemeral-port reuse) is skipped, so the new owner keeps its series. Metric semantics are unchanged (same gauges/histogram, same per-`remote`/`track` labels, same immediate first sample on register), except the per-addr `session_rtt_seconds` histogram series is now dropped on session end — the old per-session poller deleted only the two gauges and leaked one histogram series per departed session. All sampler methods are nil-safe so a minimally-constructed `Server` and standalone `trackDistributor`s (tests) skip sampling without guards. Per-addr gauge/histogram **cardinality** is unchanged and remains a separate follow-up.
-
-- **`internal/relay` groupCache is now a lock-free append-only vector (was copy-on-write).** Each `groupCache` published its frames as an immutable `atomic.Pointer[[]*moqt.Frame]` snapshot, and every `append` rebuilt the whole snapshot (`make(len+1)` + `copy`) before CAS-publishing it — O(N²) pointer copies and one slice allocation per frame across an N-frame group, all of it garbage the collector then had to reclaim. It is replaced by a fixed per-cache backing array of per-frame atomics (`slots []atomic.Pointer[moqt.Frame]`, sized `MaxFramesPerGroup`, allocated once and **reused** across group generations via the ring's `gcPool`) plus an atomic `count`. `append` now reserves a unique slot with a CAS on `count` (O(1), **zero allocation**) and Stores its clone; `next` remains a single atomic load. Concurrency and safety are preserved: appends stay concurrency-safe (the CAS reserves a unique slot, so no frame is lost or overwritten — `TestGroupCache_ConcurrentAppend` passes under `-race`), reads stay lock-free and data-race-free (distinct slots are distinct memory locations; `count`/slots touched only through atomics), and the reserve→Store window reads back as a nil frame, which the egress loop already treats as "not ready, wait for the next broadcast". This removes the per-append allocation and the O(N²) copy from the ingest hot path. Note the ingest/append path runs at publisher frame-rate (per track), not per-subscriber, so this reduces GC churn under high-ingest more than under pure fan-out.
-
-- **deps: `github.com/qumo-dev/gomoqt` `v0.16.1` → `v0.16.2-0.20260718145816-7bc42f96aec4` (merged `main`).** Pulls two per-session goroutine reductions that land in the relay's fan-out path: the **lazy bitrate monitor** (gomoqt #342 — the `detectBitrateChanges` goroutine no longer starts eagerly per session; subscriber sessions that never open a probe stream spend zero goroutines on it, with `EstimatedBitrate` preserved via lazy `Stats()` sampling) and **caller-driven `SUBSCRIBE_UPDATE`** (gomoqt #345 — the per-subscription background update-reader goroutine is gone; `TrackWriter.Updated() <-chan struct{}` was replaced by the blocking `TrackWriter.ReadUpdate() (*SubscribeConfig, error)`). Drop-in for qumo: the relay never used `Updated()` (nor `TrackConfig()`), so no source changes were needed — the whole module builds, vets, and tests green on the new dependency. Together these remove ~2–3 goroutines per subscriber connection (~20 → ~17 measured at 500 sessions), reducing per-connection footprint; they do **not** move the memory-bound session ceiling (per-conn goroutine-stack memory dominates, quic-go). Pins a pseudo-version of `main` pending a tagged gomoqt release.
-
-### Removed
-
-- **`internal/relay` egress poll-fallback timer (`NotifyTimeout`) removed entirely.** The subscriber egress wait-select (`egress`/`deliverGroup`) carried a 1ms poll fallback, so every parked subscriber goroutine fired a timer 1000×/sec regardless of media rate — ~5M spurious wakeups/sec at the ~5K-session ceiling, the dominant `selectgo`/timer cost in prior scheduler profiles (and it is relay code, not quic-go). Investigation showed the timer was **never the delivery mechanism** and — contrary to the "safety net" assumption — not load-bearing at all: the per-frame `broadcast()` notify (`groupRing.fill`) wakes egress for every real delivery (a new group advances the ring head synchronously in `reserve()` then broadcasts; the notify channel is cap-1 buffered and subscribed before the loop, closing the enter-select race; egress re-reads `head()` fresh each iteration, so coalesced signals never lose data). Proven by `TestRelayChain_NotifyOnlyDelivery` (integration): with the timer disabled, all 40 gap-spaced groups are delivered promptly (max inter-arrival ≈ the 50ms publisher gap, not clumped at a fallback), and `TestRelayChain_SlowSubscriber` confirms the fell-behind path is covered by the next group's broadcast. Removing the timer arm from both egress selects is behavior-preserving (same frames, same order) and eliminates the idle-wakeup cost outright rather than merely coarsening it — the select keeps its two cancellation arms (`d.done`, `twCtx.Done()`), so shutdown convergence (#286) is unaffected. Reduces CPU/scheduler pressure and tail latency under load. **Correction (measured after merge):** this also *raises* the single-node session hold ceiling — an end-to-end `BenchmarkRelay_ConnectionCarry` sweep (WSL2 8C, reproduced) shows the ceiling jump from **~4.5K to 10K+** sessions with the timer removed, and an isolation run (goroutine reductions with the timer *still present*) stayed at ~4.5K — so the ~5K wall was this 1ms poll saturating the scheduler (~5M timer wakeups/sec), **not** per-connection memory as an earlier note claimed (per-session RSS is unchanged at ~127KB across the sweep). The `NotifyTimeout` package var, its `RELAY_NOTIFY_TIMEOUT`/`RELAY_NOTIFY_TIMEOUT_MS` overrides, and the tests that pinned its value are all removed.
+- **`internal/relay` group fills use a fixed worker pool instead of a per-group goroutine.** `processGroup` previously did `wg.Go(func(){...})` per accepted group — spawning a goroutine and allocating two closures (the dispatch body + the per-frame fill callback) on every group, on the ingest hot path. It now dispatches a `fillJob` struct to a pool of `MaxGroupFillsInFlight` long-lived worker goroutines (created once per `trackDistributor`), and the per-frame callback is the `onFrame` method. Concurrency is bounded identically (one in-flight fill per worker via the existing `fillSem`), shutdown order is explicit (`close(fillJobs)` → `fillWg.Wait()` → `close(done)` so every reserved cache is filled before egress sees `done`), and the slot is acquired before `ring.reserve` so cancellation never leaks a reserved cache. Measured on `BenchmarkProcessGroup`: 11 → 9 allocs/op (−18%), 454 → 377 B/op (−17%), ~15% faster; no regression on `BenchmarkGroupRing_Fill`. Supersedes #336 (rebased onto the #332 atomic-seqnum notify API).
 
 ### Fixed
 
-- **`internal/playground` restricted pull-server CORS origins.** The on-demand RTSP pull ingest server (`:4543`) allowed any WebTransport origin (`"*"`), letting an arbitrary malicious page initiate a Cross-Site WebTransport session to the user's localhost ingest. The wildcard is replaced with `cors.SameHost`, which permits the browser handshake despite the UI/pull-server port mismatch (hostname comparison, port-agnostic) while rejecting cross-origin pages. Access via a distinct hostname string (e.g. `127.0.0.1` vs the `localhost` default of `VITE_RELAY_URL`) is rejected, matching the main relay's existing policy.
+- **`internal/ingest` build: duplicate `benchStartServer` redeclaration.** Two parallel RTSP bench merges each added an identical `benchStartServer` helper (`rtsp_accept_bench_test.go` and `rtsp_loop_bench_test.go`), a same-package redeclaration that broke `go test ./...` / `golangci-lint` on `main` and blocked every open PR's CI. The duplicate is removed from `rtsp_accept_bench_test.go`; the single shared helper lives in `rtsp_loop_bench_test.go` (alongside `benchAnnounce`).
 
-- **`internal/relay` correct TrackWriter/OpenGroup usage.** `deliverGroup` now passes a deadline-bearing context to `OpenGroupAt` (30ms `defaultGroupTimeout`). When the peer's `MAX_STREAMS` limit is reached, the call blocks up to the timeout (gomoqt's designed backpressure via `OpenUniStreamSync`), then drops the group (MoQ semi-reliable) instead of blocking the egress goroutine indefinitely. Previously, the unbounded block caused stream-object accumulation and a GC-driven degradation spiral. `cmd.go` reverts `MaxIncomingUniStreams`/`MaxIncomingStreams` from `1<<20` back to quic-go defaults (~100) — the `1<<20` value (from #292) removed the backpressure entirely, which was the wrong fix; the timeout context is the correct one.
-
-### Fixed
-
-- **`tools/paramexp` post-merge review fixes (retro-review of #297/#298).** Six correctness bugs found by adversarial review of the merged code (same class as #294's GP-math bugs — CI-green but subtle math the tests asserted too little to catch):
-  - **Discrete-space selection (#298-1,2,3):** `SuggestedNext` could return duplicate configs and recommend already-measured points; `BayesianScheduler` could prematurely EOF in small discrete spaces (random-search argmax kept decoding to occupied cells). Both now use `model.SelectByAcquisition`, which enumerates the full discrete candidate set (guaranteed to find novel points if any remain) or random-searches continuous spaces with decoded-vector dedup.
-  - **Sample variance (#297-4):** `aggregateMetrics` used population variance (÷N) for inferential outputs (CIs, indistinguishable test, stability CV) — anti-conservative at small N (the replicate regime N=2–5). Switched to sample variance (÷N−1) and replaced the hardcoded z=1.96 with a `TCritical(df)` t-table (t₀.₉₇₅,df for df=1..30, z beyond). The "95% CI" labels now actually hold at small N.
-  - **Flaky-vector dominance (#297-5):** a config with only 1/N successful replicates got `Variances=0` → the GP treated it as near-noise-free and bent the surface through it (the *opposite* of "downweight high-variance"). `FitGP` now borrows the median noise of well-replicated points for N=1 configs.
-  - **`Fit` measuredNoise leak (#297-6):** `Fit` didn't reset `measuredNoise` (a `FitReplicated`→`Fit` reuse would apply the previous run's per-point noise to the new fit). Now resets at the top, matching `FitReplicated`.
-
-### Added
-
-- **`tools/paramexp` richer relay metric: jitter.** The fan-out bench now reports `jitter_ms` (sample stdev of per-group latencies) alongside loss/p99/mbps/fairness. The paramexp `bench.sh` harness emits it so the GP can model jitter as part of the landscape — a brief-listed metric that was previously missing.
-
-- **Relay performance-landscape sweep in CI (`bench-relay.yml`).** A new `paramexp` job runs the Bayesian-optimization sweep of relay tuning knobs (`example/relay/params.yaml`: ring size / frame / notify-timeout × fan-out K) nightly and on-demand. Each vector runs the integration fan-out bench via `bench.sh`; the GP + analysis produce a report (knees, importance, interactions, stability, suggested-next) answering "which settings serve stable high-performance large fan-out?" Uploads `paramexp_relay.db` + the report as the `relay-paramexp` artifact. `px_samples`/`px_replicates` workflow inputs tune the scale; the `bench.sh` harness is hardened (tolerant of failed/flaky vectors — degrades to a worst-case record instead of aborting the sweep).
-
-- **`tools/paramexp` Stage 2 — uncertainty-driven adaptive sampling (Bayesian optimization).** A `BayesianScheduler` (`scheduler: bo`) replaces the neighbor-of-best hill-climb: round 0 is an LHS seed batch (broad coverage), then each round fits the GP posterior and picks the next point(s) by maximizing an **acquisition function** — Expected Improvement (`ei`, default), Upper-Confidence-Bound (`ucb`, exploration knob κ), or predictive variance (`variance`, pure-exploration surface mapping). Acquisition is maximized by random search over `[0,1]^D` with decode-level dedup (so the discrete/categorical collision case never re-measures a known vector). Supports a batch (`bo_batch`) via greedy exclusion. CLI `--scheduler bo --acquisition ucb`; flat yaml knobs `bo_rounds`/`bo_batch`/`bo_acquisition`/`bo_kappa`/`bo_xi`. The `Scheduler` interface is unchanged, so the CLI driver loop is untouched.
-- **`tools/paramexp` acquisition functions + shared GP fit.** `model.NewExpectedImprovement`/`NewUpperConfidenceBound`/`NewPredictiveVariance`, `model.MaximizeAcquisition` (random-search argmax with exclusion), and `model.AcquisitionFor` (named resolver). `model.FitGP(obs, objective, opts)` dedups the fit logic (heteroscedastic when replicates carry variance) and replaces the inlined `cmd.fitGP`. `model.LCG` is now exported (reproducible random search).
-- **`tools/paramexp` suggested-next measurements.** `analysis.SuggestedNext(gp, enc, acq, n)` returns the top-N unmeasured points the model most wants to sample — the brief's "what should we measure next." The report renders a "Suggested next measurements" section (text + JSON) with each point's predicted mean/std and acquisition value.
-
-### Added
-
-- **`tools/paramexp` replication + variance (statistical rigor).** Each parameter vector can now be run N times (`replicates:` config / `--replicates`); variance becomes first-class. `storage.Observations` aggregates replicates in Go (per-metric means + population variance + N), so analysis runs on the de-noised means. The GP gains a heteroscedastic `FitReplicated(X, yMean, yVar)` that uses the measured per-point variance as observation noise (the global noise hyperparameter stays as a floor) — high-variance configs are downweighted automatically and `var/N` shrinks as N grows. New analysis: `StabilityReport` flags configs whose objective CV exceeds `UnstableCV` (0.15), and `IndistinguishableFromBest` returns the best config plus the set whose CI overlaps it (the "can't tell apart from best" group). Reports now show `mean ± 95% CI (n=N)`, an unstable-configs section, best-vs-peers, and a caption explaining that η² (variance-explained) and GP 1/ℓ² (local relevance) measure different things.
-- **`tools/paramexp` → relay integration.** The relay fan-out benchmark is now sweepable by paramexp: `RELAY_RING`/`RELAY_FRAME` knobs in `spinRelay` and a `RELAY_NOTIFY_TIMEOUT_MS` knob in `fanoutSweepRun` (integration tests), plus `example/relay/{params.yaml,bench.sh}` — a self-contained harness that runs `BenchmarkRelayChain_FanoutSweep` per vector and emits one JSON line of loss/p99/mbps/fairness. This is the brief's "Relay Integration" layer; the full sweep belongs on the nightly Linux bench job.
-
-### Fixed
-
-- **`tools/paramexp` variance NaN.** `aggregateMetrics` used the numerically unstable `E[x²]−E[x]²` form, which goes slightly negative for near-constant (deterministic-bench) data and yielded `sqrt(NaN)` CIs — which in turn broke `report.json` marshaling (silent empty file). Switched to the two-pass `Σ(x−mean)²` form (never negative) and surfaced the marshal error instead of swallowing it.
+- **`internal/ingest` RTSP session accumulation per connection.** `handleConn` deferred `sess.Close()` inside its request loop, so every successful ANNOUNCE on a long-lived RTSP connection stacked another deferred close — sessions (and their goroutines/announcement state) accumulated until the TCP connection ended. The loop now closes any previous session before establishing a new one, with a single outer deferred close for final cleanup. `BenchmarkRTSPAnnounceLoop` is added as a regression guard.
 
 ### Changed
 
-- **`tools/paramexp` package layout simplified (11 → 7 packages).** Folded the small leaf and coupled-pair packages into their natural homes to reduce over-decomposition: `encoding` → `experiment` (`experiment.Encoder`/`NewEncoder`; the encoder is the numeric view of the domain types, and everyone already imported `experiment`, so this also removes an import edge); `provenance` → `storage` (`storage.Run`/`Capture`/`Abs`); `visualization` → `report` (SVG helpers are now unexported, since only `report` ever used them); `scheduler` → `sampler` (`sampler.Scheduler`/`SchedulerState`/`StaticScheduler`). Final layout: `experiment`, `storage`, `runner`, `sampler`, `model`, `analysis`, `report`, plus the thin `cmd/paramexp`. The distinct heavy concerns (GP math in `model`, statistics in `analysis`, SQL in `storage`, exec in `runner`) stay separate.
+- **`tools/paramexp/report` SVG path building uses `strings.Builder`.** `sweepSVG` and `responseSurfaceSVG` built their `<path d="...">` strings with `d += fmt.Sprintf(...)` inside a loop — O(N²) memory copies. Replaced with `strings.Builder` + `fmt.Fprintf`, amortizing allocations. `BenchmarkSweepSVG`/`BenchmarkResponseSurfaceSVG` are added as regression guards.
 
-### Fixed
+- **`internal/ingest` RTSP accept loop avoids per-connection `defer`.** The per-connection goroutine in `ListenAndServe` called `connWg.Done()` via `defer`; replaced with an explicit call after `handleConn` returns, removing the defer overhead from the accept hot path. `BenchmarkRTSPConnCycle` is added as a regression/improvement guard.
 
-- **`tools/paramexp` `report` package was never committed (#294 regression):** the module `.gitignore` rule `report/` — intended for the generated report *output* directory — also matched the `report/` source *package*, so `report/report.go` was silently excluded from #294. `cmd/paramexp` imports it, so `go build ./...` in `tools/paramexp` failed on `main` (CI didn't catch it because the qumo root `go test ./...` does not traverse the separate `tools/paramexp` module). The output directory is renamed to `report_out/` (default `--output`, gitignored) so it no longer collides with the `report` package, which is now tracked.
-
-- **`tools/paramexp` GP surrogate math (post-merge review of #294):**
-  - **Signal variance σ_f² was optimized but never applied to the kernel** (`model`): `K`, `k*`, and `k(x,x)` were built from the unit-variance RBF correlation with no σ_f² factor, so θ[D] was a dead search axis, `Hyperparameters().SignalVar` reported a value that never influenced the fit, and predictive variance was implicitly locked to σ_f²=1. The kernel correlation is now scaled by σ_f² at every build site via a `cov` helper.
-  - **Log-marginal-likelihood complexity term had the wrong coefficient** (`model`): `-logdet` was used where the GP LML requires `-0.5·log|K|` (`chol.LogDet()` returns `log|K|`). The doubled model-complexity penalty biased the optimizer toward shorter length-scales (rougher, overfitting posteriors) on every fit. Now `-0.5·logdet`.
-  - **`DetectKnees` missed the common concave/diminishing-returns case** (`analysis`): the single-sign `xNorm - yNorm` criterion only fired when the normalized curve lay below the diagonal, so a concave-increasing sweep (the default `throughput_fps` objective) returned no knee. Now uses `|yNorm - xNorm|` with decreasing-curve mirroring, finding the elbow for both concave and convex sweeps (the diminishing-returns knee on `workers` is now detected, where it previously was not).
-  - **`DetectRegressions` attribution was non-deterministic** (`analysis`): two independent map range loops could pair a `Param` from one key with a `Value` from another, varying across runs. `Regression` now carries the full offending `Vector` (deterministic, no information loss).
-- **`tools/paramexp` flat telemetry no longer contaminates metrics** (`runner`): `toMetricSet` now excludes the recognized telemetry keys (`cpu_pct`/`gc_pause_ms`/`syscalls`/`retransmits`/`rss_mb`/`goroutines`) so a benchmark emitting the flat telemetry shape does not pollute `RankImportance`/GP-fit/`--objective`. The nested `"telemetry"` shape was already clean.
-- **`tools/paramexp` in-memory storage DSN no longer drops pragmas** (`storage`): `:memory:` previously stripped `foreign_keys=ON` and did not pin the connection pool, so modernc/sqlite could route a query to a different connection's empty private DB. Pragmas now apply to all DSNs and `:memory:` pins `SetMaxOpenConns(1)`.
-
-### Changed
-
-- **`tools/paramexp` rewritten as a scientific performance-landscape framework.** The flat `package main` MVP is restructured into importable library packages (`experiment`, `encoding`, `provenance`, `runner`, `storage`, `sampler`, `model`, `analysis`, `scheduler`, `visualization`, `report`) plus a thin `cmd/paramexp` CLI — generic for any black-box benchmarkable system. Key additions:
-  - **Gaussian-process surrogate (`model`):** anisotropic RBF kernel with ARD length-scales, fit by maximizing the log-marginal-likelihood (multistart random search + Nelder-Mead polish via `gonum/optimize`, with a median-heuristic fallback), Cholesky-based solve via `gonum/mat`, adaptive-jitter numerical-stability handling, and a per-metric `MultiOutput`. Predict returns mean **and** predictive std (uncertainty) — the framework's first surrogate model and the foundation for Bayesian optimization.
-  - **Numeric parameter encoding:** parameters are now typed (continuous / discrete-ordinal / categorical) and mapped to a normalized `[0,1]^D` space the sampler and GP operate in; the runner still receives original string values. Continuous `min`/`max` and a continuous `jitter` dimension are demonstrated in `example/params.yaml`.
-  - **GP-derived analysis + viz:** `analysis.GPSensitivity` ranks dimensions by `1/ℓ²` (shorter length-scale ⟹ more sensitive); the report draws per-parameter response surfaces (mean ± 2σ band) and a 2-D contour over the two most-sensitive parameters.
-  - **Full provenance + retry + telemetry:** SQLite schema gains `runs` (git revision via `debug.ReadBuildInfo`, machine info, redacted env, config hash), per-retry `attempts`, and a `telemetry` table for resource snapshots (cpu/gc/retransmits/rss/goroutines) the benchmark may emit (feeds later bottleneck attribution). The runner enforces a real context timeout and retries with backoff.
-  - **Bug fixes from the MVP:** `DetectKnees`/`RankImportance` no longer hardcode `throughput_fps` (they honor `--objective`); `DetectRegressions` is no longer dead code and populates param/value; local `min`/`max` shadows of Go 1.21+ builtins removed; `Observations(includeFailures)` makes failed runs analyzable.
-  - New dependency: `gonum.org/v1/gonum` (pure Go, no CGO — consistent with the `CGO_ENABLED=0` posture). Sobol sampling is deferred to a roadmap phase-2 item: a first direction-number recurrence was not a true `(0,m)`-net (it degenerated to covering half the space), so `sampler.Sobol` falls back to LHS rather than ship a subtly-broken generator.
+- **`internal/rtsp` `selectQop` is allocation-free.** The RTSP Digest "qop" parser (run during connection-setup auth header construction) used `strings.Split`, allocating a `[]string` each call. Replaced with an `IndexByte` scan that allocates nothing — 1 → 0 allocs/op and ~75% faster on `BenchmarkSelectQop`.
 
 ### Added
 
-- **Automated parameter exploration framework (`tools/paramexp`):** A generic, black-box parameter optimization tool for any benchmarkable system. Samples a discrete parameter space via Latin Hypercube Sampling + adaptive neighbor exploration, runs benchmarks (params as `PARAM_<NAME>` env vars, JSON stdout metrics), stores every experiment in SQLite, then analyzes: knee points (Kneedle), parameter importance (η²), pairwise interactions, regressions, and generates SVG plots + JSON/text reports. One dependency: `modernc.org/sqlite` (pure Go).
+- **Opt-in pprof endpoint (`RELAY_PPROF`, `internal/relay`).** Mounts `net/http/pprof` on the relay's HTTP mux (alongside `/metrics`), gated behind `RELAY_PPROF=1` (off by default). Exposes `/debug/pprof/{heap,profile,goroutine,trace,...}` so the relay can be profiled under out-of-process load (e.g. `qumo loadgen` driving it to the session ceiling) — the relay previously had no profiling surface, so the dominant cost could only be guessed. Off by default: pprof exposes runtime internals, so enable it only on a trusted/loopback interface.
 
-### Fixed
+- **Configurable UDP receive buffer (`RELAY_UDP_RCVBUF`, `internal/relay`).** The relay's single QUIC listener socket now sets `SO_RCVBUF` to a burst-safe size (default 256 KB) via a custom `transport.QUICListener` wrapper, instead of relying on the OS default (~8 KB on Windows, ~208 KB on Linux). At high fan-out with thousands of subscribers connecting in a burst, the default buffer can overflow and drop QUIC Initial packets, causing connection failures; the override absorbs the burst during handshake demux. `RELAY_UDP_RCVBUF=<bytes>` configures it (`0` disables the override, falling back to the OS default). On Linux the kernel silently caps the value at `net.core.rmem_max` (documented in `relay-config.example.env`). Compile-time interface assertions guard the quic-go/gomoqt wrapper against upstream signature changes.
 
-- **Subscriber egress teardown hang (`internal/relay`, #286):** `trackDistributor.egress` now routes every non-delivery loop path through a single wait/cancellation `select` (on `twCtx.Done()`/`d.done`). Its fell-behind skip and cache-miss paths previously iterated via bare `continue` without consulting those signals, so a subscriber that fell behind could blind-spin past cancellation and never return when the subscriber disconnected or the relay shut down. That pinned gomoqt's stream-handler `WaitGroup`, so `Session.CloseWithError`'s `wg.Wait()` hung, the connection was never removed from the connManager, and `Server.Shutdown`/`Close` hung on `<-connManager.Done()` — the multi-subscriber teardown hang and churn-time goroutine leak. The cancellation signal already reached qumo (gomoqt's per-conn `goAway` force-closes the connection on ctx expiry, cancelling the subscribe-stream context `twCtx` derives from); qumo only needed to converge on the one select it already had. The per-group delivery body is extracted into `deliverGroup`. No gomoqt change required.
+- **`tools/capacity` starts a fresh relay per probe in `--start-relay` mode.** Each session-count probe now spawns its own relay + publisher and tears them down, so every measurement is independent. Previously the driver reused one long-lived relay across all probes, so once a probe pushed past the ceiling the relay carried residual goroutines/heap into the next probe — which corrupted the sub-ceiling bisect steps (a WSL run had the 17K/18K probes collapse to ~12K connected with a *negative* RSS delta). Reuse would turn the capacity benchmark into a recovery/soak test — a different workload that belongs in a higher-level harness, not a flag — so there is deliberately no `--reuse-relay` escape hatch. Remote mode (`--relay <host>`, no `--start-relay`) is unchanged: the external relay is a persistent service the driver doesn't own, so it keeps one publisher for the whole run.
+- **`qumo loadgen` CLI simplified to primitives + a standalone `tools/capacity` driver.** The `qumo loadgen` CLI is now just two pure remote-client primitives — `publish` and `subscribe <N>` (N is a positional arg) — that dial the relay you point them at (`--relay` + `--ca`) and never spawn a relay or generate a cert. The `sweep` subcommand and its relay-lifecycle flags (`--start-relay`, `--relay-cores`, `--gogc`, cert generation) are **removed** from the CLI. Orchestration — sweeping an explicit `--sessions` list, or `--auto` climbing (geometric/`--step`) to find the capacity ceiling with optional `--bisect` boundary refinement — now lives in a separate Go driver, `tools/capacity`, which composes the primitives: it generates a cert, starts a local relay (`--start-relay`, optionally `taskset`-pinned via `--relay-cores`) and a publisher, then probes session counts by running `qumo loadgen subscribe <N>` and reading the verdict from `results.jsonl`. This keeps the shipped CLI small and moves the (unshipped) bench orchestration into a dev tool, driven the same way locally and in CI. The climb/bisect search is pure and unit-tested (`tools/capacity/ceiling.go`); the `capacity-sweep` CI job (`bench-relay.yml`) builds and runs the driver for a modest core-pinned sweep, feeding the dashboard.
+- **Connection-establishment retry/backoff for outbound peer dials (`internal/relay`, #305).** The relay's outbound peer reconnection (`maintainPeer`) previously used a fixed 5-second retry interval with no backoff or jitter, so a burst of simultaneous peer disconnects could trigger a thundering-herd of synchronized re-dials and overwhelm the peer's handshake capacity. Replaced with a `dialBackoff` struct that applies exponential backoff (1s base, 30s cap), ±25% jitter, and unlimited retries — transforming burst arrivals into a gradual ramp. The backoff state resets after a successful connection, so transient disconnects re-dial promptly. New metric: `qumo_relay_dial_retries_total{peer}` — every retry is counted and labelled by peer address, and the log now includes a `retry_attempt` field for operator observability.
+
+- **`qumo loadgen` — out-of-process capacity load generator (`internal/loadgen`).** Drives a real, separately-running relay instead of the in-process integration benchmark. `loadgen publish` feeds a trickle track; `loadgen subscribe` ramps N subscriber sessions and measures the hold. The reason it exists: `BenchmarkRelay_ConnectionCarry` runs the relay and all N clients in one process on shared cores, so client-side QUIC-handshake CPU — not the relay — caps establishment (measured ~6K connected on an 8-core VM, collapsing past that; a GOGC A/B confirmed GC is *not* the establishment bottleneck: cutting relay GC CPU 12%→2% bought ~0 extra connections). `loadgen` separates the load generator from the relay (point `--relay` at another host, or pin them to disjoint cores on one box) and reports the **relay's own** per-session cost by scraping its `/metrics` before/after the ramp (`go_goroutines`, `process_resident_memory_bytes`, `qumo_relay_sessions_active`) — so the number reflects the relay under test, not the load. `subscribe --results <dir>` appends a `capacity`-group JSONL record in the same schema the dashboard reads, so an out-of-process sweep lands in the same consolidated `index.html`. Client trusts the relay via `--ca <relay-cert.pem>` (no insecure mode). Wired as a top-level `qumo` subcommand alongside `doctor`/`playground`.\n- **`qumo loadgen sweep` — session-count sweep + CI job (`bench-relay.yml` `loadgen-sweep`).** Runs a publisher plus a subscribe measurement per session count. Two modes: `--start-relay` spawns a local relay subprocess (self-signed cert generated in-process — no `openssl`/`curl`/shell dependency) pinned via `--relay-cores`, a single-box stand-in for two hosts that isolates the relay's CPU from the load; or `--relay <host:port> --ca <cert>` drives an existing relay on another machine (true two-host). Each point appends a `capacity`-group record to `results.jsonl`, which the dashboard renders. The new `loadgen-sweep` CI job runs a modest core-pinned sweep on the (small, single-host) hosted runner to exercise the path and publish a capacity dashboard artifact; distributed 25K-scale validation is a manual/self-hosted two-host run. Implemented as a Go subcommand (reusing the loadgen dial/measure/scrape code) rather than a shell script, to avoid environment mismatch across dev/CI/OS.\n- **Consolidated benchmark dashboard (`results/index.html`) + capacity records in the JSONL.** `scripts/relay_bench_report.ts` now emits a single self-contained `index.html` alongside the CSVs/SVGs — the \"easy to see\" surface: open it (no server, no external requests) and get the **capacity headline** (concurrent-session ceiling, per-session KB, goros/session), the decision summary (per-hop latency slope, fan-out knee K, jitter, fairness), every plot inline, and — when a paramexp report dir is passed via `--paramexp <dir>` — the GP/ML findings (best config ± CI, η² parameter importance, knees, interactions, suggested-next). The capacity headline is fed by a `capacity`-group JSONL record (sessions/connected/receiving/per_session_kb/verdict); the producer is `qumo loadgen` (see the load-generator entry). The `bench-relay.yml` `full` job produces the dashboard automatically; the paramexp GP findings ship in the separate `paramexp` job artifact and fold in locally with `--paramexp`.
+
+- **Opt-in GC tuning for high-fan-out capacity (`internal/gctune`, `RELAY_GOGC`).** A fan-out relay holds a large, *stable* live set — one QUIC connection per subscriber, whose ~9 goroutines' stacks dominate RSS (measured: Go heap in-use ~200MB while RSS ~1.4GB at ~14K sessions; the gap is off-heap goroutine stacks). Every GC cycle re-scans all those stacks, so at the default `GOGC=100` the GC-scan CPU grows with connection count and becomes the scaling ceiling (measured on bare-metal 8 cores: default holds ~13–15K sessions; the collapse is GC, not memory exhaustion — RSS/session is flat ~127KB). Because the live set is legitimate and stable, collecting it less often costs only some peak RSS headroom while cutting GC CPU — setting `RELAY_GOGC` to 600–1600 reached **~18–20K concurrent subscriber sessions** on a bare-metal 8-core host (`BenchmarkRelay_ConnectionCarry`, slow-ramp), roughly doubling the default ceiling. The GC-scan mechanism was re-confirmed after the #313 poller consolidation (WSL2, 8-core, valid for shape not absolute ceilings): at 8K held sessions `GOGC=800` cut GC cycles 31→7 and GC CPU ~14%→~3% vs `GOGC=100` (same ~110 MB stacks scanned per cycle), for a higher heap goal (1.3 GB → 2.2 GB) — the documented peak-RSS-for-GC-CPU trade. #313 also lowered per-session goroutines to ~14–16 (from ~18–20), which only moves the GC wall up, so the bare-metal ceiling figures are conservative. The policy is **opt-in**: with neither `GOGC` nor `RELAY_GOGC` set the relay leaves the runtime default (100) untouched — no silent global behavior change; `GOGC` (the runtime's own knob) always wins and is never stomped; a valid positive `RELAY_GOGC` raises the target, and an invalid one warns and no-ops. **`GOMEMLIMIT` is deliberately not used** — capping memory for this large-stable-live-set forces constant GC into a death-spiral (measured: GOMEMLIMIT configs collapsed to ~15–18K while `GOGC=high` held 20K). The policy lives in a small `internal/gctune` package (pure `Resolve` + side-effecting `Apply`, unit-tested for env precedence) so the relay's startup path and the new `doctor` command share one source of truth.\n- **`qumo doctor` command — read-only runtime-config explainer.** Prints the effective GC target, every input (`GOGC`, `RELAY_GOGC`, `GOMEMLIMIT`), which input won and why, any warnings, and workload guidance — without mutating anything. Structured so future checks (sockets, QUIC, kernel) can slot in. Documented in `relay-config.example.env`.\n\n### Changed\n\n- **`internal/relay` metric sampling consolidated into one server-wide goroutine.** The relay previously spawned three long-lived poller goroutines per entity — `pollConnStats` (per native-QUIC connection), `pollSessionStats` (per session), and `pollCacheDepth` (per track distributor) — each a `for { <-ctx.Done(); <-ticker.C }` loop that sat parked on a 10–30s ticker. At high fan-out that is ~2 goroutines per session plus one per track (~40K+ goroutines at 20K sessions), and the dominant cost is **GC stack-scan**: every parked goroutine's stack is scanned on each GC cycle, so the measured wall at ~10K→20K sessions was off-heap goroutine-stack memory (RSS ~1.4GB vs heap ~200MB), not the heap itself. These are now replaced by a single `statsSampler` that holds three `sync.Map` registries (conns/sessions/tracks) and sweeps them from **one** goroutine per tick; entities register on start and deregister on teardown (connection-context `AfterFunc`, `serveSession` defer, and `ingest` defer respectively). Deregistration removes the registry entry (so the entity stops being sampled) and **queues** the Prometheus `DeleteLabelValues` onto the sampler goroutine, which drains the queue right after each sweep — so a series is never deleted concurrently with the sampler's own `Set` write, which would otherwise resurrect and leak it. A stale queued deletion whose addr was re-registered before it ran (ephemeral-port reuse) is skipped, so the new owner keeps its series. Metric semantics are unchanged (same gauges/histogram, same per-`remote`/`track` labels, same immediate first sample on register), except the per-addr `session_rtt_seconds` histogram series is now dropped on session end — the old per-session poller deleted only the two gauges and leaked one histogram series per departed session. All sampler methods are nil-safe so a minimally-constructed `Server` and standalone `trackDistributor`s (tests) skip sampling without guards. Per-addr gauge/histogram **cardinality** is unchanged and remains a separate follow-up.\n\n- **`internal/relay` groupCache is now a lock-free append-only vector (was copy-on-write).** Each `groupCache` published its frames as an immutable `atomic.Pointer[[]*moqt.Frame]` snapshot, and every `append` rebuilt the whole snapshot (`make(len+1)` + `copy`) before CAS-publishing it — O(N²) pointer copies and one slice allocation per frame across an N-frame group, all of it garbage the collector then had to reclaim. It is replaced by a fixed per-cache backing array of per-frame atomics (`slots []atomic.Pointer[moqt.Frame]`, sized `MaxFramesPerGroup`, allocated once and **reused** across group generations via the ring's `gcPool`) plus an atomic `count`. `append` now reserves a unique slot with a CAS on `count` (O(1), **zero allocation**) and Stores its clone; `next` remains a single atomic load. Concurrency and safety are preserved: appends stay concurrency-safe (the CAS reserves a unique slot, so no frame is lost or overwritten — `TestGroupCache_ConcurrentAppend` passes under `-race`), reads stay lock-free and data-race-free (distinct slots are distinct memory locations; `count`/slots touched only through atomics), and the reserve→Store window reads back as a nil frame, which the egress loop already treats as \"not ready, wait for the next broadcast\". This removes the per-append allocation and the O(N²) copy from the ingest hot path. Note the ingest/append path runs at publisher frame-rate (per track), not per-subscriber, so this reduces GC churn under high-ingest more than under pure fan-out.\n\n- **`qumo loadgen subscribe` / `sweep` — ramp flag deprecated (#327).** The `--ramp` flag is removed from `loadgen subscribe` and `loadgen sweep`. All subscriber sessions now launch in burst mode, relying on the exponential backoff in `dialWithRetry` (`DialBackoff`, 1s base, 30s cap, ±25% jitter) to spread out QUIC handshake load instead of a ticker-based ramp. The settle timeout is fixed at 30s (was `rampSecs + 10s`); safety deadline simplified to `hold + 60s`. Measured ceiling on single-host Windows: ~15K sessions (was ~8K with ramp), with the bottleneck shifting from the loadgen process to OS UDP socket buffer limits. Doc/usage strings updated to remove ramp terminology.
+
+- **deps: `github.com/qumo-dev/gomoqt` `v0.16.1` → `v0.16.2-0.20260718145816-7bc42f96aec4` (merged `main`).** Pulls two per-session goroutine reductions that land in the relay's fan-out path: the **lazy bitrate monitor** (gomoqt #342 — the `detectBitrateChanges` goroutine no longer starts eagerly per session; subscriber sessions that never open a probe stream spend zero goroutines on it, with `EstimatedBitrate` preserved via lazy `Stats()` sampling) and **caller-driven `SUBSCRIBE_UPDATE`** (gomoqt #345 — the per-subscription background update-reader goroutine is gone; `TrackWriter.Updated() <-chan struct{}` was replaced by the blocking `TrackWriter.ReadUpdate() (*SubscribeConfig, error)`). Drop-in for qumo: the relay never used `Updated()` (nor `TrackConfig()`), so no source changes were needed — the whole module builds, vets, and tests green on the new dependency. Together these remove ~2–3 goroutines per subscriber connection (~20 → ~17 measured at 500 sessions), reducing per-connection footprint; they do **not** move the memory-bound session ceiling (per-conn goroutine-stack memory dominates, quic-go). Pins a pseudo-version of `main` pending a tagged gomoqt release.\n\n### Removed\n\n- **In-process capacity benchmarks removed (`internal/relay/capacity_bench_test.go`: `BenchmarkRelay_ConnectionCarry`, `BenchmarkRelay_CapacityFrontier`).** Superseded by `qumo loadgen`. Running the relay and all N subscriber clients in one process meant client-side QUIC-handshake CPU capped the run (~3–6K on an 8-core host, collapsing past that), so these benchmarks measured the test harness rather than the relay and were meaningless at the session ceiling — a GOGC A/B confirmed GC was not the wall (relay GC CPU 12%→2% bought ~0 extra connections). The concurrent-session ceiling is now measured out-of-process by `qumo loadgen`, which pins/relocates the load away from the relay and reports the relay's own per-session cost via `/metrics`. The `benchResult` `capacity`-group fields that only these benchmarks populated are dropped with them; the capacity JSONL schema now lives solely in `internal/loadgen`.\n- **`internal/relay` egress poll-fallback timer (`NotifyTimeout`) removed entirely.** The subscriber egress wait-select (`egress`/`deliverGroup`) carried a 1ms poll fallback, so every parked subscriber goroutine fired a timer 1000×/sec regardless of media rate — ~5M spurious wakeups/sec at the ~5K-session ceiling, the dominant `selectgo`/timer cost in prior scheduler profiles (and it is relay code, not quic-go). Investigation showed the timer was **never the delivery mechanism** and — contrary to the \"safety net\" assumption — not load-bearing at all: the per-frame `broadcast()` notify (`groupRing.fill`) wakes egress for every real delivery (a new group advances the ring head synchronously in `reserve()` then broadcasts; the notify channel is cap-1 buffered and subscribed before the loop, closing the enter-select race; egress re-reads `head()` fresh each iteration, so coalesced signals never lose data). Proven by `TestRelayChain_NotifyOnlyDelivery` (integration): with the timer disabled, all 40 gap-spaced groups are delivered promptly (max inter-arrival ≈ the 50ms publisher gap, not clumped at a fallback), and `TestRelayChain_SlowSubscriber` confirms the fell-behind path is covered by the next group's broadcast. Removing the timer arm from both egress selects is behavior-preserving (same frames, same order) and eliminates the idle-wakeup cost outright rather than merely coarsening it — the select keeps its two cancellation arms (`d.done`, `twCtx.Done()`), so shutdown convergence (#286) is unaffected. Reduces CPU/scheduler pressure and tail latency under load. **Correction (measured after merge):** this also *raises* the single-node session hold ceiling — an end-to-end `BenchmarkRelay_ConnectionCarry` sweep (WSL2 8C, reproduced) shows the ceiling jump from **~4.5K to 10K+** sessions with the timer removed, and an isolation run (goroutine reductions with the timer *still present*) stayed at ~4.5K — so the ~5K wall was this 1ms poll saturating the scheduler (~5M timer wakeups/sec), **not** per-connection memory as an earlier note claimed (per-session RSS is unchanged at ~127KB across the sweep). The `NotifyTimeout` package var, its `RELAY_NOTIFY_TIMEOUT`/`RELAY_NOTIFY_TIMEOUT_MS` overrides, and the tests that pinned its value are all removed.\n\n### Fixed\n\n- **`internal/relay` correct TrackWriter/OpenGroup usage.** `deliverGroup` now passes a deadline-bearing context to `OpenGroupAt` (30ms `defaultGroupTimeout`). When the peer's `MAX_STREAMS` limit is reached, the call blocks up to the timeout (gomoqt's designed backpressure via `OpenUniStreamSync`), then drops the group (MoQ semi-reliable) instead of blocking the egress goroutine indefinitely. Previously, the unbounded block caused stream-object accumulation and a GC-driven degradation spiral. `cmd.go` reverts `MaxIncomingUniStreams`/`MaxIncomingStreams` from `1<<20` back to quic-go defaults (~100) — the `1<<20` value (from #292) removed the backpressure entirely, which was the wrong fix; the timeout context is the correct one.\n\n### Fixed\n\n- **`tools/paramexp` post-merge review fixes (retro-review of #297/#298).** Six correctness bugs found by adversarial review of the merged code (same class as #294's GP-math bugs — CI-green but subtle math the tests asserted too little to catch):\n  - **Discrete-space selection (#298-1,2,3):** `SuggestedNext` could return duplicate configs and recommend already-measured points; `BayesianScheduler` could prematurely EOF in small discrete spaces (random-search argmax kept decoding to occupied cells). Both now use `model.SelectByAcquisition`, which enumerates the full discrete candidate set (guaranteed to find novel points if any remain) or random-searches continuous spaces with decoded-vector dedup.\n  - **Sample variance (#297-4):** `aggregateMetrics` used population variance (÷N) for inferential outputs (CIs, indistinguishable test, stability CV) — anti-conservative at small N (the replicate regime N=2–5). Switched to sample variance (÷N−1) and replaced the hardcoded z=1.96 with a `TCritical(df)` t-table (t₀.₉₇₅,df for df=1..30, z beyond). The \"95% CI\" labels now actually hold at small N.\n  - **Flaky-vector dominance (#297-5):** a config with only 1/N successful replicates got `Variances=0` → the GP treated it as near-noise-free and bent the surface through it (the *opposite* of \"downweight high-variance\"). `FitGP` now borrows the median noise of well-replicated points for N=1 configs.\n  - **`Fit` measuredNoise leak (#297-6):** `Fit` didn't reset `measuredNoise` (a `FitReplicated`→`Fit` reuse would apply the previous run's per-point noise to the new fit). Now resets at the top, matching `FitReplicated`.\n\n### Added\n\n- **`tools/paramexp` richer relay metric: jitter.** The fan-out bench now reports `jitter_ms` (sample stdev of per-group latencies) alongside loss/p99/mbps/fairness. The paramexp `bench.sh` harness emits it so the GP can model jitter as part of the landscape — a brief-listed metric that was previously missing.\n\n- **Relay performance-landscape sweep in CI (`bench-relay.yml`).** A new `paramexp` job runs the Bayesian-optimization sweep of relay tuning knobs (`example/relay/params.yaml`: ring size / frame / notify-timeout × fan-out K) nightly and on-demand. Each vector runs the integration fan-out bench via `bench.sh`; the GP + analysis produce a report (knees, importance, interactions, stability, suggested-next) answering \"which settings serve stable high-performance large fan-out?\" Uploads `paramexp_relay.db` + the report as the `relay-paramexp` artifact. `px_samples`/`px_replicates` workflow inputs tune the scale; the `bench.sh` harness is hardened (tolerant of failed/flaky vectors — degrades to a worst-case record instead of aborting the sweep).\n\n- **`tools/paramexp` Stage 2 — uncertainty-driven adaptive sampling (Bayesian optimization).** A `BayesianScheduler` (`scheduler: bo`) replaces the neighbor-of-best hill-climb: round 0 is an LHS seed batch (broad coverage), then each round fits the GP posterior and picks the next point(s) by maximizing an **acquisition function** — Expected Improvement (`ei`, default), Upper-Confidence-Bound (`ucb`, exploration knob κ), or predictive variance (`variance`, pure-exploration surface mapping). Acquisition is maximized by random search over `[0,1]^D` with decode-level dedup (so the discrete/categorical collision case never re-measures a known vector). Supports a batch (`bo_batch`) via greedy exclusion. CLI `--scheduler bo --acquisition ucb`; flat yaml knobs `bo_rounds`/`bo_batch`/`bo_acquisition`/`bo_kappa`/`bo_xi`. The `Scheduler` interface is unchanged, so the CLI driver loop is untouched.\n- **`tools/paramexp` acquisition functions + shared GP fit.** `model.NewExpectedImprovement`/`NewUpperConfidenceBound`/`NewPredictiveVariance`, `model.MaximizeAcquisition` (random-search argmax with exclusion), and `model.AcquisitionFor` (named resolver). `model.FitGP(obs, objective, opts)` dedups the fit logic (heteroscedastic when replicates carry variance) and replaces the inlined `cmd.fitGP`. `model.LCG` is now exported (reproducible random search).\n- **`tools/paramexp` suggested-next measurements.** `analysis.SuggestedNext(gp, enc, acq, n)` returns the top-N unmeasured points the model most wants to sample — the brief's \"what should we measure next.\" The report renders a \"Suggested next measurements\" section (text + JSON) with each point's predicted mean/std and acquisition value.\n\n### Added\n\n- **`tools/paramexp` replication + variance (statistical rigor).** Each parameter vector can now be run N times (`replicates:` config / `--replicates`); variance becomes first-class. `storage.Observations` aggregates replicates in Go (per-metric means + population variance + N), so analysis runs on the de-noised means. The GP gains a heteroscedastic `FitReplicated(X, yMean, yVar)` that uses the measured per-point variance as observation noise (the global noise hyperparameter stays as a floor) — high-variance configs are downweighted automatically and `var/N` shrinks as N grows. New analysis: `StabilityReport` flags configs whose objective CV exceeds `UnstableCV` (0.15), and `IndistinguishableFromBest` returns the best config plus the set whose CI overlaps it (the \"can't tell apart from best\" group). Reports now show `mean ± 95% CI (n=N)`, an unstable-configs section, best-vs-peers, and a caption explaining that η² (variance-explained) and GP 1/ℓ² (local relevance) measure different things.\n- **`tools/paramexp` → relay integration.** The relay fan-out benchmark is now sweepable by paramexp: `RELAY_RING`/`RELAY_FRAME` knobs in `spinRelay` and a `RELAY_NOTIFY_TIMEOUT_MS` knob in `fanoutSweepRun` (integration tests), plus `example/relay/{params.yaml,bench.sh}` — a self-contained harness that runs `BenchmarkRelayChain_FanoutSweep` per vector and emits one JSON line of loss/p99/mbps/fairness. This is the brief's \"Relay Integration\" layer; the full sweep belongs on the nightly Linux bench job.\n\n### Fixed\n\n- **`tools/paramexp` variance NaN.** `aggregateMetrics` used the numerically unstable `E[x²]−E[x]²` form, which goes slightly negative for near-constant (deterministic-bench) data and yielded `sqrt(NaN)` CIs — which in turn broke `report.json` marshaling (silent empty file). Switched to the two-pass `Σ(x−mean)²` form (never negative) and surfaced the marshal error instead of swallowing it.\n\n### Changed\n\n- **`tools/paramexp` package layout simplified (11 → 7 packages).** Folded the small leaf and coupled-pair packages into their natural homes to reduce over-decomposition: `encoding` → `experiment` (`experiment.Encoder`/`NewEncoder`; the encoder is the numeric view of the domain types, and everyone already imported `experiment`, so this also removes an import edge); `provenance` → `storage` (`storage.Run`/`Capture`/`Abs`); `visualization` → `report` (SVG helpers are now unexported, since only `report` ever used them); `scheduler` → `sampler` (`sampler.Scheduler`/`SchedulerState`/`StaticScheduler`). Final layout: `experiment`, `storage`, `runner`, `sampler`, `model`, `analysis`, `report`, plus the thin `cmd/paramexp`. The distinct heavy concerns (GP math in `model`, statistics in `analysis`, SQL in `storage`, exec in `runner`) stay separate.\n\n### Fixed\n\n- **`tools/paramexp` `report` package was never committed (#294 regression):** the module `.gitignore` rule `report/` — intended for the generated report *output* directory — also matched the `report/` source *package*, so `report/report.go` was silently excluded from #294. `cmd/paramexp` imports it, so `go build ./...` in `tools/paramexp` failed on `main` (CI didn't catch it because the qumo root `go test ./...` does not traverse the separate `tools/paramexp` module). The output directory is renamed to `report_out/` (default `--output`, gitignored) so it no longer collides with the `report` package, which is now tracked.\n\n- **`tools/paramexp` GP surrogate math (post-merge review of #294):**\n  - **Signal variance σ_f² was optimized but never applied to the kernel** (`model`): `K`, `k*`, and `k(x,x)` were built from the unit-variance RBF correlation with no σ_f² factor, so θ[D] was a dead search axis, `Hyperparameters().SignalVar` reported a value that never influenced the fit, and predictive variance was implicitly locked to σ_f²=1. The kernel correlation is now scaled by σ_f² at every build site via a `cov` helper.\n  - **Log-marginal-likelihood complexity term had the wrong coefficient** (`model`): `-logdet` was used where the GP LML requires `-0.5·log|K|` (`chol.LogDet()` returns `log|K|`). The doubled model-complexity penalty biased the optimizer toward shorter length-scales (rougher, overfitting posteriors) on every fit. Now `-0.5·logdet`.\n  - **`DetectKnees` missed the common concave/diminishing-returns case** (`analysis`): the single-sign `xNorm - yNorm` criterion only fired when the normalized curve lay below the diagonal, so a concave-increasing sweep (the default `throughput_fps` objective) returned no knee. Now uses `|yNorm - xNorm|` with decreasing-curve mirroring, finding the elbow for both concave and convex sweeps (the diminishing-returns knee on `workers` is now detected, where it previously was not).\n  - **`DetectRegressions` attribution was non-deterministic** (`analysis`): two independent map range loops could pair a `Param` from one key with a `Value` from another, varying across runs. `Regression` now carries the full offending `Vector` (deterministic, no information loss).\n- **`tools/paramexp` flat telemetry no longer contaminates metrics** (`runner`): `toMetricSet` now excludes the recognized telemetry keys (`cpu_pct`/`gc_pause_ms`/`syscalls`/`retransmits`/`rss_mb`/`goroutines`) so a benchmark emitting the flat telemetry shape does not pollute `RankImportance`/GP-fit/`--objective`. The nested `\"telemetry\"` shape was already clean.\n- **`tools/paramexp` in-memory storage DSN no longer drops pragmas** (`storage`): `:memory:` previously stripped `foreign_keys=ON` and did not pin the connection pool, so modernc/sqlite could route a query to a different connection's empty private DB. Pragmas now apply to all DSNs and `:memory:` pins `SetMaxOpenConns(1)`.\n\n### Changed\n\n- **`tools/paramexp` rewritten as a scientific performance-landscape framework.** The flat `package main` MVP is restructured into importable library packages (`experiment`, `encoding`, `provenance`, `runner`, `storage`, `sampler`, `model`, `analysis`, `scheduler`, `visualization`, `report`) plus a thin `cmd/paramexp` CLI — generic for any black-box benchmarkable system. Key additions:\n  - **Gaussian-process surrogate (`model`):** anisotropic RBF kernel with ARD length-scales, fit by maximizing the log-marginal-likelihood (multistart random search + Nelder-Mead polish via `gonum/optimize`, with a median-heuristic fallback), Cholesky-based solve via `gonum/mat`, adaptive-jitter numerical-stability handling, and a per-metric `MultiOutput`. Predict returns mean **and** predictive std (uncertainty) — the framework's first surrogate model and the foundation for Bayesian optimization.\n  - **Numeric parameter encoding:** parameters are now typed (continuous / discrete-ordinal / categorical) and mapped to a normalized `[0,1]^D` space the sampler and GP operate in; the runner still receives original string values. Continuous `min`/`max` and a continuous `jitter` dimension are demonstrated in `example/params.yaml`.\n  - **GP-derived analysis + viz:** `analysis.GPSensitivity` ranks dimensions by `1/ℓ²` (shorter length-scale ⟹ more sensitive); the report draws per-parameter response surfaces (mean ± 2σ band) and a 2-D contour over the two most-sensitive parameters.\n  - **Full provenance + retry + telemetry:** SQLite schema gains `runs` (git revision via `debug.ReadBuildInfo`, machine info, redacted env, config hash), per-retry `attempts`, and a `telemetry` table for resource snapshots (cpu/gc/retransmits/rss/goroutines) the benchmark may emit (feeds later bottleneck attribution). The runner enforces a real context timeout and retries with backoff.\n  - **Bug fixes from the MVP:** `DetectKnees`/`RankImportance` no longer hardcode `throughput_fps` (they honor `--objective`); `DetectRegressions` is no longer dead code and populates param/value; local `min`/`max` shadows of Go 1.21+ builtins removed; `Observations(includeFailures)` makes failed runs analyzable.\n  - New dependency: `gonum.org/v1/gonum` (pure Go, no CGO — consistent with the `CGO_ENABLED=0` posture). Sobol sampling is deferred to a roadmap phase-2 item: a first direction-number recurrence was not a true `(0,m)`-net (it degenerated to covering half the space), so `sampler.Sobol` falls back to LHS rather than ship a subtly-broken generator.\n\n### Added\n\n- **Automated parameter exploration framework (`tools/paramexp`):** A generic, black-box parameter optimization tool for any benchmarkable system. Samples a discrete parameter space via Latin Hypercube Sampling + adaptive neighbor exploration, runs benchmarks (params as `PARAM_<NAME>` env vars, JSON stdout metrics), stores every experiment in SQLite, then analyzes: knee points (Kneedle), parameter importance (η²), pairwise interactions, regressions, and generates SVG plots + JSON/text reports. One dependency: `modernc.org/sqlite` (pure Go).\n\n### Fixed\n\n- **Subscriber egress teardown hang (`internal/relay`, #286):** `trackDistributor.egress` now routes every non-delivery loop path through a single wait/cancellation `select` (on `twCtx.Done()`/`d.done`). Its fell-behind skip and cache-miss paths previously iterated via bare `continue` without consulting those signals, so a subscriber that fell behind could blind-spin past cancellation and never return when the subscriber disconnected or the relay shut down. That pinned gomoqt's stream-handler `WaitGroup`, so `Session.CloseWithError`'s `wg.Wait()` hung, the connection was never removed from the connManager, and `Server.Shutdown`/`Close` hung on `<-connManager.Done()` — the multi-subscriber teardown hang and churn-time goroutine leak. The cancellation signal already reached qumo (gomoqt's per-conn `goAway` force-closes the connection on ctx expiry, cancelling the subscribe-stream context `twCtx` derives from); qumo only needed to converge on the one select it already had. The per-group delivery body is extracted into `deliverGroup`. No gomoqt change required.\n\n### Changed\n\n- **Session-end handler cleanup moved to `newRelayHandler` (`internal/relay`):** the `context.AfterFunc(sess.Context(), cancel)` registration moved out of `installRoute` (where it needed a nil-session-context guard for test fixtures) into `newRelayHandler`, where the session is guaranteed non-nil. `installRoute` no longer touches `session.Context()`. No behavior change — every production handler still gets the cleanup exactly once via `newRelayHandler`.\n\n### Added\n\n- **Automation-friendly relay-chain benchmark suite (`internal/relay`, `scripts`, #284):** The relay-chain benchmarks emit machine-readable JSONL results (`BENCH_RESULTS_DIR`), including a 7-number latency summary (min/p25/median/p75/p95/p99/max) per config so the report can draw distribution plots. The fan-out sweep honors a `FANOUT_KS` env override. A new `TestRelayChain_ReconnectStorm` characterizes goroutine/heap behavior under subscriber churn (runs in the bench workflow via `RUN_STORM=1`, skipped in the per-PR CI gate). A zero-dependency Deno/TS report generator (`scripts/relay_bench_report.ts`) turns the JSONL into CSV + SVG plots: line charts with least-squares regression fits (per-hop latency slope, fan-out latency trend with R²), box-and-whisker plots of the latency distribution per K, a 4-panel overview (latency·loss·throughput·heap vs K), and a `derived.csv` of decision-grade numbers (per-hop ms/hop slope, fan-out knee K). One workflow runs it: `bench-relay.yml` (nightly full sweep K=1..128 + load + object-size + soak, plus an on-demand `workflow_dispatch` with a 30m/1h/3h/6h soak-duration choice). The per-PR CI integration gate skips the heavy `TestRelayChain_*` durability tests (`-skip='RelayChain'`); they run in the relay-bench workflow, their intended home.\n- **Route recovery on incumbent-end (`internal/relay`, #279):** A route-election loser is now retained as a per-`BroadcastPath` alternate instead of being cancelled, and is promoted to the active route when the incumbent's announcement ends. This fixes the publisher-mobility failure mode where a candidate rejected during the overlap was permanently discarded, leaving the path stranded once the incumbent was retracted. Promotion fires only on a definitive announcement-end (asynchronously, since `Announcement.end()` runs callbacks inline), so it introduces no route oscillation. At most one alternate is retained per path, kept by route quality (`isBetterRoute`) rather than recency, and promotion is serialized with route election under a single lock so a promotion can never clobber a freshly-elected route. New metrics: `qumo_relay_routes_retained`, `qumo_relay_route_promotions_total`. The robust fix for autonomous split-brain (two live publications coexisting without coordination) remains a future generation/epoch fence.\n- **Graceful migration / GOAWAY escape hatch (`internal/relay`, #280):** Wired `MOQDialer.OnGoaway` so a GOAWAY from an upstream peer relay is observed (`qumo_relay_peer_goaway_received_total{redirect}`) and logged instead of silently dropped, and plumbed `MOQServer.NextSessionURI` from the `GOAWAY_REDIRECT_URI` env so graceful shutdown advertises a redirect. GOAWAY is intentionally a session-level graceful-shutdown primitive (gomoqt exposes it as `Server.NextSessionURI` on `Shutdown` and `Dialer.OnGoaway`), which is what this wiring uses; publication relocation is handled by route/subscription migration (#279), not by GOAWAY.
 
 ### Changed
 
-- **Session-end handler cleanup moved to `newRelayHandler` (`internal/relay`):** the `context.AfterFunc(sess.Context(), cancel)` registration moved out of `installRoute` (where it needed a nil-session-context guard for test fixtures) into `newRelayHandler`, where the session is guaranteed non-nil. `installRoute` no longer touches `session.Context()`. No behavior change — every production handler still gets the cleanup exactly once via `newRelayHandler`.
-
-### Added
-
-- **Automation-friendly relay-chain benchmark suite (`internal/relay`, `scripts`, #284):** The relay-chain benchmarks emit machine-readable JSONL results (`BENCH_RESULTS_DIR`), including a 7-number latency summary (min/p25/median/p75/p95/p99/max) per config so the report can draw distribution plots. The fan-out sweep honors a `FANOUT_KS` env override. A new `TestRelayChain_ReconnectStorm` characterizes goroutine/heap behavior under subscriber churn (runs in the bench workflow via `RUN_STORM=1`, skipped in the per-PR CI gate). A zero-dependency Deno/TS report generator (`scripts/relay_bench_report.ts`) turns the JSONL into CSV + SVG plots: line charts with least-squares regression fits (per-hop latency slope, fan-out latency trend with R²), box-and-whisker plots of the latency distribution per K, a 4-panel overview (latency·loss·throughput·heap vs K), and a `derived.csv` of decision-grade numbers (per-hop ms/hop slope, fan-out knee K). One workflow runs it: `bench-relay.yml` (nightly full sweep K=1..128 + load + object-size + soak, plus an on-demand `workflow_dispatch` with a 30m/1h/3h/6h soak-duration choice). The per-PR CI integration gate skips the heavy `TestRelayChain_*` durability tests (`-skip='RelayChain'`); they run in the relay-bench workflow, their intended home.
-- **Route recovery on incumbent-end (`internal/relay`, #279):** A route-election loser is now retained as a per-`BroadcastPath` alternate instead of being cancelled, and is promoted to the active route when the incumbent's announcement ends. This fixes the publisher-mobility failure mode where a candidate rejected during the overlap was permanently discarded, leaving the path stranded once the incumbent was retracted. Promotion fires only on a definitive announcement-end (asynchronously, since `Announcement.end()` runs callbacks inline), so it introduces no route oscillation. At most one alternate is retained per path, kept by route quality (`isBetterRoute`) rather than recency, and promotion is serialized with route election under a single lock so a promotion can never clobber a freshly-elected route. New metrics: `qumo_relay_routes_retained`, `qumo_relay_route_promotions_total`. The robust fix for autonomous split-brain (two live publications coexisting without coordination) remains a future generation/epoch fence.
-- **Graceful migration / GOAWAY escape hatch (`internal/relay`, #280):** Wired `MOQDialer.OnGoaway` so a GOAWAY from an upstream peer relay is observed (`qumo_relay_peer_goaway_received_total{redirect}`) and logged instead of silently dropped, and plumbed `MOQServer.NextSessionURI` from the `GOAWAY_REDIRECT_URI` env so graceful shutdown advertises a redirect. GOAWAY is intentionally a session-level graceful-shutdown primitive (gomoqt exposes it as `Server.NextSessionURI` on `Shutdown` and `Dialer.OnGoaway`), which is what this wiring uses; publication relocation is handled by route/subscription migration (#279), not by GOAWAY.
+- **O(1) broadcast notification (`internal/relay`).** `trackDistributor` no longer fans out new-data notifications through a per-subscriber `[]chan struct{}` under an `RWMutex` — an O(N) channel-send loop on every delivered group. Replaced with `broadcastNotify`: an atomic sequence number plus a close-and-recreate channel, so `broadcast()` is O(1) with no per-subscriber state and no lock contention. Each egress goroutine reads an atomic `(seq, ch)` snapshot and detects new data by sequence comparison. Also closes a missed-wakeup window in `deliverGroup`'s wait: a notify landing while `wait()` read the channel fresh inside the select could previously delay an in-flight trickle frame until the next broadcast (data was never lost — `frames()` is level-triggered); a per-delivery `lastSeen` seq guard now mirrors the egress loop's check. New `BenchmarkBroadcastNotify_Listen` guards the read-side primitive.
+- **Batched Prometheus egress counter (`internal/relay`).** `deliverGroup` now accumulates egress bytes in a local `int64` across a group's frames and flushes a single `Counter.Add` per group instead of one per frame, cutting atomic-CAS operations on the shared `metricRelayEgressBytesTotal` counter from O(frames) to O(groups) per subscriber delivery. The flush also runs on the mid-group `WriteFrame`-error path so bytes already handed to QUIC stay counted (metering-accurate). Per-session `addEgress` accounting remains per-frame — it is per-session, not a shared cross-subscriber counter, so it is not a contention source.
 
 ## [v0.4.0] - 2026-07-08
 
@@ -139,6 +174,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`internal/loadgen` capacity tally is now race-free (`runCarry`).** The per-session `connected []bool` / `receiving []int` slices were written by the subscriber goroutines and read by the main goroutine after `drain(&wg, 20s)` — but `drain` returns on its safety timeout too, so a subscriber wedged past the deadline (despite `subCancel`) could still be writing its slot while the main goroutine read it (a `-race` data race, latent because the timeout essentially never fires). Replaced the two shared slices with `atomic.Int64` tallies (`connCount`, already the ramp-settle signal, doubles as the connected count; a new `receivingCount`), so the post-drain read is defined regardless of a straggler. `subscribeOne` now returns just the frame count (connected is tracked via `connCount`). No behavior change to the reported numbers.
 - **Playground pull API validates URL + broadcast path (`internal/playground`):** `/api/pull` now rejects URLs that are not `rtsp://`/`rtspd://` (or lack a host) and broadcast paths that aren't a `/`-prefixed, URL-safe-charset, length-bounded string — defense-in-depth against SSRF and log-injection (moqt only requires a leading `/`, so a path with spaces/control chars/shell metacharacters would otherwise be logged verbatim and used as a routing key). Private/LAN hosts remain intentionally allowed — pulling from an IP camera on the local network is the feature's primary use case. The playground is a local dev tool; its `/api/pull` must not be reachable in a publicly-hosted deployment.
 - **Embedded version no longer carries a `-dirty` suffix (`magefiles`, `playground`):** `mage build` computed the git version via `git describe --dirty` *after* `WebBuild`, which overwrites the committed `playground/dist/index.html` placeholder on every build — so the version baked into the binary (and reported by `qumo version`) always carried `-dirty`, which would have shipped in the release string (e.g. `v0.4.0-dirty`). The version is now captured *before* `WebBuild`, so a build from a clean tag checkout yields a clean `v0.4.0`. `playground/deno.lock` was also under-resolved (the `av-nodes@0.10.4` entry was missing its `dependencies` edge), so every Deno run re-added it and dirtied the tree — the committed lock now matches what Deno produces.
 - **Quieter `mage web` dev console (`playground`):** `config.ts` no longer fires a `GET /config` 404 on every Vite-dev load (the dev server doesn't serve `/config`; only the built `qumo playground` binary does) — it skips the fetch when `import.meta.env.DEV` and reads `import.meta.env` directly, with the built UI unchanged. Also removed the left-in first-10-frames hex-dump diagnostic (`[Subscribe] video #N … hex=[…]`) that flooded the console on each subscribe.
@@ -186,391 +222,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **RTMP listener hardened against handshake stalls and bad clients (`internal/rtmp`):** `Listener.Accept` now runs the RTMP handshake under a read deadline (default 10s), so a client that connects and then stalls can no longer hold the accept loop and block every other RTMP connection. Handshake failures (a stalled, half-open, or otherwise-misbehaving client) are closed and skipped instead of returned as an Accept error — previously a single failed handshake took down the whole ingest server, since server accept loops treat any Accept error as fatal. Skipped handshakes are logged at debug level for observability.
 - **Bumped `golang.org/x/crypto` to v0.53.0 (`go.mod`):** Clears a set of `golang.org/x/crypto/ssh` HIGH-severity CVEs (CVE-2026-39829, -39830, -39832, -39835, -42508, -46595, -46597) present in the previously-resolved v0.51.0, which the SHA-pinned Trivy image scan now reports end-to-end — that scan only became functional once `docker.yml` builds are loaded into the local Docker daemon. `govulncheck` confirms the vulnerable `ssh` package is not reached by qumo's code, but bumping the module removes the finding at the source. Also pulls `golang.org/x/sys` → v0.46.0 and `golang.org/x/text` → v0.38.0.
 - **CORS origin check hardened (`internal/ingest`):** `WebTransportHandler.CheckOrigin` no longer accepts every origin for the RTMP and RTSP ingest servers. Origins are validated against a comma-separated `CORS_ALLOWED_ORIGINS` environment variable (supporting a `*` wildcard), with a same-origin fallback, closing a WebTransport cross-site request forgery risk.
-- **TLS configuration hardened (`internal/relay`):** Removed `InsecureSkipVerify` from the relay dialer, enforcing proper TLS verification on outgoing connections to prevent Man-in-the-Middle attacks.
-- **Removed dynamic TLS generation:** Removed the capability to dynamically generate self-signed TLS certificates in production binaries when `INSECURE=true`. Test suites have been updated to utilize dynamically generated temporary certificates.
-- **Dependency and image vulnerability scanning (`.github/workflows`):** Added a
-  `govulncheck` job to `ci.yml` that runs on every PR/push and fails when a dependency
-  carries a known Go vulnerability, plus a new `nightly.yml` that re-scans `main` on a
-  daily schedule to catch CVEs disclosed after a dependency was already merged. Added a
-  SHA-pinned Trivy scan to `docker.yml` (`severity: CRITICAL,HIGH`, `ignore-unfixed`,
-  `exit-code: 1`) over the locally-built image. Trivy is pinned to commit `57a97c7`
-  (`trivy-action@0.35.0`) rather than a mutable tag: `trivy-action` tags were
-  force-pushed in the March 2026 supply-chain attack (CVE-2026-26189 / GHSA-69fq-xp46-6x23).
-
-### Performance
-
-- **Replaced `time.After` with `time.Timer` inside loops:** Removed `time.After` inside `for` loops in `internal/relay/handler.go` and `internal/ingest/handler.go`, eliminating allocations and significantly lowering GC footprint and latency.
-- **Optimized `time.After` usage (`internal/relay`):** Replaced `time.After` in busy loops within `handler.go` with a reusable `time.NewTimer` to prevent memory allocations per iteration, reducing garbage collector overhead.
-- **Optimized FLV AVC parsing (`internal/ingest`):** Improved `ParseAVCConfig` by implementing a safe, two-pass parsing algorithm that dramatically reduces garbage collector stress by removing slice allocations within SPS/PPS loops.
-
-### Added
-
-- **Demo UI foundation (`solid-deno`):** Turned the unmodified Vite+Solid template into a usable AV streaming demo. Defined all previously-undefined board CSS classes and made the layout responsive — a 2-column board grid that stacks on narrow viewports with video previews scaling to their track — plus light/dark theme tokens (#133). Renamed the misspelled `Dashborad` component to `Dashboard`, set a real `<title>`, and replaced the template README with demo run instructions (`mage cert` / `mage relay` / `mage web`) (#132). Added a live WebTransport connection-status indicator (connecting → connected → closed/failed) that also surfaces a mid-session relay disconnect — distinguishing a graceful close from a transport error via `Session.closed` — with a user-facing reason and cert-hash remediation (missing or malformed) instead of a silent `console.warn` (#134). `VITE_CERT_HASH` is now validated (exactly 64 hex chars) so a malformed value can't silently produce a wrong pin. Bumped `@qumo/moq` to `^0.16.1`.
-- **Demo scenario selector + working echo + RTMP/RTSP subscribe (`solid-deno`):** Added a segmented scenario picker (Echo / RTMP ingest / RTSP ingest) and a single shared, editable, shareable broadcast path (`?scenario=` + `?path=` deep links, copy-path / copy-link buttons), replacing the hidden `/${username}` path that broke the round-trip out of the box (#137). The MoQ-MoQ echo now works end-to-end (publish in one peer, subscribe in another at the same path). RTMP and RTSP ingest scenarios are subscribe-only (publish board hidden) against their own WebTransport origins (`:4443` / `:4543`), each showing a copy-pasteable ffmpeg push command feeding `/live/demo` (#141). Switching scenarios reconnects via a keyed remount that closes the prior session. Removed the dead `useBroadcastPath`/`UserProvider` path plumbing; lifted cert-hash parsing into `src/cert.ts`.
-- **Local multi-scenario demo environment (`docker/docker-compose.demo.yml`, `magefiles`):** Brings the relay (MoQ-MoQ echo) and the RTMP/RTSP ingest origins up together so every demo pipeline is testable locally without reconfiguring. The RTMP/RTSP servers are standalone WebTransport origins (they do not dial the relay), so all three share one `mage cert` cert and a single pinned `VITE_CERT_HASH`. Adds a `mage demo:` namespace (`up`/`push`/`down`/`logs`/`ps`) — `demo:up` generates the cert only if missing — plus opt-in ffmpeg test-pattern pushers (compose profile `push`) feeding `/live/demo`. Also corrects stale `INSECURE` Docker docs (auto-self-sign was removed; mount certs / use `mage cert`).
-- **RTSP Ingest Server (`internal/ingest`, `internal/rtsp`):** Implemented a complete RTSP 1.0 ingest server to bridge IP cameras and traditional encoders to MoQT.
-  - *Protocol Stack*: Custom RTSP implementation including request/response parsing, interleaved binary framing over TCP, and SDP/RTP support.
-  - *Media De-packetization*: H.264 (FU-A fragmentation) and AAC (mpeg4-generic, RFC 3640) RTP de-packetizers reconstruct NAL units and audio access units for MoQT delivery.
-  - *CLI Command*: New `qumo rtsp` command to start a standalone RTSP-to-MoQT bridge.
-  - *Mage Targets*: Added `rtsp:serve` for running the server, `rtsp:stream` for pushing test patterns with ffmpeg, and `rtsp:demo` for quick environment setup.
-- **Nomad LocalResolver simulation (`docker/docker-compose.nomad.yml`, `docker/nomad/`):**
-  A real single-region Nomad dev cluster (2 hubs + 2 edges) that exercises the
-  `LocalResolver` (Nomad native service discovery) path — edges discover local
-  hubs via Nomad and connect. Verifiable via the `qumo_relay_peers_connected`
-  metric. Manual simulation only; no automated integration tests. Cross-region
-  hub discovery (the `RemoteResolver`/`/peers` path) is explicitly out of scope.
-- **Peer resolver interface (`internal/relay/resolver.go`):** New `PeerResolver`
-  interface with `ResolvePeers(ctx, query)` method, `ResolvedPeer` and `PeerQuery`
-  types. Enables pluggable peer discovery backends.
-- **CredentialClient (`internal/relay/credential_client.go`):** Optional backend
-  integration for publisher credential authentication and usage metering.
-  When `QUMO_CREDENTIAL_URL` is set the relay authenticates each WebTransport
-  ANNOUNCE by subscribing to a well-known `"auth"` MoQ track on the announced
-  broadcast path (5 s timeout), reading the JWT from the first frame, and
-  calling `POST /v1/credentials/introspect`. Announcements with missing or
-  rejected credentials are silently dropped. Valid credentials are cached until
-  the server-supplied `revalidate_after` time; concurrent requests for the same
-  JWT are coalesced via `singleflight`; expired cache entries are swept on each
-  write. A `broadcastSession` UUID is minted per accepted announcement and
-  cumulative `gateway.ingress_bytes` / `gateway.egress_bytes` totals are
-  reported to `POST /v1/usage/events` every 30 s and on session close.
-  New env vars: `QUMO_CREDENTIAL_URL` (base URL) and `QUMO_RELAY_TOKEN` (shared
-  bearer token). When both vars are absent the relay behaves as before (open mode).
-- **LocalResolver (`internal/relay/local_resolver.go`):** Within-cluster peer
-  discovery via Nomad native service discovery API. Configured via `LOCAL_RESOLVER_ADDR`,
-  `LOCAL_RESOLVER_SERVICE_NAME`, and `LOCAL_RESOLVER_INTERVAL` environment variables.
-- **RemoteResolver (`internal/relay/remote_resolver.go`):** Cross-cluster peer
-  discovery via an external traffic resolver API (e.g. qumo-enterprise).
-  Configured via `REMOTE_RESOLVER_URL`, `REMOTE_AUTH_TOKEN`,
-  `REMOTE_RESOLVE_INTERVAL`, and `REMOTE_TLS_ENABLED`.
-- **In-process discovery integration test (`internal/relay`, build tag `integration`):**
-  Stands up a real edge + hub relay and a fake Nomad service catalog, asserting the
-  edge discovers the hub via `LocalResolver` and completes a real QUIC/MOQT handshake.
-  Kept out of the default `go test ./...` unit run; gated by a dedicated `Integration`
-  CI job (`go test -tags=integration`).
-
-### Changed
-
-- **Renamed `docker-compose.topology.yml` → `docker-compose.static.yml`:** clarifies
-  that it wires peers via static `PEERS` (no discovery), distinct from the new
-  `docker-compose.nomad.yml` which exercises Nomad service discovery.
-- **Publisher vs. peer-relay session split (`internal/relay/server.go`):** Native
-  QUIC sessions (relay peers, ALPN `moqt`) are now handled by a dedicated
-  `relayPeer` path that bypasses credential auth. WebTransport sessions
-  (publishers and browsers, ALPN `h3`) go through `Relay` and require credential
-  auth when `QUMO_CREDENTIAL_URL` is set. This distinction is wired in `Server.init`
-  by setting separate handler funcs on `MOQServer.Handler` vs `WebTransportHandler`.
-- **`group_cache.fill` onFrame callback (`internal/relay/group_cache.go`):**
-  The `onFrame` parameter changed from `func()` to `func(n int)` where `n` is
-  the frame's byte length (0 on the group-completion call). This lets callers
-  accumulate ingress byte totals in the same pass without re-reading cached frames.
-- **Relay topology (`internal/relay/server.go`):** Updated peer discovery topology.
-  Edges connect to all local hubs (load-balanced). Hubs connect only to remote
-  hubs via the remote resolver (no local hub↔hub connections).
-- **`internal/relay/cmd.go`:** Replaced `BOOTSTRAP_URLS`/`BOOTSTRAP_INTERVAL` env
-  vars with `LOCAL_RESOLVER_*` and `REMOTE_*` resolver configuration.
-- **`main.go`:** Removed `qumo bootstrap` command.
-- **RemoteResolver `/peers` role handling (`internal/relay/remote_resolver.go`):**
-  Stopped sending `?role=hub` and dropped the client-side re-filter on the response
-  `role` field, ahead of the control-plane registry going hub-only
-  (foalk-inc/qumo-deploy#535). A peer's role now falls back to the queried role only
-  when the response omits it. Prevents silently dropping every hub once the registry
-  stops returning `role`. (#93)
-- **CI Go version source and concurrency (`.github/workflows`):** Switched `setup-go`
-  in `ci.yml`, `release.yml`, and `nightly.yml` from a hardcoded `go-version: '1.26'` to
-  `go-version-file: go.mod`, making `go.mod` the single source of truth (matching
-  `bench.yml`). Added `concurrency` groups with `cancel-in-progress: true` to `ci.yml`
-  and `docker.yml` to cancel superseded runs; intentionally omitted from `release.yml`
-  so tag-triggered releases are never canceled mid-run.
-
-### Added
-
-- **Concurrent group fill limiting (`internal/relay`):** A buffered-channel semaphore
-  (`fillSem`) now bounds the number of in-flight fill goroutines per `trackDistributor`
-  to `MaxGroupFillsInFlight` (default `max(32, 2×GOMAXPROCS)`). When all slots are
-  occupied, `ingest` blocks on the semaphore rather than spawning unboundedly, providing
-  natural backpressure against bursty or slow-consumer ingest. A new Prometheus gauge
-  `qumo_relay_group_fills_inflight` exposes the current in-flight count for observability.
-  `MaxGroupFillsInFlight` is a package-level variable and can be overridden before
-  calling `Relay` for environment-specific tuning.
-
-- **Concurrent frame filling in group cache (`internal/relay`):** `trackDistributor.ingest`
-  now reserves a ring slot synchronously (preserving group ordering) and fills frames
-  concurrently via a `sync.WaitGroup`-guarded goroutine per group. This prevents a slow
-  upstream group from blocking the next `AcceptGroup` call and improves throughput under
-  bursty or high-latency ingest conditions. A `frameSource` interface decouples the ring
-  from `*moqt.GroupReader`, enabling deterministic unit tests without importing unexported
-  upstream types. Frame pool buffers are now correctly returned via `defer ring.pool.Put`
-  after each fill, eliminating a pool-leak under concurrent load.
-
-- **Enhanced Prometheus metrics (`internal/relay`, `internal/ingest`):** Comprehensive
-  observability for both relay and ingest subsystems.
-  - *Relay metrics*: New gauges for `sessions_active`, `subscribers_active`,
-    `peers_connected`, `broadcasts_active`, and `buffer_depth_groups`.
-    Added `subscriber_skips_total` counter for QoS tracking and `subscribe_errors_total`,
-    `peer_dial_attempts_total`, `route_replacements_total`, and `route_rejections_total`
-    for operational analysis.
-    Added node-level byte accounting for relay ingress and egress with
-    `qumo_relay_ingress_bytes_total{node_id}` and `qumo_relay_egress_bytes_total{node_id}`.
-  - *QUIC-layer metrics*: Added `conn_smoothed_rtt_ms` and `conn_packet_loss_rate`
-    for native QUIC connections (skipped for WebTransport).
-  - *Ingest metrics*: Achieved parity with relay by adding `publishers_active`,
-    `subscribers_active`, `buffer_depth_groups`, and `subscriber_skips_total`.
-  - *Latency Histograms*: Added `session_rtt_seconds` and `group_delivery_seconds`
-    histograms to track RTT and delivery performance distributions.
-  - *Session Polling*: Re-enabled RTT and estimated bitrate polling for all MoQT sessions
-    (including WebTransport) via the new `pollSessionStats` background routine.
-  - *Label Cleanup*: Dynamic Prometheus labels (remote addresses, track names) are now
-    rigorously deleted on session/track termination to prevent memory growth.
-- **Route selection improvements (`internal/relay`):**
-  - `isBetterRoute` now returns a detailed `rejectionReason` when a route is rejected.
-  - Rejections are logged and tracked via the `qumo_relay_route_rejections_total` metric.
-- **Health check refinement (`internal/relay`):** `statusHandler` no longer tracks
-  active connections manually; it now relies on Prometheus gauges for session counts.
-- **Bootstrap API authentication (`internal/bootstrap`, `internal/cli`):** The `/register`
-  and `/peers` endpoints now support optional bearer token authentication. Set
-  `BOOTSTRAP_AUTH_TOKEN` on both the bootstrap server and relay nodes to require an
-  `Authorization: Bearer <token>` header. When the variable is empty, authentication is
-  skipped and existing behaviour is preserved (backward compatible).
-- **mTLS support (`internal/bootstrap`, `internal/cli`):** Mutual TLS can now be enabled
-  across the entire relay mesh by setting `CA_FILE` (PEM CA certificate).
-  - *Relay server*: when `CA_FILE` is set, presented peer certificates are verified against
-    the CA. By default client certificates are optional; set `MTLS_REQUIRED=true` to require
-    a certificate on every connection.
-  - *Relay dialer*: trusts only the CA pool and presents this node's `CERT_FILE` cert as a
-    client certificate when dialing peer relays.
-  - *Bootstrap server*: set `BOOTSTRAP_CERT_FILE` + `BOOTSTRAP_KEY_FILE` to enable HTTPS;
-    additionally setting `CA_FILE` enables mTLS client verification on the bootstrap server.
-  - *Bootstrap client*: `ClientConfig` gains a `TLSConfig *tls.Config` field; when `CA_FILE`
-    is set on the relay, bootstrap HTTP clients automatically present the relay client cert
-    and verify the bootstrap server against the CA pool.
-  All changes are opt-in; leaving `CA_FILE` unset preserves existing behaviour.
-
-- **`RouteStats` struct and `RouteReporter` interface (`internal/relay`):** Routing quality
-  metrics (`Alive`, `Hops`, `Bitrate`, `RTT`) are now exposed per handler. `Alive` is
-  derived from both the handler's child context and `Announcement.IsActive()`.
-- **`Drainable` interface and `DrainTimeout` (`internal/relay`):** Displaced handlers are
-  gracefully drained over a 30-second window before their upstream subscription is cancelled,
-  allowing in-flight groups to finish delivery.
-- **`isBetterRoute` route comparison (`internal/relay`):** Route selection is now explicit:
-  a live route always beats a dead one; among live routes, fewer hops → higher bitrate → lower
-  RTT decides the winner. The existing handler is kept unless the new candidate is strictly better.
-- **`markConnected` / `markUnconnected` peer deduplication (`internal/relay`):** Server-wide
-  address tracking prevents duplicate `maintainPeer` goroutines for the same peer. Static peers
-  and bootstrap-discovered peers now share the same deduplication map. `markUnconnected` is
-  called when a `maintainPeer` goroutine exits, restoring the address for future reconnection.
-- **`context.AfterFunc` handler cleanup (`internal/relay`):** `handler.cancel` is registered
-  via `context.AfterFunc(sess.Context(), ...)` in `Relay`, so the handler's child context is
-  cancelled as soon as the upstream session closes.
-- **`trackDistributor.ingest` context propagation (`internal/relay`):** `AcceptGroup` now
-  receives the handler's child context instead of `context.Background()`, ensuring ingest
-  goroutines stop promptly when the handler is drained or the session closes.
-- **Streaming smoke test (`mage smoke`):** End-to-end smoke test that publishes
-  test frames over MoQT and verifies all frames are received intact by a subscriber.
-  Accepts `-pub` and `-sub` flags to target independent relay endpoints, enabling
-  cross-region mesh validation. Exits with code 1 on frame loss or hash mismatch.
-- **`internal/smoketest` package:** Smoke test implementation moved from `cmd/smoketest`
-  to `internal/smoketest` and invoked via the Mage build system.
-- **`docker-compose.static.yml` port protocols:** UDP and TCP protocols are now
-  explicitly declared for all relay service ports.
-
-### Changed
-
-- **Dependency upgrades and project-wide refactoring:**
-  - Upgraded MoQ dependencies (Go `gomoqt` and JS/Deno `@qumo/moq`) to v0.15.0.
-  - Migrated frontend MoQ dependency from `@okdaichi/moq` to `@qumo/moq`.
-  - Updated all frontend import paths to use the new `@qumo/moq` package.
-  - Upgraded frontend dependencies: `solid-js` to v1.9.12, `vite` to v7.3.2, `@types/node` to v25.6.0, and `vite-plugin-solid` to v2.11.12.
-  - Refactored SVG assets (`vite.svg`, `solid.svg`) for improved formatting and readability.
-- **Repository ownership transferred:** Project ownership moved from `okdaichi` personal account to the `qumo-dev` organization.
-- **`discoverPeers` deduplication unified (`internal/relay`):** The per-`discoverPeers`
-  local `map[string]struct{}` and its mutex have been removed. Deduplication is now handled
-  server-wide by `markConnected`, keyed on peer address instead of peer ID.
-- **`newRelayHandler` owns a cancellable child context (`internal/relay`):** The handler's
-  `ctx` is no longer `sess.Context()` directly; it is a child created with
-  `context.WithCancel`, giving `Drain` and `AfterFunc` cleanup independent control.
-- **gomoqt upgraded to v0.13.4:** Tracks upstream moq-lite API changes including
-  updated `moqt.Dialer` and session lifecycle improvements.
-- **`relay.Server` fields made public:** `MOQServer` and `MOQDialer` are now exported
-  fields, enabling callers to configure the underlying server and dialer directly.
-- **Context propagation fixed:** `Subscribe` and `ReceiveAnnouncement` now use the
-  session-scoped context (`h.ctx` / `sess.Context()`) instead of `context.Background()`,
-  so upstream connections are cancelled when the relay session closes.
-- **`statusHandler` nil-check restored:** `Server.init()` no longer overwrites a
-  caller-supplied `statusHandler`.
-- **Simplified relay health endpoint (`internal/relay`):** `/health` no longer supports
-  probe query parameters or separate liveness/readiness semantics; it now returns a
-  single unified health payload with `live: true` and `ready: true`.
-- **TLS configuration hardened:** `InsecureSkipVerify` is now set only on the dialer
-  TLS config when `INSECURE=true`; the server-side TLS config no longer carries it.
-- **`Peer.Address` comment corrected:** Removed unsupported `https://` scheme from
-  documentation; only `moqt://` and bare `host:port` are accepted by `DialQUIC`.
-
-### Fixed
-
-- **`ingressCounter` never incremented (`internal/relay/handler.go`):** The
-  `trackDistributor.ingressCounter` Prometheus counter was allocated but never
-  updated in the data path. Ingress bytes are now counted inside the `fill`
-  callback in `processGroup` using the new `onFrame(n int)` signature.
-- **AVCC codec mismatch in web demo publisher (`solid-deno/src/publish/PublishBoard.tsx`,
-  `solid-deno/src/subscribe/SubscribeBoard.tsx`):** `VideoEncoder` configured with `avc1.*`
-  outputs AVCC-format frames, but the catalog was misreporting the codec as `avc3.*`
-  (Annex-B) and discarding `decoderConfig.description`. The fix uses the MSF catalog
-  `Track.initData` field (Base64-encoded `AVCDecoderConfigurationRecord`) so subscribers
-  can configure `VideoDecoder` with the correct `description`. AVCC bytes are now forwarded
-  as-is — no per-frame conversion.
-- **`fs.Parse` error handling:** `RunRTMP` now propagates `flag.Parse` errors instead
-  of silently discarding them (flag set changed to `ContinueOnError`).
-- **Smoke test error handling:** `frame.Write` and `gw.Close` errors are now caught
-  and logged during publishing; early return prevents sending corrupt groups.
-- **Smoke test optimized:** Replaced `fmt.Sprintf` with `strconv.AppendInt` inside
-  `generateTestData` nested loop to avoid heavy reflection and large allocations.
-  Memory usage and allocations significantly reduced, yielding ~60% faster test payloads generation.
-
-### Security
-
-- **G118 excluded (`internal/relay`):** `context.WithCancel` cancel function is stored
-  in `relayHandler.cancel` and called later via `Drain` or `context.AfterFunc`; gosec cannot
-  trace cross-function ownership so the finding is a false positive.
-- **gosec integrated into golangci-lint:** Removed the standalone `securego/gosec`
-  GitHub Actions step; gosec now runs as part of `golangci-lint` with SARIF output
-  uploaded to GitHub Security. Rule exclusions are centrally managed in `.golangci.yml`
-  with per-path scope and rationale comments, eliminating inline `#nosec` annotations.
-- **G115 excluded globally:** Integer overflow conversions in RTMP/AMF3/QUIC protocol
-  encoding are intentional truncations mandated by the respective wire formats.
-
-
-### Added
-
-- **Peer-based announce relay:** Each relay can dial upstream peers (via `peers` config section).
-  On connect, the relay sends `ANNOUNCE_PLEASE "/"` to receive all announcements, then registers
-  them on the local `TrackMux`. Subscribers transparently access remote content without a central
-  controller.
-- **`relay.Config.Peers`:** New config field accepts a list of peer addresses in
-  `moqt://host:port` or `https://host:port` form.
-- **Auto-reconnect:** `ConnectPeers` maintains each peer connection with a 5-second retry loop,
-  recovering from transient network failures.
-- **`docker-entrypoint.sh` PEERS env var:** `PEERS=moqt://relay-b:4433,moqt://relay-c:4433`
-  generates the `peers:` block in the relay config automatically.
-
-### Changed
-
-- **gomoqt upgraded to v0.12.1** (moq-lite draft-03): `moqt.Dialer` replaces the old client
-  API; `Session.AcceptAnnounce` / `AnnouncementReader.Announcements` used for peer discovery.
-- **`docker-compose.simple.yml` rewritten:** Now runs 3 peer-connected relay nodes instead of
-  SDN + 3 relays. Node interconnection is via `PEERS` env var.
-- **CI workflow fixed:** Build job updated to Go 1.26, correct binary path (`./bin/qumo`), and
-  `qumo version` check. Codecov condition corrected to `1.26`.
-- **Dockerfile fixed:** Removed `config.sdn.yaml` COPY (file deleted), corrected
-  `docker-entrypoint.sh` path relative to build context, removed SDN port 8090.
-- **NextProtos updated:** `setupTLS` now uses `moqt.NextProtoMOQ` constant (`"moq-lite-03"`)
-  instead of a hardcoded `"moq-00"` string.
-- `internal/relay/session.go` removed (empty `Session interface{}`).
-
-### Fixed
-
-- `TestIsVideoSequenceHeader`: `0x27 0x00` correctly returns `true` — codec ID is AVC and
-  packet type is sequence header regardless of keyframe bit.
-- `TestRelayHandler_ConcurrentSubscribe`: fixed `newTestRelayHandler` to construct handler
-  directly, bypassing the nil-session guard added to `newRelayHandler`.
-
-## [v0.3.1] - 2026-03-12
-
-### Fixed
-
-- **WebTransport connectivity (critical):** Upgrade `gomoqt` to v0.10.5, which calls
-  `ConfigureHTTP3Server(wtserver.H3)` in `NewServer()`. Without this, `H3.ConnContext` was
-  `nil` and `webtransport-go v0.10.0`'s `Upgrade()` could not retrieve the QUIC connection
-  from the HTTP request context, returning `"webtransport: missing QUIC connection"` on every
-  attempt. Browsers surfaced this as `ERR_METHOD_NOT_SUPPORTED`.
-- **JS streaming pipeline:** Upgrade `@okdaichi/moq` to v0.10.5. `mux.publishFunc()` is now
-  called before media capture starts, ensuring the relay has a track handler registered before
-  any subscriber attempts to `SUBSCRIBE`. Previously the handler was registered after
-  `sourceNode.start()`, so the relay never received track requests.
-- **Video codec mismatch:** Subscriber no longer hardcodes VP9 decoder config. The publisher
-  sends actual codec parameters via a `video.meta` MoQ track; the subscriber reconfigures
-  `VideoDecoder` reactively via a SolidJS `createEffect`.
-- **Subscriber deadlock:** `ServeTrack()` held `sync.RWMutex` while calling `subscribe()`,
-  which performs a network round-trip. A second track's `ServeTrack` blocked on the same
-  mutex, preventing video from ever appearing on the subscriber side.
-- **Unhandled promise rejection on stop:** `SubscribeBoard` now catches errors from
-  `session.subscribe()` gracefully. Previously, stopping a subscription while `SUBSCRIBE_OK`
-  was in-flight caused `RESET_STREAM` errors to surface as unhandled promise rejections in the
-  browser console.
-- Relay `Server.Relay` method unexported to `relay` (internal API cleanup).
-- Fix `mage dev` command to correctly start Vite dev server via Deno.
-
-### Changed
-
-- **`sync.Map` replaces `sync.RWMutex`:** `RelayHandler` track distributor map now uses
-  `sync.Map` with `LoadOrStore` for lock-free concurrent access, eliminating the manual
-  double-check locking pattern.
-- **`newRelayHandler` constructor:** All `RelayHandler` creation sites (`server.go`,
-  `remote_fetcher.go`, tests) unified through a single constructor function.
-- **Log level audit:** Demoted high-frequency logs (`"group cached"`, `"Relaying track"`) to
-  `Debug`; promoted error-like conditions to `Warn`; removed redundant `Info` logs. Added
-  `"session established"` / `"session closed"` Info logs for connection lifecycle visibility.
-- Relay error handling improved; session errors are logged rather than panicked.
-- `.env.example` corrected: `VITE_RELAY_URL` must use `https://` (WebTransport requires TLS).
-
-### Added
-
-- **Regression tests:** `TestRelayHandler_ConcurrentSubscribe` (deadlock regression) and
-  `TestRelayHandler_LoadOrStore` (sync.Map deduplication).
-
-## [v0.3.0] - 2026-02-14
-
-### Added
-
-- Versioning system: embed `version`, `commit`, and `date` via `ldflags` at build time
-  (`internal/version`).
-- Topology: node TTL and automatic sweeper for stale node cleanup.
-- Topology: heartbeat support and `trackedPath` for dynamic route re-computation.
-- Docker: self-registration support; removed separate setup service.
-
-## [v0.2.0] - 2026-02-14
-
-### Added
-
-- `RemoteFetcher`: cross-relay content routing so subscribers can pull tracks from peer relays.
-- `PeerRegistry`: relay metadata management for federated deployments.
-- SDN controller subcommand (`qumo sdn`) with HTTP API for topology management.
-- Topology package: graph data structures, Dijkstra shortest-path algorithm, persistence, and
-  HA synchronization.
-- SDN announce system for content/path discovery.
-- Docker Compose environments: simple single-node and external-user variants.
-- Mage task: `mage docker` and related helpers for containerized development.
-
-### Changed
-
-- Upgrade `gomoqt` to v0.10.3.
-- Remove legacy upstream cascading system; replace with `RemoteFetcher`.
-- Restructure config files; remove admin module.
-
-### Fixed
-
-- Relay healthcheck: use TCP:4433 where HTTP server actually listens.
-- SDN handler mount path.
-
-## [v0.1.0] - 2026-01-05
-
-### Added
-
-- Initial relay server implementation using MoQ-over-WebTransport (`gomoqt`).
-- `TrackMux`-based track distribution with group caching and frame pooling.
-- SolidJS + Deno frontend (`solid-deno`) with `PublishBoard` and `SubscribeBoard`.
-- User identity via randomly generated usernames.
-- Basic Mage build automation.
-- CI workflow with test coverage.
-
-[Unreleased]: https://github.com/qumo-dev/qumo/compare/v0.3.1...HEAD
-[v0.4.0]: https://github.com/qumo-dev/qumo/compare/v0.3.1...HEAD
-[v0.3.1]: https://github.com/qumo-dev/qumo/compare/v0.3.0...v0.3.1
-[v0.3.0]: https://github.com/qumo-dev/qumo/compare/v0.2.0...v0.3.0
-[v0.2.0]: https://github.com/qumo-dev/qumo/compare/v0.1.0...v0.2.0
-[v0.1.0]: https://github.com/qumo-dev/qumo/releases/tag/v0.1.0
-
-
-### Fixed (cont.)
-
-- **Fan-out collapse at K≥8 (`internal/relay`, production fix):** The production QUIC config now sets `MaxIncomingUniStreams`/`MaxIncomingStreams` to effectively-unlimited (1<<20). quic-go defaults these to 100, which throttled the relay's per-group stream opens at high fan-out: at group-per-frame, half-closed streams accumulated faster than the subscriber processed them, exhausting the 100-stream credit → `OpenGroupAt` blocked → backlog → groupRing eviction → frame loss. Measured: K=8 loss dropped from 89% to 7% on a 2-core CI runner; the fan-out knee moved from K≈4 to K≈8-16.
+- **TLS configuration hardened (`internal/relay`):** Removed `InsecureSkipVerify` from the relay dial

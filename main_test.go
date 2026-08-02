@@ -20,11 +20,13 @@ func TestRun_Unit(t *testing.T) {
 	origRTMP := runRTMP
 	origPlayground := runPlayground
 	origDoctor := runDoctor
+	origLoadgen := runLoadgen
 	defer func() {
 		runRelay = origRelay
 		runRTMP = origRTMP
 		runPlayground = origPlayground
 		runDoctor = origDoctor
+		runLoadgen = origLoadgen
 	}()
 
 	tests := map[string]struct {
@@ -33,6 +35,7 @@ func TestRun_Unit(t *testing.T) {
 		stubRTMP           func([]string) error
 		stubPlayground     func([]string) error
 		stubDoctor         func([]string) error
+		stubLoadgen        func([]string) error
 		wantCode           int
 		wantStderrContains []string
 	}{
@@ -106,6 +109,25 @@ func TestRun_Unit(t *testing.T) {
 			wantCode:           1,
 			wantStderrContains: []string{"error: doc-fail"},
 		},
+		"loadgen success": {
+			args:        []string{"loadgen", "subscribe"},
+			stubLoadgen: func(_ []string) error { return nil },
+			wantCode:    0,
+		},
+		"loadgen error": {
+			args:               []string{"loadgen"},
+			stubLoadgen:        func(_ []string) error { return fmt.Errorf("lg-fail") },
+			wantCode:           1,
+			wantStderrContains: []string{"error: lg-fail"},
+		},
+		"loadgen passes args": {
+			args: []string{"loadgen", "subscribe", "--sessions", "10"},
+			stubLoadgen: func(a []string) error {
+				assert.Equal(t, []string{"subscribe", "--sessions", "10"}, a)
+				return nil
+			},
+			wantCode: 0,
+		},
 	}
 
 	for name, tt := range tests {
@@ -129,6 +151,11 @@ func TestRun_Unit(t *testing.T) {
 				runDoctor = tt.stubDoctor
 			} else {
 				runDoctor = func([]string) error { return nil }
+			}
+			if tt.stubLoadgen != nil {
+				runLoadgen = tt.stubLoadgen
+			} else {
+				runLoadgen = func([]string) error { return nil }
 			}
 
 			// capture stderr

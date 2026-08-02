@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -30,6 +29,8 @@ func newTestRelayHandler(ctx context.Context) *relayHandler {
 	}
 }
 
+// // func TestTrackDistributor_ByteCounters( removed: subscribe/unsubscribe API replaced by broadcastNotify
+
 func TestTrackDistributor_ByteCounters(t *testing.T) {
 	// Use a unique trackID per run so parallel tests don't share counter state.
 	nodeID := fmt.Sprintf("node-%d", time.Now().UnixNano())
@@ -39,7 +40,8 @@ func TestTrackDistributor_ByteCounters(t *testing.T) {
 	defer close(dist.done)
 
 	// Verify the counters are wired to the correct Prometheus metric+label.
-	// Simulate what addGroup and egress would do internally.
+	// This is independent of the notification mechanism (broadcastNotify) — it
+	// exercises the ingress/egress byte-counter wiring that addGroup/egress rely on.
 	dist.ingressCounter.Add(200)
 	dist.ingressCounter.Add(100)
 	dist.egressCounter.Add(150)
@@ -48,665 +50,8 @@ func TestTrackDistributor_ByteCounters(t *testing.T) {
 	assert.Equal(t, 150.0, testutil.ToFloat64(metricRelayEgressBytesTotal.WithLabelValues(trackID)))
 }
 
-// ============================================================================
-// trackDistributor Tests - Core Functionality
-// ============================================================================
-
-// TestTrackDistributor_Broadcast_SingleSubscriber tests basic broadcast functionality
-func TestTrackDistributor_Broadcast_SingleSubscriber(t *testing.T) {
-	dist := &trackDistributor{
-		ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-		subscribers: nil,
-	}
-
-	received := &atomic.Int32{}
-	ready := make(chan struct{})
-	var wg sync.WaitGroup
-
-	wg.Go(func() {
-		ch := dist.subscribe()
-		defer dist.unsubscribe(ch)
-		close(ready)
-
-		timeout := time.After(500 * time.Millisecond)
-		select {
-		case <-ch:
-			received.Add(1)
-		case <-timeout:
-			return
-		}
-	})
-
-	<-ready
-
-	dist.mu.RLock()
-	for _, ch := range dist.subscribers {
-		select {
-		case ch <- struct{}{}:
-		default:
-		}
-	}
-	dist.mu.RUnlock()
-
-	wg.Wait()
-	assert.Equal(t, int32(1), received.Load(), "subscriber should receive exactly one notification")
-}
-
-// TestTrackDistributor_Broadcast_MultipleSubscribers tests broadcast to multiple subscribers
-func TestTrackDistributor_Broadcast_MultipleSubscribers(t *testing.T) {
-	tests := map[string]struct {
-		numSubscribers int
-		broadcasts     int
-	}{
-		"ten_subscribers":     {numSubscribers: 10, broadcasts: 1},
-		"hundred_subscribers": {numSubscribers: 100, broadcasts: 1},
-		"multiple_broadcasts": {numSubscribers: 10, broadcasts: 5},
-	}
-
-	for name, tt := range tests {
-		t.Run(name, func(t *testing.T) {
-			dist := &trackDistributor{
-				ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-				subscribers: nil,
-			}
-
-			received := &atomic.Int32{}
-			ready := make(chan struct{}, tt.numSubscribers)
-			var wg sync.WaitGroup
-
-			for i := 0; i < tt.numSubscribers; i++ {
-				wg.Go(func() {
-					ch := dist.subscribe()
-					defer dist.unsubscribe(ch)
-					ready <- struct{}{}
-
-					for j := 0; j < tt.broadcasts; j++ {
-						select {
-						case <-ch:
-							received.Add(1)
-						case <-time.After(500 * time.Millisecond):
-							return
-						}
-					}
-				})
-			}
-
-			for i := 0; i < tt.numSubscribers; i++ {
-				<-ready
-			}
-
-			for i := 0; i < tt.broadcasts; i++ {
-				dist.mu.RLock()
-				for _, ch := range dist.subscribers {
-					select {
-					case ch <- struct{}{}:
-					default:
-					}
-				}
-				dist.mu.RUnlock()
-				// Give subscribers time to consume messages between broadcasts
-				if i < tt.broadcasts-1 {
-					<-time.After(10 * time.Millisecond)
-				}
-			}
-
-			wg.Wait()
-			expected := tt.numSubscribers * tt.broadcasts
-			assert.Equal(t, int32(expected), received.Load(), "all subscribers should receive all broadcasts")
-		})
-	}
-}
-
-// TestTrackDistributor_SubscriptionLifecycle tests subscribe/unsubscribe operations
-func TestTrackDistributor_SubscriptionLifecycle(t *testing.T) {
-	dist := &trackDistributor{
-		ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-		subscribers: nil,
-	}
-
-	// Test basic subscribe
-	ch1 := dist.subscribe()
-	require.NotNil(t, ch1)
-
-	assert.Len(t, dist.subscribers, 1)
-
-	// Test multiple subscribes
-	ch2 := dist.subscribe()
-	ch3 := dist.subscribe()
-
-	assert.Len(t, dist.subscribers, 3)
-
-	// Test unsubscribe
-	dist.unsubscribe(ch2)
-
-	assert.Len(t, dist.subscribers, 2)
-
-	// Test unsubscribe all
-	dist.unsubscribe(ch1)
-	dist.unsubscribe(ch3)
-
-	assert.Empty(t, dist.subscribers)
-
-	// Test double unsubscribe (should not panic)
-	dist.unsubscribe(ch1)
-	assert.Empty(t, dist.subscribers)
-}
-
-// TestTrackDistributor_ConcurrentAccess tests thread safety
-func TestTrackDistributor_ConcurrentAccess(t *testing.T) {
-	dist := &trackDistributor{
-		ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-		subscribers: nil,
-	}
-
-	const goroutines = 50
-	const iterations = 100
-
-	var wg sync.WaitGroup
-
-	for range goroutines {
-		wg.Go(func() {
-			for range iterations {
-				ch := dist.subscribe()
-				dist.unsubscribe(ch)
-			}
-		})
-	}
-
-	for range goroutines {
-		wg.Go(func() {
-			for range iterations {
-				dist.mu.RLock()
-				for _, ch := range dist.subscribers {
-					select {
-					case ch <- struct{}{}:
-					default:
-					}
-				}
-				dist.mu.RUnlock()
-			}
-		})
-	}
-
-	wg.Wait()
-
-	assert.Empty(t, dist.subscribers, "all subscribers should be unsubscribed")
-}
-
-// TestTrackDistributor_ChannelBuffering tests that channels are buffered
-func TestTrackDistributor_ChannelBuffering(t *testing.T) {
-	dist := &trackDistributor{
-		ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-		subscribers: nil,
-	}
-
-	ch := dist.subscribe()
-
-	assert.Equal(t, 1, cap(ch))
-
-	// Should not block on first send
-	select {
-	case ch <- struct{}{}:
-		// OK
-	case <-time.After(50 * time.Millisecond):
-		require.Fail(t, "First send blocked")
-	}
-
-	// Channel is now full, but broadcast should not block
-	done := make(chan struct{})
-	go func() {
-		select {
-		case ch <- struct{}{}:
-		default:
-			// Expected - channel is full
-		}
-		done <- struct{}{}
-	}()
-
-	select {
-	case <-done:
-		// OK - didn't block
-	case <-time.After(50 * time.Millisecond):
-		require.Fail(t, "Broadcast blocked on full channel")
-	}
-}
-
-// TestTrackDistributor_NoBroadcastBlocking ensures broadcasts never block
-func TestTrackDistributor_NoBroadcastBlocking(t *testing.T) {
-	dist := &trackDistributor{
-		ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-		subscribers: nil,
-	}
-
-	// Create subscribers but don't read
-	for range 20 {
-		dist.subscribe()
-	}
-
-	// Multiple broadcasts should complete quickly
-	done := make(chan struct{})
-	go func() {
-		for range 100 {
-			dist.mu.RLock()
-			for _, ch := range dist.subscribers {
-				select {
-				case ch <- struct{}{}:
-				default:
-				}
-			}
-			dist.mu.RUnlock()
-		}
-		done <- struct{}{}
-	}()
-
-	select {
-	case <-done:
-		// Success
-	case <-time.After(1 * time.Second):
-		require.Fail(t, "Broadcasts blocked unexpectedly")
-	}
-}
-
-// TestTrackDistributor_EdgeCases tests edge cases and boundary conditions
-func TestTrackDistributor_EdgeCases(t *testing.T) {
-	t.Run("subscribe_to_empty_distributor", func(t *testing.T) {
-		dist := &trackDistributor{
-			ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-			subscribers: nil,
-		}
-
-		ch := dist.subscribe()
-		require.NotNil(t, ch)
-
-		assert.Len(t, dist.subscribers, 1)
-	})
-
-	t.Run("unsubscribe_nonexistent_channel", func(t *testing.T) {
-		dist := &trackDistributor{
-			ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-			subscribers: nil,
-		}
-
-		// Unsubscribe channel that was never subscribed
-		fakeCh := make(chan struct{}, 1)
-		dist.unsubscribe(fakeCh)
-
-		// Should not panic and map should remain empty
-		assert.Empty(t, dist.subscribers)
-	})
-
-	t.Run("multiple_unsubscribe_same_channel", func(t *testing.T) {
-		dist := &trackDistributor{
-			ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-			subscribers: nil,
-		}
-
-		ch := dist.subscribe()
-		dist.unsubscribe(ch)
-		dist.unsubscribe(ch) // Double unsubscribe
-
-		// Should not panic
-		assert.Empty(t, dist.subscribers)
-	})
-
-	t.Run("broadcast_to_zero_subscribers", func(t *testing.T) {
-		dist := &trackDistributor{
-			ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-			subscribers: nil,
-		}
-
-		// Should not panic
-		dist.mu.RLock()
-		for _, ch := range dist.subscribers {
-			select {
-			case ch <- struct{}{}:
-			default:
-			}
-		}
-		dist.mu.RUnlock()
-	})
-
-	t.Run("rapid_subscribe_unsubscribe", func(t *testing.T) {
-		dist := &trackDistributor{
-			ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-			subscribers: nil,
-		}
-
-		// Rapidly add and remove
-		for range 1000 {
-			ch := dist.subscribe()
-			dist.unsubscribe(ch)
-		}
-
-		assert.Equal(t, 0, len(dist.subscribers), "Expected 0 subscribers")
-	})
-}
-
-// TestTrackDistributor_Stress performs stress testing
-func TestTrackDistributor_Stress(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping stress test in short mode")
-	}
-
-	t.Run("high_frequency_broadcasts", func(t *testing.T) {
-		dist := &trackDistributor{
-			ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-			subscribers: nil,
-		}
-
-		const numSubs = 100
-		for range numSubs {
-			dist.subscribe()
-		}
-
-		done := make(chan bool)
-		go func() {
-			for range 10000 {
-				dist.mu.RLock()
-				for _, ch := range dist.subscribers {
-					select {
-					case ch <- struct{}{}:
-					default:
-					}
-				}
-				dist.mu.RUnlock()
-			}
-			done <- true
-		}()
-
-		select {
-		case <-done:
-			// Success
-		case <-time.After(10 * time.Second):
-			require.Fail(t, "high frequency broadcast timed out")
-		}
-	})
-
-	t.Run("subscriber_churn", func(t *testing.T) {
-		dist := &trackDistributor{
-			ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-			subscribers: nil,
-		}
-
-		var wg sync.WaitGroup
-		stopCh := make(chan struct{})
-
-		for range 10 {
-			wg.Go(func() {
-				for {
-					select {
-					case <-stopCh:
-						return
-					default:
-						ch := dist.subscribe()
-						dist.unsubscribe(ch)
-					}
-				}
-			})
-		}
-
-		for range 5 {
-			wg.Go(func() {
-				for {
-					select {
-					case <-stopCh:
-						return
-					default:
-						dist.mu.RLock()
-						for _, ch := range dist.subscribers {
-							select {
-							case ch <- struct{}{}:
-							default:
-							}
-						}
-						dist.mu.RUnlock()
-					}
-				}
-			})
-		}
-
-		time.Sleep(2 * time.Second)
-		close(stopCh)
-		wg.Wait()
-	})
-}
-
-// TestTrackDistributor_Scalability tests performance at different scales
-func TestTrackDistributor_Scalability(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping scalability test in short mode")
-	}
-
-	scales := []int{1, 10, 50, 100, 500, 1000}
-
-	for _, n := range scales {
-		t.Run(fmt.Sprintf("%04d_subscribers", n), func(t *testing.T) {
-			dist := &trackDistributor{
-				ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-				subscribers: nil,
-			}
-
-			// Create n subscribers
-			for range n {
-				dist.subscribe()
-			}
-
-			// Measure broadcast time
-			start := time.Now()
-			dist.mu.RLock()
-			for _, ch := range dist.subscribers {
-				select {
-				case ch <- struct{}{}:
-				default:
-				}
-			}
-			dist.mu.RUnlock()
-			elapsed := time.Since(start)
-
-			t.Logf("%d subscribers: broadcast took %v", n, elapsed)
-
-			// Sanity check - should complete quickly (more lenient for CI)
-			assert.LessOrEqual(t, elapsed, 50*time.Millisecond, "Broadcast took too long for %d subscribers", n)
-		})
-	}
-}
-
-// TestTrackDistributor_MemoryBehavior tests memory-related behavior
-func TestTrackDistributor_MemoryBehavior(t *testing.T) {
-	t.Run("channel_garbage_collection", func(t *testing.T) {
-		dist := &trackDistributor{
-			ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-			subscribers: nil,
-		}
-
-		// Subscribe many
-		const count = 1000
-		for range count {
-			ch := dist.subscribe()
-			// Immediately unsubscribe to allow GC
-			dist.unsubscribe(ch)
-		}
-
-		assert.Empty(t, dist.subscribers, "Subscribers not cleaned up")
-	})
-
-	t.Run("no_channel_leaks_on_unsubscribe", func(t *testing.T) {
-		dist := &trackDistributor{
-			ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-			subscribers: nil,
-		}
-
-		channels := make([]chan struct{}, 100)
-		for i := range 100 {
-			channels[i] = dist.subscribe()
-		}
-
-		// Unsubscribe all
-		for _, ch := range channels {
-			dist.unsubscribe(ch)
-		}
-
-		assert.Empty(t, dist.subscribers, "Expected empty map")
-	})
-}
-
-// TestTrackDistributor_RaceConditions tests for race conditions
-func TestTrackDistributor_RaceConditions(t *testing.T) {
-	t.Run("concurrent_subscribe_and_broadcast", func(t *testing.T) {
-		dist := &trackDistributor{
-			ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-			subscribers: nil,
-		}
-
-		var wg sync.WaitGroup
-		wg.Add(2)
-
-		go func() {
-			defer wg.Done()
-			for range 100 {
-				dist.subscribe()
-			}
-		}()
-
-		go func() {
-			defer wg.Done()
-			for range 100 {
-				dist.mu.RLock()
-				for _, ch := range dist.subscribers {
-					select {
-					case ch <- struct{}{}:
-					default:
-					}
-				}
-				dist.mu.RUnlock()
-			}
-		}()
-
-		wg.Wait()
-	})
-
-	t.Run("concurrent_unsubscribe_and_broadcast", func(t *testing.T) {
-		dist := &trackDistributor{
-			ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-			subscribers: nil,
-		}
-
-		channels := make([]chan struct{}, 100)
-		for i := range 100 {
-			channels[i] = dist.subscribe()
-		}
-
-		var wg sync.WaitGroup
-		wg.Add(2)
-
-		go func() {
-			defer wg.Done()
-			for _, ch := range channels {
-				dist.unsubscribe(ch)
-			}
-		}()
-
-		go func() {
-			defer wg.Done()
-			for range 100 {
-				dist.mu.RLock()
-				for _, ch := range dist.subscribers {
-					select {
-					case ch <- struct{}{}:
-					default:
-					}
-				}
-				dist.mu.RUnlock()
-			}
-		}()
-
-		wg.Wait()
-	})
-}
-
 // TestTrackDistributor_NotificationDelivery tests notification delivery guarantees
-func TestTrackDistributor_NotificationDelivery(t *testing.T) {
-	t.Run("all_subscribers_receive_notification", func(t *testing.T) {
-		dist := &trackDistributor{
-			ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-			subscribers: nil,
-		}
-
-		const numSubs = 50
-		received := make([]*atomic.Int32, numSubs)
-		ready := make(chan struct{}, numSubs)
-		var wg sync.WaitGroup
-
-		for i := range numSubs {
-			received[i] = &atomic.Int32{}
-			wg.Add(1)
-			idx := i
-			go func() {
-				defer wg.Done()
-				ch := dist.subscribe()
-				defer dist.unsubscribe(ch)
-				ready <- struct{}{}
-
-				timeout := time.After(500 * time.Millisecond)
-				select {
-				case <-ch:
-					received[idx].Add(1)
-				case <-timeout:
-				}
-			}()
-		}
-
-		for range numSubs {
-			<-ready
-		}
-
-		dist.mu.RLock()
-		for _, ch := range dist.subscribers {
-			select {
-			case ch <- struct{}{}:
-			default:
-			}
-		}
-		dist.mu.RUnlock()
-
-		wg.Wait()
-
-		failures := 0
-		for i, count := range received {
-			if count.Load() != 1 {
-				t.Errorf("subscriber %d received %d notifications, expected 1", i, count.Load())
-				failures++
-			}
-		}
-
-		if failures > 0 {
-			t.Errorf("%d/%d subscribers did not receive notification", failures, numSubs)
-		}
-	})
-
-	t.Run("buffered_channel_prevents_loss", func(t *testing.T) {
-		dist := &trackDistributor{
-			ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-			subscribers: nil,
-		}
-
-		ch := dist.subscribe()
-
-		dist.mu.RLock()
-		select {
-		case ch <- struct{}{}:
-		default:
-			require.Fail(t, "buffered channel should not block")
-		}
-		dist.mu.RUnlock()
-
-		select {
-		case <-ch:
-		case <-time.After(50 * time.Millisecond):
-			require.Fail(t, "did not receive notification from buffer")
-		}
-	})
-}
+// func TestTrackDistributor_NotificationDelivery( removed: subscribe/unsubscribe API replaced by broadcastNotify
 
 // ============================================================================
 // trackDistributor Integration Tests
@@ -715,8 +60,7 @@ func TestTrackDistributor_NotificationDelivery(t *testing.T) {
 // TestTrackDistributor_GroupRingIntegration tests groupRing initialization
 func TestTrackDistributor_GroupRingIntegration(t *testing.T) {
 	dist := &trackDistributor{
-		ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-		subscribers: nil,
+		ring: newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
 	}
 
 	// Verify ring is properly initialized
@@ -755,8 +99,7 @@ func TestTrackDistributor_DoneChannel(t *testing.T) {
 func TestTrackDistributor_RingBehavior(t *testing.T) {
 	t.Run("ring_initialization", func(t *testing.T) {
 		dist := &trackDistributor{
-			ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-			subscribers: nil,
+			ring: newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
 		}
 
 		// Verify ring is initialized
@@ -769,8 +112,7 @@ func TestTrackDistributor_RingBehavior(t *testing.T) {
 
 	t.Run("earliest_available_at_start", func(t *testing.T) {
 		dist := &trackDistributor{
-			ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-			subscribers: nil,
+			ring: newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
 		}
 
 		earliest := dist.ring.earliestAvailable()
@@ -779,8 +121,7 @@ func TestTrackDistributor_RingBehavior(t *testing.T) {
 
 	t.Run("catchup_logic", func(t *testing.T) {
 		dist := &trackDistributor{
-			ring:        newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
-			subscribers: nil,
+			ring: newGroupRing(DefaultGroupCacheSize, DefaultFramePool),
 		}
 
 		// Initially head should be 0
@@ -1060,13 +401,12 @@ func TestTrackDistributor_MeteringIngress(t *testing.T) {
 	payload := []byte("hello-world") // 11 bytes
 	src := &fakeFrameSource{frames: [][]byte{payload}}
 
-	var wg sync.WaitGroup
-	cache := dist.ring.reserve(moqt.GroupSequence(1))
-	ok := dist.processGroup(context.Background(), &wg, moqt.GroupSequence(1), src)
+	ok := dist.processGroup(context.Background(), moqt.GroupSequence(1), src)
 	require.True(t, ok)
-	wg.Wait()
-
-	_ = cache // reserved above
+	// processGroup dispatches to a worker; close the job channel and wait so the
+	// fill completes before asserting on its metering side effects.
+	close(dist.fillJobs)
+	dist.fillWg.Wait()
 
 	assert.Equal(t, int64(len(payload)), sess.ingressBytes.Load(),
 		"processGroup must add ingress bytes to the broadcast session")
@@ -1106,10 +446,10 @@ func TestTrackDistributor_MeteringNilSession(t *testing.T) {
 	t.Cleanup(func() { close(dist.done) })
 
 	src := &fakeFrameSource{frames: [][]byte{[]byte("frame")}}
-	var wg sync.WaitGroup
 	assert.NotPanics(t, func() {
-		dist.processGroup(context.Background(), &wg, moqt.GroupSequence(1), src)
-		wg.Wait()
+		dist.processGroup(context.Background(), moqt.GroupSequence(1), src)
+		close(dist.fillJobs)
+		dist.fillWg.Wait()
 	})
 }
 
@@ -1118,8 +458,8 @@ func TestTrackDistributor_MeteringNilSession(t *testing.T) {
 // ============================================================================
 
 // TestTrackDistributor_ProcessGroup_SemaphoreLimitsConcurrency verifies that
-// processGroup blocks (semaphore-full) when MaxGroupFillsInFlight goroutines
-// are already in flight, and resumes as soon as a slot is released.
+// processGroup blocks (worker-pool-full) when MaxGroupFillsInFlight fill jobs
+// are already in flight, and resumes as soon as a worker slot is released.
 // Uses testing/synctest for deterministic goroutine scheduling.
 func TestTrackDistributor_ProcessGroup_SemaphoreLimitsConcurrency(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -1135,8 +475,8 @@ func TestTrackDistributor_ProcessGroup_SemaphoreLimitsConcurrency(t *testing.T) 
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		// Each slow source blocks indefinitely until the context is cancelled.
-		// This keeps fill goroutines alive so we can count in-flight slots.
+		// Each slow source blocks the worker for 1 hour of synctest time, keeping
+		// its backpressure slot occupied so we can observe the full-pool block.
 		slowSrc := func() frameSource {
 			return &slowFrameSource{
 				fakeFrameSource: fakeFrameSource{frames: [][]byte{[]byte("x")}},
@@ -1144,20 +484,18 @@ func TestTrackDistributor_ProcessGroup_SemaphoreLimitsConcurrency(t *testing.T) 
 			}
 		}
 
-		var wg sync.WaitGroup
-
 		// Spin up `limit` groups — all should be accepted without blocking.
 		for i := range limit {
-			ok := dist.processGroup(ctx, &wg, moqt.GroupSequence(i+1), slowSrc())
+			ok := dist.processGroup(ctx, moqt.GroupSequence(i+1), slowSrc())
 			require.True(t, ok, "processGroup should succeed while under the limit")
 		}
 
-		// All slots are now occupied. A further processGroup call must block.
+		// All worker slots are now occupied. A further processGroup call must block.
 		blocked := make(chan struct{})
 		accepted := make(chan struct{})
 		go func() {
 			close(blocked)
-			ok := dist.processGroup(ctx, &wg, moqt.GroupSequence(limit+1), slowSrc())
+			ok := dist.processGroup(ctx, moqt.GroupSequence(limit+1), slowSrc())
 			if ok {
 				close(accepted)
 			}
@@ -1169,30 +507,33 @@ func TestTrackDistributor_ProcessGroup_SemaphoreLimitsConcurrency(t *testing.T) 
 		// Verify it is still blocked (accepted not closed).
 		select {
 		case <-accepted:
-			t.Fatal("processGroup should be blocked when semaphore is full")
+			t.Fatal("processGroup should be blocked when the worker pool is full")
 		default:
 		}
 
-		// Advance time past the slow-source delay to let one fill goroutine finish,
-		// which releases a semaphore slot and unblocks the waiting processGroup.
+		// Advance time past the slow-source delay to let one fill complete, which
+		// frees a worker slot and unblocks the waiting processGroup.
 		time.Sleep(2 * time.Hour)
 		synctest.Wait()
 
 		select {
 		case <-accepted:
 		default:
-			t.Fatal("processGroup should have unblocked after a slot was released")
+			t.Fatal("processGroup should have unblocked after a worker slot was released")
 		}
 
-		// Drain remaining goroutines.
+		// Drain remaining workers: close the job channel so workers exit their
+		// range loop, then advance time past the slow sources so in-flight fills
+		// complete and the workers can exit.
 		cancel()
+		close(dist.fillJobs)
+		time.Sleep(2 * time.Hour)
 		synctest.Wait()
-		wg.Wait()
 	})
 }
 
 // TestTrackDistributor_ProcessGroup_CtxCancelUnblocks verifies that a
-// processGroup call blocked on a full semaphore returns false when its
+// processGroup call blocked on a full worker pool returns false when its
 // context is cancelled.
 func TestTrackDistributor_ProcessGroup_CtxCancelUnblocks(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -1205,20 +546,18 @@ func TestTrackDistributor_ProcessGroup_CtxCancelUnblocks(t *testing.T) {
 
 		ctx, cancel := context.WithCancel(context.Background())
 
-		var wg sync.WaitGroup
-
-		// Fill the single slot with a goroutine that blocks until cancelled.
+		// Fill the single worker slot with a job that blocks.
 		holdSrc := &slowFrameSource{
 			fakeFrameSource: fakeFrameSource{frames: [][]byte{[]byte("x")}},
 			delay:           1 * time.Hour,
 		}
-		ok := dist.processGroup(ctx, &wg, moqt.GroupSequence(1), holdSrc)
+		ok := dist.processGroup(ctx, moqt.GroupSequence(1), holdSrc)
 		require.True(t, ok)
 
-		// Second call must block on the full semaphore.
+		// Second call must block on the full worker pool.
 		result := make(chan bool, 1)
 		go func() {
-			result <- dist.processGroup(ctx, &wg, moqt.GroupSequence(2), &fakeFrameSource{frames: [][]byte{[]byte("y")}})
+			result <- dist.processGroup(ctx, moqt.GroupSequence(2), &fakeFrameSource{frames: [][]byte{[]byte("y")}})
 		}()
 
 		synctest.Wait()
@@ -1234,7 +573,11 @@ func TestTrackDistributor_ProcessGroup_CtxCancelUnblocks(t *testing.T) {
 			t.Fatal("processGroup did not return after ctx cancel")
 		}
 
-		wg.Wait()
+		// Advance time past the slow source so the worker's fill completes and it
+		// exits cleanly (no deadlock/leak on exit).
+		close(dist.fillJobs)
+		time.Sleep(2 * time.Hour)
+		synctest.Wait()
 	})
 }
 
