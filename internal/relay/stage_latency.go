@@ -42,6 +42,33 @@ type StageReport struct {
 	RingResidence  StageSnapshot
 	GroupOpen      StageSnapshot
 	EgressService  StageSnapshot
+
+	// Mechanism investigation (A: serialization vs B: shared-resource
+	// contention). RingResidence (reserve→egress pickup) is split at the instant
+	// fill first broadcast the group's data:
+	//   RingFill = reserve → first broadcast   (fill-worker/ingest latency)
+	//   RingWake = first broadcast → pickup     (egress wake + schedule latency)
+	// and, independently, by how the egress goroutine reached the group:
+	//   RingBehind = picked up directly in a delivery loop (subscriber was behind)
+	//   RingWoken  = picked up after a notify wait (subscriber was caught up)
+	// DeliverSpan is deliverGroup entry→end per subscriber (how long a subscriber
+	// is busy per group). BroadcastDur is broadcast() wall time; FillSemWait is
+	// the time processGroup blocks acquiring a fill-worker slot (ingest
+	// backpressure). MaxConcurrentGroups/Deliveries are peak overlap gauges.
+	RingFill      StageSnapshot
+	RingWake      StageSnapshot
+	RingBehind    StageSnapshot
+	RingWoken     StageSnapshot
+	DeliverSpan   StageSnapshot
+	BroadcastDur  StageSnapshot
+	FillSemWait   StageSnapshot
+	BroadcastN    int64
+	MaxConcurrentGroups     int64
+	MaxConcurrentDeliveries int64
+	// GroupInterArrival is the spacing between consecutive group reserves
+	// (publisher group-open cadence). p50 ≈ gap and a tight spread mean groups
+	// arrive paced in real time; a mass of near-zero deltas means burst creation.
+	GroupInterArrival StageSnapshot
 }
 
 // StageLatency returns the per-stage latency distributions recorded since the

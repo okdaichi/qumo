@@ -41,6 +41,22 @@ linters:
       - linters: [gosec]
         path: "tools/capacity/"
         text: "G304"
+      # False positive: the multi-relay benchmark controller launches the
+      # `qumo` binary (operator-supplied --qumo path) with args and reads
+      # certs/results from operator-supplied dirs — not external input.
+      # Mirrors the tools/capacity exclusion above.
+      - linters: [gosec]
+        path: "bench-multiproc/"
+        text: "G204"
+      - linters: [gosec]
+        path: "bench-multiproc/"
+        text: "G304"
+      # False positive: math/rand is used only to pick a random sweep port
+      # base to avoid TIME_WAIT collisions — non-security, crypto-strength
+      # randomness is unnecessary.
+      - linters: [gosec]
+        path: "bench-multiproc/"
+        text: "G404"
       # False positive: slice bounds are guaranteed by the RTMP/QUIC encoding protocol logic
       - linters: [gosec]
         text: "G602"

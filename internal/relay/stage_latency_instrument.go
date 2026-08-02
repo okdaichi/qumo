@@ -119,6 +119,126 @@ type stageCollector struct {
 	ring    stageHist // R: group arrival → deliverGroup entry, per subscriber
 	open    stageHist // O: OpenGroupAt duration
 	egress  stageHist // C: per-frame WriteFrame service
+
+	// Mechanism investigation (A vs B). See StageReport for semantics.
+	rFill       stageHist // reserve → first broadcast (fill/ingest latency)
+	rWake       stageHist // first broadcast → pickup (egress wake+schedule)
+	rBehind     stageHist // R when picked up directly (subscriber behind)
+	rWoken      stageHist // R when picked up after a notify wait (caught up)
+	deliverSpan stageHist // deliverGroup entry → end, per subscriber
+	broadcastD  stageHist // broadcast() wall time
+	fillSem     stageHist // processGroup fill-slot acquisition wait
+
+	broadcastN     atomic.Int64
+	inDeliver      atomic.Int64 // egress goroutines currently in deliverGroup
+	maxInDeliver   atomic.Int64
+	activeGroups   atomic.Int64 // group generations currently being delivered
+	maxActiveGroup atomic.Int64
+
+	// interArrival records the spacing between consecutive group reserves as the
+	// relay sees them (publisher group-open cadence). Even spacing ≈ gap = paced
+	// real-time arrival; a spike of near-zero deltas = burst group creation.
+	// Single-track assumption: lastReserveNano is swapped per reserve on the one
+	// ingest goroutine, so for a multi-track server this interleaves tracks.
+	interArrival    stageHist
+	lastReserveNano atomic.Int64
+}
+
+// storeMax atomically raises *dst to v if v is larger.
+func storeMax(dst *atomic.Int64, v int64) {
+	for {
+		cur := dst.Load()
+		if v <= cur || dst.CompareAndSwap(cur, v) {
+			return
+		}
+	}
+}
+
+// groupBroadcast stamps the instant fill first published this generation's data
+// (CAS 0→now, so only the first frame's broadcast counts). It is the boundary
+// that splits ring residence into fill latency and egress wake latency.
+func (c *stageCollector) groupBroadcast(gc *groupCache) {
+	if c == nil || gc == nil {
+		return
+	}
+	gc.firstBroadcastNano.CompareAndSwap(0, time.Now().UnixNano())
+}
+
+// ringResidenceSplit records the aggregate R plus its fill/wake split and the
+// behind/woken classification, for one egress pickup of gc at time t.
+func (c *stageCollector) ringResidenceSplit(gc *groupCache, t time.Time, woken bool) {
+	if c == nil || gc == nil || t.IsZero() {
+		return
+	}
+	arrival := gc.ingressArrivalNano.Load()
+	if arrival == 0 {
+		return
+	}
+	r := t.Sub(time.Unix(0, arrival))
+	c.ring.observe(r)
+	if woken {
+		c.rWoken.observe(r)
+	} else {
+		c.rBehind.observe(r)
+	}
+	if bc := gc.firstBroadcastNano.Load(); bc != 0 {
+		c.rFill.observe(time.Unix(0, bc).Sub(time.Unix(0, arrival)))
+		c.rWake.observe(t.Sub(time.Unix(0, bc)))
+	}
+}
+
+// enterDeliver marks one egress goroutine entering deliverGroup for gc. The
+// first goroutine to pick up a generation (CAS on firstPickupNano) bumps the
+// concurrent-active-groups gauge; every entry bumps the concurrent-deliveries
+// gauge.
+func (c *stageCollector) enterDeliver(gc *groupCache) {
+	if c == nil {
+		return
+	}
+	storeMax(&c.maxInDeliver, c.inDeliver.Add(1))
+	if gc != nil && gc.firstPickupNano.CompareAndSwap(0, time.Now().UnixNano()) {
+		storeMax(&c.maxActiveGroup, c.activeGroups.Add(1))
+	}
+}
+
+// exitDeliver records the deliver span and releases the concurrency gauge.
+func (c *stageCollector) exitDeliver(gc *groupCache, t0 time.Time) {
+	if c == nil {
+		return
+	}
+	c.inDeliver.Add(-1)
+	if gc != nil {
+		storeMax(&gc.lastEndNano, time.Now().UnixNano())
+	}
+	if !t0.IsZero() {
+		c.deliverSpan.observe(time.Since(t0))
+	}
+}
+
+// groupReleased decrements the active-groups gauge for a generation that was
+// delivered (had at least one pickup). Called from releaseCache.
+func (c *stageCollector) groupReleased(gc *groupCache) {
+	if c == nil || gc == nil {
+		return
+	}
+	if gc.firstPickupNano.Load() != 0 {
+		c.activeGroups.Add(-1)
+	}
+}
+
+func (c *stageCollector) broadcastTimed(t0 time.Time) {
+	if c == nil || t0.IsZero() {
+		return
+	}
+	c.broadcastD.observe(time.Since(t0))
+	c.broadcastN.Add(1)
+}
+
+func (c *stageCollector) fillSemWaited(t0 time.Time) {
+	if c == nil || t0.IsZero() {
+		return
+	}
+	c.fillSem.observe(time.Since(t0))
 }
 
 func (c *stageCollector) now() time.Time {
@@ -141,7 +261,12 @@ func (c *stageCollector) stampArrival(gc *groupCache) {
 	if c == nil || gc == nil {
 		return
 	}
-	gc.ingressArrivalNano.Store(time.Now().UnixNano())
+	now := time.Now().UnixNano()
+	gc.ingressArrivalNano.Store(now)
+	// Record the group-open cadence (spacing since the previous reserve).
+	if prev := c.lastReserveNano.Swap(now); prev != 0 && now > prev {
+		c.interArrival.observe(time.Duration(now - prev))
+	}
 }
 
 // clearArrival zeroes a reused cache's stale arrival stamp so ringResidence
@@ -152,17 +277,9 @@ func (c *stageCollector) clearArrival(gc *groupCache) {
 		return
 	}
 	gc.ingressArrivalNano.Store(0)
-}
-
-func (c *stageCollector) ringResidence(gc *groupCache, t time.Time) {
-	if c == nil || gc == nil || t.IsZero() {
-		return
-	}
-	arrival := gc.ingressArrivalNano.Load()
-	if arrival == 0 {
-		return // egress reached the cache before the arrival stamp
-	}
-	c.ring.observe(t.Sub(time.Unix(0, arrival)))
+	gc.firstBroadcastNano.Store(0)
+	gc.firstPickupNano.Store(0)
+	gc.lastEndNano.Store(0)
 }
 
 func (c *stageCollector) groupOpen(t0 time.Time) {
@@ -188,6 +305,18 @@ func (c *stageCollector) report() *StageReport {
 		RingResidence:  c.ring.snapshot(),
 		GroupOpen:      c.open.snapshot(),
 		EgressService:  c.egress.snapshot(),
+
+		RingFill:                c.rFill.snapshot(),
+		RingWake:                c.rWake.snapshot(),
+		RingBehind:              c.rBehind.snapshot(),
+		RingWoken:               c.rWoken.snapshot(),
+		DeliverSpan:             c.deliverSpan.snapshot(),
+		BroadcastDur:            c.broadcastD.snapshot(),
+		FillSemWait:             c.fillSem.snapshot(),
+		BroadcastN:              c.broadcastN.Load(),
+		MaxConcurrentGroups:     c.maxActiveGroup.Load(),
+		MaxConcurrentDeliveries: c.maxInDeliver.Load(),
+		GroupInterArrival:       c.interArrival.snapshot(),
 	}
 }
 
@@ -199,4 +328,19 @@ func (c *stageCollector) reset() {
 	c.ring.reset()
 	c.open.reset()
 	c.egress.reset()
+
+	c.rFill.reset()
+	c.rWake.reset()
+	c.rBehind.reset()
+	c.rWoken.reset()
+	c.deliverSpan.reset()
+	c.broadcastD.reset()
+	c.fillSem.reset()
+	c.broadcastN.Store(0)
+	c.inDeliver.Store(0)
+	c.maxInDeliver.Store(0)
+	c.activeGroups.Store(0)
+	c.maxActiveGroup.Store(0)
+	c.interArrival.reset()
+	c.lastReserveNano.Store(0)
 }

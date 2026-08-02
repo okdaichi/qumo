@@ -19,8 +19,6 @@ func (*stageCollector) stampArrival(*groupCache) {}
 
 func (*stageCollector) clearArrival(*groupCache) {}
 
-func (*stageCollector) ringResidence(*groupCache, time.Time) {}
-
 func (*stageCollector) groupOpen(time.Time) {}
 
 func (*stageCollector) egressFrame(time.Time) {}
@@ -28,3 +26,19 @@ func (*stageCollector) egressFrame(time.Time) {}
 func (*stageCollector) report() *StageReport { return nil }
 
 func (*stageCollector) reset() {}
+
+// Mechanism-investigation no-ops (see stage_latency.go / _instrument.go).
+
+func (*stageCollector) groupBroadcast(*groupCache) {}
+
+func (*stageCollector) ringResidenceSplit(*groupCache, time.Time, bool) {}
+
+func (*stageCollector) enterDeliver(*groupCache) {}
+
+func (*stageCollector) exitDeliver(*groupCache, time.Time) {}
+
+func (*stageCollector) groupReleased(*groupCache) {}
+
+func (*stageCollector) broadcastTimed(time.Time) {}
+
+func (*stageCollector) fillSemWaited(time.Time) {}

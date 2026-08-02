@@ -253,6 +253,11 @@ func Run(args []string) error {
 	httpMux.HandleFunc("/health", relayServer.ServeHealth)
 	httpMux.Handle("/metrics", promhttp.Handler())
 
+	// /debug/stages exposes gomoqt's per-stage accept pipeline counters when the
+	// instrumented gomoqt is linked (-tags instrument); the default build
+	// registers a stub returning "{}". See debug_stages_{noop,instrument}.go.
+	registerStagesDebug(httpMux, relayServer)
+
 	// Optional net/http/pprof endpoints, off by default. pprof exposes runtime
 	// internals (heap object graphs, goroutine stacks) so it is gated behind
 	// RELAY_PPROF=1 and should only be enabled on a trusted/loopback interface.

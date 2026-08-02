@@ -468,6 +468,13 @@ func (s *Server) serveSession(sess *moqt.Session, requireAuth bool) {
 			return
 		}
 
+		slog.Debug("relay: received announcement",
+			"node", s.Config.NodeID,
+			"broadcast_path", ann.BroadcastPath(),
+			"hops", len(ann.HopIDs()),
+			"remote", sess.RemoteAddr(),
+		)
+
 		// Authenticate publisher announcements when the credential client is configured.
 		var broadSess *broadcastSession
 		if requireAuth && s.credentialClient != nil {
@@ -485,6 +492,12 @@ func (s *Server) serveSession(sess *moqt.Session, requireAuth bool) {
 
 		handler := newRelayHandler(ann, sess, s.Config.NodeID, broadSess,
 			s.Config.GroupCacheSize, s.framePool, s.sampler)
+
+		slog.Debug("relay: created relayHandler",
+			"node", s.Config.NodeID,
+			"broadcast_path", ann.BroadcastPath(),
+			"active", ann.IsActive(),
+		)
 
 		// Route selection: only replace an existing active handler if the new
 		// route is strictly better. The decision and the TrackMux install are
@@ -529,6 +542,11 @@ func (s *Server) serveSession(sess *moqt.Session, requireAuth bool) {
 // registration, and registration in the TrackMux. It also schedules recovery —
 // when this route's announcement ends, any retained alternate is promoted.
 func (s *Server) installRoute(h *relayHandler) {
+	slog.Debug("relay: installing route",
+		"node", s.Config.NodeID,
+		"broadcast_path", h.announcement.BroadcastPath(),
+	)
+
 	// Track the broadcast route and release it when the handler's context is
 	// cancelled (covers both normal session end and drain expiry).
 	metricBroadcastsActive.Inc()
