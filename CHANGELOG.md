@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`qumo loadgen` end-to-end latency reporting** — subscribers decode the
+  publisher's UnixNano stamp (payload bytes 8–16) and record delivery latency
+  in a lock-free histogram (0.1 ms buckets, 1 s ceiling); the histogram is
+  reset after the settle phase so reported p50/p95/p99 and frame counts cover
+  the steady-state hold only. Printed in the carry report and emitted to
+  `results.jsonl` (`lat_p50_ms`/`lat_p95_ms`/`lat_p99_ms`/`frames_recv`).
+  Single-host shared-clock semantics: absolute values include co-located
+  loadgen scheduling; cross-topology comparisons under identical load are the
+  intended use.
 - **Stage-latency instrumentation (`-tags instrument`)** — per-stage relay
   pipeline latency histograms (ingress append, ring residence, group open,
   frame write) behind a build tag; zero-overhead no-op in the default build.

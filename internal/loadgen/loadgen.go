@@ -270,6 +270,10 @@ type carryResult struct {
 	metricsScraped  bool    // false if the relay /metrics could not be read
 	perSessionKB    float64 // relayRSSMB*1024 / connected
 	perSessionGoros float64 // relayGoros / connected
+	latSamples      int64   // end-to-end latency samples observed
+	latP50          time.Duration
+	latP95          time.Duration
+	latP99          time.Duration
 }
 
 func runCarry(ctx context.Context, target dialTarget, sessions int, hold time.Duration) (carryResult, error) {
@@ -308,23 +312,25 @@ func runCarry(ctx context.Context, target dialTarget, sessions int, hold time.Du
 	var connCount atomic.Int64
 	var receivingCount atomic.Int64
 	var wg sync.WaitGroup
+	hist := &latencyHist{}
 
 	// Launch all sessions at once (burst). The exponential backoff in
 	// dialWithRetry spreads out the QUIC handshake load so the relay is not
 	// overwhelmed by synchronized re-dials.
 	for range sessions {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if subscribeOne(subCtx, target, safety, &connCount) > 0 {
+		wg.Go(func() {
+			if subscribeOne(subCtx, target, safety, &connCount, hist) > 0 {
 				receivingCount.Add(1)
 			}
-		}()
+		})
 	}
 
 	// Hold: wait for sessions to connect (backoff handles retries), then hold
 	// at steady state before the second scrape.
 	settleFor(ctx, &connCount, sessions, 30*time.Second)
+	// Discard ramp-phase latency samples so the reported percentiles + frame
+	// count reflect only the steady-state hold window (frames/hold = true fps).
+	hist.reset()
 	select {
 	case <-ctx.Done():
 	case <-time.After(hold):
@@ -337,8 +343,12 @@ func runCarry(ctx context.Context, target dialTarget, sessions int, hold time.Du
 	drain(&wg, 20*time.Second)
 
 	res := carryResult{
-		connected: int(connCount.Load()),
-		receiving: int(receivingCount.Load()),
+		connected:  int(connCount.Load()),
+		receiving:  int(receivingCount.Load()),
+		latSamples: hist.samples(),
+		latP50:     hist.percentile(50),
+		latP95:     hist.percentile(95),
+		latP99:     hist.percentile(99),
 	}
 	if baseErr == nil && steadyErr == nil {
 		res.metricsScraped = true
@@ -370,7 +380,7 @@ func runCarry(ctx context.Context, target dialTarget, sessions int, hold time.Du
 // of simultaneous subscriber connections (common in fan-out benchmarks) does
 // not trigger a thundering-herd of synchronized re-dials that overwhelms the
 // relay's handshake capacity.
-func subscribeOne(ctx context.Context, target dialTarget, dur time.Duration, connCount *atomic.Int64) int {
+func subscribeOne(ctx context.Context, target dialTarget, dur time.Duration, connCount *atomic.Int64, hist *latencyHist) int {
 	dctx, cancel := context.WithTimeout(ctx, dur)
 	defer cancel()
 	sess, err := dialWithRetry(dctx, target)
@@ -391,8 +401,18 @@ func subscribeOne(ctx context.Context, target dialTarget, dur time.Duration, con
 		if err != nil {
 			break
 		}
-		for range gr.Frames(buf) {
+		for frame := range gr.Frames(buf) {
 			n++
+			// End-to-end latency: the publisher writes UnixNano at payload[8:16]
+			// (publishTrickle). Both ends share a clock on a single host, so
+			// now - that stamp is the frame's hub→edge→subscriber latency.
+			if hist != nil {
+				if body := frame.Body(); len(body) >= 16 {
+					if ns := int64(binary.BigEndian.Uint64(body[8:16])); ns > 0 {
+						hist.observe(time.Since(time.Unix(0, ns)))
+					}
+				}
+			}
 		}
 	}
 	return n
@@ -537,6 +557,11 @@ func report(target dialTarget, sessions int, r carryResult) {
 	} else {
 		fmt.Printf("  relay cost       : unavailable (/metrics unreadable — see warning)\n")
 	}
+	if r.latSamples > 0 {
+		fmt.Printf("  e2e latency      : p50 %s  p95 %s  p99 %s  (%d samples)\n",
+			r.latP50.Round(time.Microsecond), r.latP95.Round(time.Microsecond),
+			r.latP99.Round(time.Microsecond), r.latSamples)
+	}
 	fmt.Printf("  verdict          : %s\n", verdict)
 }
 
@@ -553,6 +578,10 @@ type jsonlRecord struct {
 	HeapMB       float64 `json:"heap_mb,omitempty"`
 	Goros        int     `json:"goros,omitempty"`
 	PerSessionKB float64 `json:"per_session_kb,omitempty"`
+	LatP50Ms     float64 `json:"lat_p50_ms,omitempty"`
+	LatP95Ms     float64 `json:"lat_p95_ms,omitempty"`
+	LatP99Ms     float64 `json:"lat_p99_ms,omitempty"`
+	FramesRecv   int64   `json:"frames_recv,omitempty"`
 	Verdict      string  `json:"verdict"`
 }
 
@@ -568,6 +597,10 @@ func emitJSONL(dir string, sessions int, r carryResult) error {
 		Connected: r.connected, Receiving: r.receiving,
 		HeapMB: r.relayRSSMB, Goros: r.relayGoros,
 		PerSessionKB: r.perSessionKB, Verdict: verdict,
+		LatP50Ms:   r.latP50.Seconds() * 1000,
+		LatP95Ms:   r.latP95.Seconds() * 1000,
+		LatP99Ms:   r.latP99.Seconds() * 1000,
+		FramesRecv: r.latSamples,
 	}
 	f, err := os.OpenFile(filepath.Join(dir, "results.jsonl"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
