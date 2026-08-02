@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   frame write) behind a build tag; zero-overhead no-op in the default build.
   Benchmarks read steady-state p50/p95/p99/max via `Server.StageLatency()` /
   `StageLatencyReset()` for latency attribution (benchmark-time diagnostic).
+- **Go benchmark controller (`bench-multiproc/cmd/benchctl`)** — replaces the
+  bash orchestration scripts with a native Go controller for multi-relay
+  (hub + P edges) scaling sweeps: hardened multi-strategy port cleanup,
+  AND-checked edge-liveness, subprocess subscriber mode, and a `/debug/stages`
+  accept-pipeline counter endpoint (instrument build only; `{}` stub by
+  default). Report in `docs/perf/MULTI-PROCESS-FANOUT-SCALING.md`.
 
 ### Changed
 - **Reusable OpenGroupAt deadline** — egress delivery no longer constructs a

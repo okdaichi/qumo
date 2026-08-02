@@ -244,7 +244,6 @@ func resolveCertDir(hint string) string {
 	return "."
 }
 
-// parseIntList parses a space-separated list of integers.
 // runCalibrate runs a P=1 calibration sweep to find the per-edge capacity
 // baseline (Max(P=1)). It runs P=1 for each X in xlist and prints the best
 // sustainable connected subscribers as the calibrated capacity.
@@ -316,7 +315,7 @@ func runCalibrate(args []string) int {
 	return 0
 }
 
-
+// parseIntList parses a space-separated list of positive integers.
 func parseIntList(s string) []int {
 	parts := strings.Fields(s)
 	out := make([]int, 0, len(parts))

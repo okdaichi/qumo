@@ -38,7 +38,6 @@ func RunCell(ctx context.Context, cfg *Config, qumoBin, certDir string) (*CellRe
 		return nil, fmt.Errorf("cert generation: %w", err)
 	}
 
-
 	// ---- Step 3: Start hub ----
 	slog.Info("starting hub")
 	hubPS, err := startRelay(ctx, qumoBin, top.Hub, certDir, top)
@@ -178,7 +177,7 @@ func RunCell(ctx context.Context, cfg *Config, qumoBin, certDir string) (*CellRe
 	}
 
 	// ---- Step 12: Build result ----
-	result := buildResult(cfg, before, after, subResults)
+	result := buildResult(cfg, before, after, subResults, start)
 
 	// ---- Step 13: Read pre-warmed latency probe result ----
 	// The probe started before the main subscriber batch (Step 9a) and ran
@@ -244,7 +243,7 @@ func scrapeAll(ctx context.Context, top *Topology, hubPS *ProcessState, edgePS [
 }
 
 // buildResult combines before/after snapshots and subscriber results into a CellResult.
-func buildResult(cfg *Config, before, after *scrapeSet, subResults map[int]*SubResult) *CellResult {
+func buildResult(cfg *Config, before, after *scrapeSet, subResults map[int]*SubResult, start time.Time) *CellResult {
 	r := &CellResult{
 		P:         cfg.P,
 		X:         cfg.X,
@@ -361,7 +360,9 @@ func buildResult(cfg *Config, before, after *scrapeSet, subResults map[int]*SubR
 		}
 	}
 
-	r.WallDuration = fmt.Sprintf("%ds", int(cfg.Hold.Seconds())+15)
+	// Measured wall time of the whole cell (setup + hold + teardown), not a
+	// constant derived from the hold duration.
+	r.WallDuration = fmt.Sprintf("%ds", int(time.Since(start).Seconds()))
 	return r
 }
 
