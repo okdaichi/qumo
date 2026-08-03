@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/qumo-dev/qumo/internal/doctor"
+	"github.com/qumo-dev/qumo/internal/hls"
 	"github.com/qumo-dev/qumo/internal/ingest"
 	"github.com/qumo-dev/qumo/internal/loadgen"
 	"github.com/qumo-dev/qumo/internal/playground"
@@ -16,6 +17,7 @@ import (
 
 var (
 	// overridable command handlers for easier unit-testing
+	runHLS        = hls.Run
 	runRelay      = relay.Run
 	runRTMP       = ingest.RunRTMP
 	runRTSP       = ingest.RunRTSP     // push server (ANNOUNCE/RECORD)
@@ -77,6 +79,8 @@ func run(args []string) int {
 
 	var err error
 	switch cmd {
+	case "hls":
+		err = runHLS(cmdArgs)
 	case "relay":
 		err = runRelay(cmdArgs)
 	case "rtmp":
@@ -108,6 +112,7 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "Usage: qumo <command>  (%s)\n", version.Short())
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Commands:")
+	fmt.Fprintln(os.Stderr, "  hls        Start the HLS/DASH egress server")
 	fmt.Fprintln(os.Stderr, "  relay      Start the MoQ relay server (--role hub|edge; default flat)")
 	fmt.Fprintln(os.Stderr, "  rtmp       Start the RTMP ingest server")
 	fmt.Fprintln(os.Stderr, "  rtsp       Pull from an RTSP source (e.g. IP camera) and republish as MoQT")

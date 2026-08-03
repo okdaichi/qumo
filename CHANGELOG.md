@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`qumo hls` HLS/DASH egress subcommand (`internal/hls`)** — feeds a MoQ track
+  from a relay into qumo-ledger and serves the ledger's HLS playlist and DASH
+  MPD over HTTP. qumo-ledger is consumed through a local `replace` until it is
+  released. Packaging MoQ payloads into fMP4 segments and sample-accurate media
+  timestamps are flagged follow-ups.
 - **`qumo loadgen` end-to-end latency reporting** — subscribers decode the
   publisher's UnixNano stamp (payload bytes 8–16) and record delivery latency
   in a lock-free histogram (0.1 ms buckets, 1 s ceiling); the histogram is
