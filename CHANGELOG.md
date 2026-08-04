@@ -30,6 +30,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   default). Report in `docs/perf/MULTI-PROCESS-FANOUT-SCALING.md`.
 
 ### Changed
+- **Dependency bump: gomoqt v0.17.0 → quic-go v0.61.0.** Bumps
+  `github.com/qumo-dev/gomoqt` to v0.17.0, which pulls `quic-go` v0.61.0
+  (was v0.60.0) and `okdaichi/webtransport-go` v0.12.0-okdaichi.2 transitively.
+  quic-go 0.61 adds WebTransport-oriented stream APIs (`TryWriteAll`,
+  `WriteWithLimit`, `SetReceiveFinalSizeCallback`) and a 27% transport-parameter
+  parse speedup; the breaking changes (`StreamID.Type`/`InitiatedBy` removal,
+  `http3.ParseCapsule` → `CapsuleParser`) are absorbed by the bumped gomoqt /
+  webtransport-go, so qumo's own code needs no changes. Supersedes dependabot #355.
+
 - **Reusable OpenGroupAt deadline** — egress delivery no longer constructs a
   `context.WithTimeout` per delivered group; a per-subscriber reusable
   timer/context bounds the open instead. 354.8→57.8 ns and 4→0 allocs per
