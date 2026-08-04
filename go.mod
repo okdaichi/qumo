@@ -5,8 +5,8 @@ go 1.26.5
 require (
 	github.com/prometheus/client_golang v1.24.1
 	github.com/prometheus/client_model v0.6.2
-	github.com/quic-go/quic-go v0.60.0
-	github.com/qumo-dev/gomoqt v0.16.2-0.20260718145816-7bc42f96aec4
+	github.com/quic-go/quic-go v0.61.0
+	github.com/qumo-dev/gomoqt v0.17.0
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/sync v0.22.0
 )
@@ -18,7 +18,7 @@ require (
 	github.com/dunglas/httpsfv v1.1.0 // indirect
 	github.com/kylelemons/godebug v1.1.0 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
-	github.com/okdaichi/webtransport-go v0.11.0-okdaichi.1 // indirect
+	github.com/okdaichi/webtransport-go v0.12.0-okdaichi.2 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/prometheus/common v0.70.1 // indirect
 	github.com/prometheus/procfs v0.21.1 // indirect

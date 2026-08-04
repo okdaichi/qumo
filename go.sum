@@ -18,8 +18,8 @@ github.com/kylelemons/godebug v1.1.0 h1:RPNrshWIDI6G2gRW9EHilWtl7Z6Sb1BR0xunSBf0
 github.com/kylelemons/godebug v1.1.0/go.mod h1:9/0rRGxNHcop5bhtWyNeEfOS8JIWk580+fNqagV/RAw=
 github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 h1:C3w9PqII01/Oq1c1nUAm88MOHcQC9l5mIlSMApZMrHA=
 github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822/go.mod h1:+n7T8mK8HuQTcFwEeznm/DIxMOiR9yIdICNftLE1DvQ=
-github.com/okdaichi/webtransport-go v0.11.0-okdaichi.1 h1:uTvybqs12bobEebab84Q7ASLzAc746g/F8b36Eay168=
-github.com/okdaichi/webtransport-go v0.11.0-okdaichi.1/go.mod h1:JyG3UoP2xzpQZgyQMqXm5EUYLpCw9UGvuCigpvfkNRE=
+github.com/okdaichi/webtransport-go v0.12.0-okdaichi.2 h1:BCm5HsvIaDsIdRXY72Nen3A4prqhcKyDVWT1McjWVpM=
+github.com/okdaichi/webtransport-go v0.12.0-okdaichi.2/go.mod h1:otDqAmBT/CUDYeBxB1F6pnIHvbF2xjXMBkNNHfEEUDo=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/prometheus/client_golang v1.24.1 h1:JnJkREXzWxUdCuPFpIWZiPispT9xVV59uiuyR2bPlnU=
@@ -34,10 +34,10 @@ github.com/quic-go/go-ossfuzz-seeds v0.1.0 h1:APacT+iIaNF6fd8AGEiN3bT/Jtkd2jz4v4
 github.com/quic-go/go-ossfuzz-seeds v0.1.0/go.mod h1:3IOHRbJIc+L6YKMwfDtJAM9Vj9k0YY4muhuyUYk5tbk=
 github.com/quic-go/qpack v0.6.0 h1:g7W+BMYynC1LbYLSqRt8PBg5Tgwxn214ZZR34VIOjz8=
 github.com/quic-go/qpack v0.6.0/go.mod h1:lUpLKChi8njB4ty2bFLX2x4gzDqXwUpaO1DP9qMDZII=
-github.com/quic-go/quic-go v0.60.0 h1:xcQioE8OM66UQLeUMHltK1CCcOu3JbVB4JAQdDQSB+0=
-github.com/quic-go/quic-go v0.60.0/go.mod h1:wpKpjmPpftl30sL6pFh7REVpjbcCVy4zt2vDyK1TuJk=
-github.com/qumo-dev/gomoqt v0.16.2-0.20260718145816-7bc42f96aec4 h1:Uf69osFb4GaCbqNQkiiVbZIf8GoC5ANbAbAXFi2dqvk=
-github.com/qumo-dev/gomoqt v0.16.2-0.20260718145816-7bc42f96aec4/go.mod h1:9Oslhf9l/3g1Db8HaxdaIOatrm/GOSpJEXOYkSsTu0c=
+github.com/quic-go/quic-go v0.61.0 h1:ui88A53s8MSVYLC56en0KQ17HARk+9986Dn0SBfKNvA=
+github.com/quic-go/quic-go v0.61.0/go.mod h1:9So2anK4Tp22URSQq00k+Vo2PNkle96ycDPDHL4s9vs=
+github.com/qumo-dev/gomoqt v0.17.0 h1:PC0wynh+HKgx3Qx7bUqU9gWLcKn5I2WxRvo/UNjlVIs=
+github.com/qumo-dev/gomoqt v0.17.0/go.mod h1:whsgEPR+orX9nNsyL+NDLw6n5ETiu5/4Tw+MTxMlXFA=
 github.com/rogpeppe/go-internal v1.14.1 h1:UQB4HGPB6osV0SQTLymcB4TgvyWu6ZyliaW0tI/otEQ=
 github.com/rogpeppe/go-internal v1.14.1/go.mod h1:MaRKkUm5W0goXpeCfT7UZI6fk/L7L7so1lCWt35ZSgc=
 github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=
