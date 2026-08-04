@@ -33,6 +33,8 @@ function defaultPathFor(scenario: ScenarioId): string {
 			return `/rtsp/${broadcastId}`;
 		case "camera":
 			return `/live/camera`;
+		case "hls":
+			return `/hls/${broadcastId}`;
 	}
 }
 

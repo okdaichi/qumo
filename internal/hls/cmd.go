@@ -12,13 +12,16 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/qumo-dev/gomoqt/moqt"
+
 	"github.com/okdaichi/qumo-ledger/ledger"
 	"github.com/okdaichi/qumo-ledger/ledger/store/fsstore"
 	"github.com/okdaichi/qumo-ledger/stream"
 )
 
-// Run starts the HLS/DASH egress server: it feeds a MoQ track from a relay into
-// a qumo-ledger track and serves the ledger's HLS/DASH renderings over HTTP.
+// Run starts the HLS/DASH egress server: it subscribes to a MoQ track's catalog
+// to learn its schema and fMP4 init, writes each received CMAF group into a
+// qumo-ledger track, and serves the ledger's HLS/DASH renderings over HTTP.
 //
 // Configuration is read from environment variables (qumo convention):
 //
@@ -26,17 +29,17 @@ import (
 //	LEDGER_ROOT        - qumo-ledger filesystem store directory (default "./ledger")
 //	LEDGER_TRACK       - ledger track path (default "live/cam1/video")
 //	RELAY_URL          - MoQ relay URL, e.g. "https://host:4433" (default "https://localhost:4433")
-//	RELAY_TRACK_PATH   - MoQ broadcast path to subscribe to (default "")
-//	RELAY_TRACK_NAME   - MoQ track name to subscribe to (default "video")
-//	TIMESCALE          - ledger track timescale units per second (default 90000)
+//	RELAY_TRACK_PATH   - MoQ broadcast path whose catalog to read (default "/live/cam1")
+//	RELAY_TRACK_NAME   - media track name in the catalog to relay (default "video")
+//	TIMESCALE          - fallback timescale when the catalog omits it (default 90000)
 //	GROUP_DURATION_MS  - assumed group duration for media-time derivation (default 2000)
 //	RELAY_TLS_INSECURE - skip relay TLS verification, dev only (default "true")
 func Run(_ []string) error {
 	addr := envOr("HLS_ADDR", ":8080")
 	root := envOr("LEDGER_ROOT", "./ledger")
-	trackPath := ledger.TrackPath(envOr("LEDGER_TRACK", "live/cam1/video"))
+	ledgerTrack := ledger.TrackPath(envOr("LEDGER_TRACK", "live/cam1/video"))
 
-	timescale, err := envUint("TIMESCALE", 90000)
+	fallbackTimescale, err := envUint("TIMESCALE", 90000)
 	if err != nil {
 		return fmt.Errorf("invalid TIMESCALE: %w", err)
 	}
@@ -44,7 +47,14 @@ func Run(_ []string) error {
 	if err != nil {
 		return fmt.Errorf("invalid GROUP_DURATION_MS: %w", err)
 	}
-	durationUnits := int64(groupMs) * int64(timescale) / 1000
+
+	cfg := feedConfig{
+		relayURL:  envOr("RELAY_URL", "https://localhost:4433"),
+		trackPath: envOr("RELAY_TRACK_PATH", "/live/cam1"),
+		trackName: envOr("RELAY_TRACK_NAME", "video"),
+		groupMs:   groupMs,
+		insecure:  envOr("RELAY_TLS_INSECURE", "true") == "true",
+	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -54,17 +64,31 @@ func Run(_ []string) error {
 		return fmt.Errorf("hls: open ledger store: %w", err)
 	}
 
-	track, err := openTrack(ctx, store, trackPath, uint32(timescale))
+	// Read the catalog before opening the track or building the handler: the
+	// schema and fMP4 init come from the catalog.
+	session, media, err := connect(ctx, cfg, uint32(fallbackTimescale))
 	if err != nil {
 		return err
 	}
+	defer func() {
+		// not actionable: the egress is stopping regardless of the close outcome.
+		_ = session.CloseWithError(moqt.NoError, "hls egress stopped")
+	}()
 
+	track, err := openTrack(ctx, store, ledgerTrack, media.schema)
+	if err != nil {
+		return err
+	}
 	writer, err := track.Writer(ctx)
 	if err != nil {
 		return fmt.Errorf("hls: open writer: %w", err)
 	}
 
-	handler, err := stream.NewHandler(track, stream.Options{})
+	opts := stream.Options{}
+	if len(media.init) > 0 {
+		opts.InitSegment = stream.InitSegment{Bytes: media.init}
+	}
+	handler, err := stream.NewHandler(track, opts)
 	if err != nil {
 		return fmt.Errorf("hls: build stream handler: %w", err)
 	}
@@ -78,13 +102,7 @@ func Run(_ []string) error {
 	// The feed writes MoQ groups into the ledger; it is independent of the HTTP
 	// server so a feed failure leaves the already-recorded track replayable.
 	go func() {
-		if err := feed(ctx, writer, feedConfig{
-			relayURL:      envOr("RELAY_URL", "https://localhost:4433"),
-			trackPath:     envOr("RELAY_TRACK_PATH", ""),
-			trackName:     envOr("RELAY_TRACK_NAME", "video"),
-			durationUnits: durationUnits,
-			insecure:      envOr("RELAY_TLS_INSECURE", "true") == "true",
-		}); err != nil {
+		if err := feedMedia(ctx, session, media, writer, cfg); err != nil && ctx.Err() == nil {
 			slog.Error("hls: feed ended", "err", err)
 		}
 	}()
@@ -96,7 +114,7 @@ func Run(_ []string) error {
 		}
 	}()
 
-	slog.Info("hls: serving", "addr", addr, "track", trackPath)
+	slog.Info("hls: serving", "addr", addr, "track", ledgerTrack)
 
 	<-ctx.Done()
 
@@ -108,14 +126,10 @@ func Run(_ []string) error {
 }
 
 // openTrack creates the ledger track if absent, adopting an existing one. The
-// schema's TimeSource is ingest: the feed stamps Wallclock from its own clock.
-func openTrack(ctx context.Context, store *fsstore.Store, path ledger.TrackPath, timescale uint32) (*ledger.Track, error) {
-	track, err := ledger.Create(ctx, store, path, ledger.TrackSchema{
-		Timescale:  timescale,
-		TimeSource: ledger.TimeSourceIngest,
-		MIME:       "video/mp4",
-		Encoding:   "fmp4",
-	}, ledger.Config{})
+// schema comes from the MSF catalog (its TimeSource is ingest: the feed stamps
+// Wallclock from its own clock).
+func openTrack(ctx context.Context, store *fsstore.Store, path ledger.TrackPath, schema ledger.TrackSchema) (*ledger.Track, error) {
+	track, err := ledger.Create(ctx, store, path, schema, ledger.Config{})
 	if err != nil {
 		if errors.Is(err, ledger.ErrTrackExists) {
 			return ledger.Open(ctx, store, path, ledger.Config{})

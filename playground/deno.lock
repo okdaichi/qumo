@@ -4,10 +4,12 @@
     "jsr:@okdaichi/av-nodes@0.10.4": "0.10.4",
     "jsr:@okdaichi/golikejs@0.10.0": "0.10.0",
     "jsr:@okdaichi/media-log@0.1": "0.1.0",
-    "jsr:@qumo/moq@~0.16.2": "0.16.2",
+    "jsr:@qumo/moq@0.17": "0.17.0",
     "npm:@deno/vite-plugin@^2.0.2": "2.0.2_vite@8.1.3__@types+node@26.1.0_@types+node@26.1.0",
     "npm:@types/node@^26.1.0": "26.1.0",
+    "npm:hls.js@^1.5.20": "1.6.16",
     "npm:lucide-solid@^1.23.0": "1.23.0_solid-js@1.9.14",
+    "npm:mp4-muxer@^5.2.1": "5.2.2",
     "npm:solid-js@^1.9.14": "1.9.14",
     "npm:typescript@~6.0.3": "6.0.3",
     "npm:vite-plugin-solid@^2.11.12": "2.11.12_solid-js@1.9.14_vite@8.1.3__@types+node@26.1.0_@types+node@26.1.0",
@@ -27,8 +29,8 @@
     "@okdaichi/media-log@0.1.0": {
       "integrity": "c8ed4fdaac82cf8a2ecb7aa1a5a114d136f9886548ceae2c64b2322485a3c034"
     },
-    "@qumo/moq@0.16.2": {
-      "integrity": "1ad14191c1d04253e9fd17b8dd7f9234dcd7c56e6683aef27eefc9a1f81c1c28",
+    "@qumo/moq@0.17.0": {
+      "integrity": "143cc6a5e2a3e671bc8596cbd81b6644d019eac874358ae65b2ad706c878029e",
       "dependencies": [
         "jsr:@okdaichi/golikejs",
         "npm:zod"
@@ -383,11 +385,17 @@
         "@babel/types"
       ]
     },
+    "@types/dom-webcodecs@0.1.18": {
+      "integrity": "sha512-vAvE8C9DGWR+tkb19xyjk1TSUlJ7RUzzp4a9Anu7mwBT+fpyePWK1UxmH14tMO5zHmrnrRIMg5NutnnDztLxgg=="
+    },
     "@types/node@26.1.0": {
       "integrity": "sha512-O0A1G3xPGy4w7AgQdAQYUlQ+BKk2Oovw8eRpofyp5KdBZULnbe+WqaOVNrm705SHphCiG4XHsACrSmPu1f+Kgw==",
       "dependencies": [
         "undici-types"
       ]
+    },
+    "@types/wicg-file-system-access@2020.9.8": {
+      "integrity": "sha512-ggMz8nOygG7d/stpH40WVaNvBwuyYLnrg5Mbyf6bmsj/8+gb6Ei4ZZ9/4PNpcPNTT8th9Q8sM8wYmWGjMWLX/A=="
     },
     "babel-plugin-jsx-dom-expressions@0.40.6_@babel+core@7.29.0": {
       "integrity": "sha512-v3P1MW46Lm7VMpAkq0QfyzLWWkC8fh+0aE5Km4msIgDx5kjenHU0pF2s+4/NH8CQn/kla6+Hvws+2AF7bfV5qQ==",
@@ -469,6 +477,9 @@
     },
     "gensync@1.0.0-beta.2": {
       "integrity": "sha512-3hN7NaskYvMDLQY55gnW3NQ+mesEAepTqlg+VEbj7zzqEMBVNhzcGYYeqFo/TlYz6eQiFcp1HcsCZO+nGgS8zg=="
+    },
+    "hls.js@1.6.16": {
+      "integrity": "sha512-VSIRpLfRwlAAdGL4wiTucx2ScRipo0ed1FBatWkyt832jC4CReKstga6yIhYVwGu9LOBjuX9wzmRMeQdBJtzEA=="
     },
     "html-entities@2.3.3": {
       "integrity": "sha512-DV5Ln36z34NNTDgnz0EWGBLZENelNAtkiFA4kyNOG2tDI6Mz1uSWiq1wAKdyjnJwyDiDO7Fa2SO1CTxPXL8VxA=="
@@ -578,6 +589,14 @@
       "dependencies": [
         "is-what"
       ]
+    },
+    "mp4-muxer@5.2.2": {
+      "integrity": "sha512-dhozjTywI0h2qFzeShagt8YYw811fh1XlwiDCE2f6Aeqf6xG2CyuShoSa5E0AZDO8pPF0JOZ3wOmWBNWIGdSpQ==",
+      "dependencies": [
+        "@types/dom-webcodecs",
+        "@types/wicg-file-system-access"
+      ],
+      "deprecated": true
     },
     "ms@2.1.3": {
       "integrity": "sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA=="
@@ -745,7 +764,9 @@
       "jsr:@okdaichi/av-nodes@0.10.4",
       "jsr:@okdaichi/golikejs@0.10.0",
       "jsr:@okdaichi/media-log@0.1",
-      "jsr:@qumo/moq@~0.16.2"
+      "jsr:@qumo/moq@0.17",
+      "npm:hls.js@^1.5.20",
+      "npm:mp4-muxer@^5.2.1"
     ],
     "packageJson": {
       "dependencies": [

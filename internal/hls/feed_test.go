@@ -1,11 +1,15 @@
 package hls
 
 import (
+	"encoding/base64"
 	"testing"
 	"time"
 
+	"github.com/qumo-dev/gomoqt/msf"
+
 	"github.com/okdaichi/qumo-ledger/ledger"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // groupInfo derives a monotonic media time from the append ordinal — not the
@@ -38,4 +42,46 @@ func Test_groupInfo(t *testing.T) {
 			assert.Equal(t, uint64(30), got.ObjectCount)
 		})
 	}
+}
+
+// schemaFromTrack projects a CMAF catalog track onto the ledger schema, taking
+// the timescale and MIME from the catalog and falling back when they are absent.
+func Test_schemaFromTrack(t *testing.T) {
+	t.Run("from catalog", func(t *testing.T) {
+		ts := int64(90000)
+		s := schemaFromTrack(&msf.Track{
+			Name: "video", Packaging: msf.PackagingCMAF,
+			Timescale: &ts, MimeType: "video/mp4", Codec: "avc1",
+		}, 1000)
+
+		assert.Equal(t, uint32(90000), s.Timescale)
+		assert.Equal(t, "video/mp4", s.MIME)
+		assert.Equal(t, "fmp4", s.Encoding)
+		assert.Equal(t, ledger.TimeSourceIngest, s.TimeSource)
+	})
+
+	t.Run("fallback timescale", func(t *testing.T) {
+		s := schemaFromTrack(&msf.Track{Name: "video", Packaging: msf.PackagingCMAF}, 1000)
+		assert.Equal(t, uint32(1000), s.Timescale)
+		assert.Equal(t, "video/mp4", s.MIME, "MIME defaults to video/mp4 for CMAF video")
+	})
+}
+
+// initFromTrack base64-decodes the catalog InitData (the fMP4 init), tolerating
+// its absence or malformed values.
+func Test_initFromTrack(t *testing.T) {
+	want := []byte("fmp4-init-bytes")
+
+	assert.Equal(t, want, initFromTrack(&msf.Track{InitData: base64.StdEncoding.EncodeToString(want)}))
+	assert.Nil(t, initFromTrack(&msf.Track{}), "no InitData yields no init")
+	assert.Nil(t, initFromTrack(&msf.Track{InitData: "!!!not-base64!!!"}), "malformed InitData yields no init")
+}
+
+// findTrack selects a track by name from the catalog.
+func Test_findTrack(t *testing.T) {
+	c := msf.Catalog{Tracks: []msf.Track{{Name: "video"}, {Name: "audio"}}}
+
+	require.NotNil(t, findTrack(c, "video"))
+	assert.Equal(t, "video", findTrack(c, "video").Name)
+	assert.Nil(t, findTrack(c, "missing"))
 }

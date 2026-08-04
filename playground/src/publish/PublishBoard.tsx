@@ -12,6 +12,7 @@ import {
 import { getMediaStream, type MediaSourceType } from "./media.ts";
 import { background, type CancelFunc, type Context, withCancel } from "@okdaichi/golikejs/context";
 import { MediaFrame } from "./media_frame.ts";
+import { CmafGopMuxer, RawBytes, splitInitFragment } from "./cmaf.ts";
 import { friendlyMessage } from "../errors.ts";
 import { createMediaLogger, MediaTags } from "@okdaichi/media-log";
 import { createStatsTicker } from "../stats.ts";
@@ -57,8 +58,12 @@ const SOURCES: { id: MediaSourceType; label: string; icon: Component<{ class?: s
 	{ id: "screen", label: "Screen", icon: Monitor },
 ];
 
-export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
+export function PublishBoard(
+	props: { mux: TrackMux; path: Accessor<string>; packaging?: "loc" | "cmaf" },
+) {
 	const mux = props.mux;
+	const packaging = props.packaging ?? "loc";
+	const isCmaf = packaging === "cmaf";
 
 	const [sourceType, setSourceType] = createSignal<MediaSourceType>("camera");
 	const [isStreaming, setIsStreaming] = createSignal(false);
@@ -245,7 +250,7 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 		const initialTrack: Track = {
 			name: "video",
 			role: "video",
-			packaging: "loc",
+			packaging,
 			isLive: true,
 			codec: config.codec,
 			width: config.width,
@@ -264,45 +269,74 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 				if (!videoEncodeNode) throw new Error("Encode node not initialized");
 
 				let currentGroup: GroupWriter | undefined;
+				let gopMuxer: CmafGopMuxer | undefined;
 				// Tracks whether we have published an initData-bearing catalog for the
 				// current encoder configuration. Reset when the encoder is reconfigured.
 				let initDataPublished = false;
+
+				// Update the catalog with a Base64 initData for the video track.
+				const publishInitData = (initData: string) => {
+					const updatedTrack: Track = { ...initialTrack, initData };
+					const tracks: Track[] = audioTrackDef
+						? [updatedTrack, audioTrackDef]
+						: [updatedTrack];
+					broadcast.setCatalog({ version: 1, tracks }).catch((err: unknown) =>
+						log.error("setCatalog failed", { err })
+					);
+				};
 
 				const { done } = videoEncodeNode.encodeTo({
 					output: async (
 						chunk: EncodedVideoChunk,
 						decoderConfig?: VideoDecoderConfig,
 					) => {
-						// When the encoder emits a new decoder config (first keyframe or
-						// parameter change), push the SPS/PPS description into the catalog
-						// as a Base64-encoded initData field so subscribers can configure
-						// their VideoDecoder with the correct description.
-						if (decoderConfig?.description && !initDataPublished) {
-							initDataPublished = true;
-							const initData = encodeBase64(
-								decoderConfig.description as ArrayBufferLike,
-							);
-							const updatedTrack: Track = { ...initialTrack, initData };
-							const tracks: Track[] = audioTrackDef
-								? [updatedTrack, audioTrackDef]
-								: [updatedTrack];
-							broadcast.setCatalog({ version: 1, tracks }).catch((err: unknown) =>
-								log.error("setCatalog failed", { err })
-							);
+						if (isCmaf) {
+							// CMAF: mux one fMP4 fragment per GOP and publish it raw (no LOC
+							// timestamp framing) so the HLS egress serves it verbatim.
+							if (chunk.type === "key") {
+								if (gopMuxer) {
+									const { init, fragment } = splitInitFragment(
+										gopMuxer.finalize(),
+									);
+									if (!initDataPublished) {
+										initDataPublished = true;
+										publishInitData(encodeBase64(init));
+									}
+									const [group, oerr] = await trackWriter.openGroup();
+									if (oerr) return oerr;
+									const werr = await group.writeFrame(new RawBytes(fragment));
+									void group.close();
+									if (werr) throw werr;
+								}
+								gopMuxer = new CmafGopMuxer(config.width, config.height);
+							} else if (!gopMuxer) {
+								return; // drop delta frames until first keyframe
+							}
+							gopMuxer.addVideoChunk(chunk);
+						} else {
+							// LOC: push the SPS/PPS description into the catalog as initData
+							// (Base64) so subscribers can configure their VideoDecoder.
+							if (decoderConfig?.description && !initDataPublished) {
+								initDataPublished = true;
+								publishInitData(
+									encodeBase64(decoderConfig.description as ArrayBufferLike),
+								);
+							}
+
+							if (chunk.type === "key") {
+								if (currentGroup) void currentGroup.close();
+								const [group, err] = await trackWriter.openGroup();
+								if (err) return err;
+								currentGroup = group;
+							} else if (!currentGroup) {
+								return; // drop delta frames until first keyframe
+							}
+
+							const err = await currentGroup!.writeFrame(new MediaFrame(chunk));
+							if (err) throw err;
 						}
 
-						if (chunk.type === "key") {
-							if (currentGroup) void currentGroup.close();
-							const [group, err] = await trackWriter.openGroup();
-							if (err) return err;
-							currentGroup = group;
-						} else if (!currentGroup) {
-							return; // drop delta frames until first keyframe
-						}
-
-						const err = await currentGroup!.writeFrame(new MediaFrame(chunk));
-						if (err) throw err;
-						// Tally the published frame for the live stats overlay…
+						// Tally the published bytes for the live stats overlay…
 						videoStats.mark(chunk.byteLength);
 						// …and for the periodic diagnostic log line (fps + bitrate).
 						encFps.mark();

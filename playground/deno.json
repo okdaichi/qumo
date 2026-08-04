@@ -3,7 +3,9 @@
 		"@okdaichi/av-nodes": "jsr:@okdaichi/av-nodes@0.10.4",
 		"@okdaichi/golikejs": "jsr:@okdaichi/golikejs@0.10.0",
 		"@okdaichi/media-log": "jsr:@okdaichi/media-log@^0.1.0",
-		"@qumo/moq": "jsr:@qumo/moq@^0.16.2"
+		"@qumo/moq": "jsr:@qumo/moq@^0.17.0",
+		"hls.js": "npm:hls.js@^1.5.20",
+		"mp4-muxer": "npm:mp4-muxer@^5.2.1"
 	},
 	"fmt": {
 		"useTabs": true,
@@ -11,5 +13,6 @@
 		"indentWidth": 4,
 		"singleQuote": false,
 		"semiColons": true
-	}
+	},
+	"minimumDependencyAge": "0"
 }

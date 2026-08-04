@@ -3,11 +3,8 @@ import { connect, DefaultTrackMux } from "@qumo/moq";
 import type { Session } from "@qumo/moq";
 import { PublishBoard } from "./publish/PublishBoard.tsx";
 import { SubscribeBoard } from "./subscribe/SubscribeBoard.tsx";
-import {
-	type ConnectionState,
-	ConnectionStatus,
-	friendlyConnError,
-} from "./ConnectionStatus.tsx";
+import { HlsPlayer } from "./HlsPlayer.tsx";
+import { type ConnectionState, ConnectionStatus, friendlyConnError } from "./ConnectionStatus.tsx";
 import { sanitizeReason } from "./errors.ts";
 import { buildTransportOptions, type CertHashProblem } from "./cert.ts";
 import { getConfig } from "./config.ts";
@@ -25,6 +22,7 @@ export function ScenarioView(props: {
 	const scenario = SCENARIOS[props.scenario];
 	const ingest = scenario.mode === "subscribe";
 	const isCamera = props.scenario === "camera";
+	const isHls = props.scenario === "hls";
 	const [pullActive, setPullActive] = createSignal(false);
 
 	const mux = DefaultTrackMux;
@@ -40,7 +38,9 @@ export function ScenarioView(props: {
 	}).then((s) => s);
 
 	let certReady = false;
-	let cachedTransportOptions: ReturnType<typeof buildTransportOptions>["transportOptions"] | undefined;
+	let cachedTransportOptions:
+		| ReturnType<typeof buildTransportOptions>["transportOptions"]
+		| undefined;
 	let cachedProblem: CertHashProblem | null = null;
 
 	// Shared dial logic — called once the config is resolved AND (for camera)
@@ -56,7 +56,9 @@ export function ScenarioView(props: {
 				setConnState("connected");
 				s.closed.then(
 					(info) => {
-						setConnError(sanitizeReason(info.reason, "Connection closed by the relay."));
+						setConnError(
+							sanitizeReason(info.reason, "Connection closed by the relay."),
+						);
 						setConnState("closed");
 					},
 					(e) => {
@@ -119,12 +121,22 @@ export function ScenarioView(props: {
 				/>
 			)}
 			{ingest && !isCamera && (
-				<PushInstructions scenario={props.scenario} path={props.path} />
+				<PushInstructions
+					scenario={props.scenario}
+					path={props.path}
+				/>
 			)}
 
 			<div class={ingest ? "boards single" : "boards"}>
-				{!ingest && <PublishBoard mux={mux} path={props.path} />}
-				{(isCamera ? pullActive() : true) && (
+				{!ingest && (
+					<PublishBoard
+						mux={mux}
+						path={props.path}
+						packaging={isHls ? "cmaf" : undefined}
+					/>
+				)}
+				{isHls && <HlsPlayer path={props.path} />}
+				{!isHls && (isCamera ? pullActive() : true) && (
 					<SubscribeBoard session={session} path={props.path} />
 				)}
 				{isCamera && !pullActive() && (
