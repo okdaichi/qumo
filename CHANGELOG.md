@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+_No changes yet._
+
+## [v0.6.0] - 2026-08-05
+
+### Release notes — observability tooling + transport upgrade
+
+A measurement-and-transport cycle with no relay hot-path behavior change. qumo
+gains the harness needed to characterize fan-out — end-to-end latency in the
+load generator, a native Go multi-relay benchmark controller, and build-tagged
+stage-latency instrumentation — moves to **quic-go v0.61.0** via gomoqt v0.17.0,
+and tightens the playground's WebTransport CORS surface. The reusable
+OpenGroupAt deadline (a carry-over efficiency change) is also included.
+
 ### Added
 - **`qumo loadgen` end-to-end latency reporting** — subscribers decode the
   publisher's UnixNano stamp (payload bytes 8–16) and record delivery latency
