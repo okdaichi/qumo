@@ -25,11 +25,7 @@ func TestUIDisplayURL(t *testing.T) {
 	}
 }
 
-func TestConfigureRelayEnv_SetsAdvertiseAddr(t *testing.T) {
-	// A wildcard relay bind must get an ADVERTISE_ADDR so the relay's
-	// wildcard-address guard passes; with no public host known at startup, it
-	// falls back to "localhost".
-	t.Setenv("ADVERTISE_ADDR", "")
+func TestConfigureRelayEnv_SetsRelayAddr(t *testing.T) {
 	t.Setenv("RELAY_NAME", "")
 
 	cert, err := EnsureCert(t.TempDir())
@@ -37,17 +33,9 @@ func TestConfigureRelayEnv_SetsAdvertiseAddr(t *testing.T) {
 	require.NoError(t, configureRelayEnv("0.0.0.0:4433", cert))
 
 	assert.Equal(t, "0.0.0.0:4433", os.Getenv("RELAY_ADDR"))
-	assert.Equal(t, "localhost:4433", os.Getenv("ADVERTISE_ADDR"))
 	assert.Equal(t, cert.CertFile, os.Getenv("CERT_FILE"))
 	assert.Equal(t, cert.KeyFile, os.Getenv("KEY_FILE"))
 	assert.Equal(t, "playground", os.Getenv("RELAY_NAME"))
-}
-
-func TestConfigureRelayEnv_LoopbackAdvertisesBindHost(t *testing.T) {
-	cert, err := EnsureCert(t.TempDir())
-	require.NoError(t, err)
-	require.NoError(t, configureRelayEnv("127.0.0.1:4433", cert))
-	assert.Equal(t, "127.0.0.1:4433", os.Getenv("ADVERTISE_ADDR"))
 }
 
 func TestConfigureRelayEnv_DoesNotStompRelayName(t *testing.T) {

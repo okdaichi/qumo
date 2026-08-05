@@ -82,8 +82,8 @@ There are two ways to run the demo:
   Then open <http://localhost:5173>.
 
 `mage relay` is the dev wrapper: it applies dev-friendly defaults
-(`RELAY_ADDR=:4433`, `ADVERTISE_ADDR=localhost:4433`, and CORS allowing the
-Vite origins) when you haven't set them, so it connects alongside `mage web`
+(`RELAY_ADDR=:4433` and CORS allowing the Vite origins) when you haven't set
+them, so it connects alongside `mage web`
 out of the box. The standalone `qumo relay` binary keeps its secure defaults
 (same-origin CORS); if you use it instead, set
 `CORS_ALLOWED_ORIGINS=http://localhost:5173` to allow the dev UI.

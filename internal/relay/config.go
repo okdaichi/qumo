@@ -15,10 +15,6 @@ type Config struct {
 	// `qumo relay --role` flag (execution mode); there is no env equivalent.
 	Role string
 
-	// AdvertiseAddr is the address this relay advertises to peers.
-	// It should be the address that other nodes can use to connect to this relay.
-	AdvertiseAddr string
-
 	// GroupCacheSize is the number of completed groups each track's ring
 	// retains for late/backfill subscribers. ≤0 falls back to
 	// DefaultGroupCacheSize.

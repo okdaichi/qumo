@@ -36,8 +36,7 @@ type Options struct {
 	Assets fs.FS
 	// StartRelay launches the relay in-process. It is expected to block until
 	// the relay shuts down. The orchestrator sets the relay's env vars
-	// (RELAY_ADDR, CERT_FILE, KEY_FILE, RELAY_NAME, ADVERTISE_ADDR) before
-	// calling it.
+	// (RELAY_ADDR, CERT_FILE, KEY_FILE, RELAY_NAME) before calling it.
 	StartRelay func() error
 }
 
@@ -70,9 +69,7 @@ func Run(ctx context.Context, o Options) error {
 	slog.Info("dev certificate ready",
 		"cert", cert.CertFile, "hash", cert.HashHex)
 
-	// 2. Configure the relay via its env vars before it reads them. ADVERTISE_ADDR
-	//    is set so a wildcard relay bind (e.g. 0.0.0.0:4433 for public hosting)
-	//    satisfies the relay's wildcard-address guard; it's a no-op for loopback.
+	// 2. Configure the relay via its env vars before it reads them.
 	if err := configureRelayEnv(o.RelayAddr, cert); err != nil {
 		return err
 	}
@@ -135,22 +132,10 @@ func Run(ctx context.Context, o Options) error {
 }
 
 // configureRelayEnv sets the env vars the relay reads, on the current process.
-// ADVERTISE_ADDR is required when RELAY_ADDR is a wildcard (public hosting); it
-// is set to the bind host (or "localhost" for a wildcard bind) so the relay's
-// guard passes. It is functionally unused for the single-node demo (PEERS is
-// cleared), so the exact value doesn't matter. PEERS is explicitly cleared so a
-// user-exported peer list can't pull the single-node demo into a cluster dial.
+// PEERS is explicitly cleared so a user-exported peer list can't pull the
+// single-node demo into a cluster dial.
 func configureRelayEnv(relayAddr string, cert *Cert) error {
 	if err := os.Setenv("RELAY_ADDR", relayAddr); err != nil {
-		return err
-	}
-	// A wildcard bind has no single address to advertise; use localhost as a
-	// placeholder. For a concrete bind, advertise the bind host:port.
-	advertiseHost, _, err := net.SplitHostPort(relayAddr)
-	if err != nil || advertiseHost == "" || advertiseHost == "0.0.0.0" || advertiseHost == "::" {
-		advertiseHost = "localhost"
-	}
-	if err := os.Setenv("ADVERTISE_ADDR", net.JoinHostPort(advertiseHost, portOf(relayAddr))); err != nil {
 		return err
 	}
 	if err := os.Setenv("CERT_FILE", cert.CertFile); err != nil {

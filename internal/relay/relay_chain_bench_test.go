@@ -126,7 +126,7 @@ func spinRelay(tb testing.TB, nodeID, addr string, cert tls.Certificate, pool *x
 	tb.Helper()
 	// Sweepable relay knobs (paramexp wiring): RELAY_RING → GroupCacheSize,
 	// RELAY_FRAME → FrameCapacity. ≤0 keeps the defaults.
-	cfg := &Config{NodeID: nodeID, AdvertiseAddr: addr}
+	cfg := &Config{NodeID: nodeID}
 	if v := envIntDef("RELAY_RING", 0); v > 0 {
 		cfg.GroupCacheSize = v
 	}

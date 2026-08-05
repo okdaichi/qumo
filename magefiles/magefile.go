@@ -332,7 +332,6 @@ func Relay() error {
 func relayDevEnv() []string {
 	defaults := map[string]string{
 		"RELAY_ADDR":           ":4433",
-		"ADVERTISE_ADDR":       "localhost:4433",
 		"CORS_ALLOWED_ORIGINS": "http://localhost:5173,http://127.0.0.1:5173",
 	}
 	applied := []string{}
