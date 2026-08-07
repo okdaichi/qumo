@@ -15,8 +15,7 @@ Flags:
 ```
 
 ```bash
-qumo playground
-# → relay + web UI at http://127.0.0.1:8080
+qumo playground   # relay + web UI at http://127.0.0.1:8080
 ```
 
 The browser learns the relay URL automatically from whatever host it opened

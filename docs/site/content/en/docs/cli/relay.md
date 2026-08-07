@@ -4,7 +4,7 @@ description: Start the MoQT relay server.
 weight: 1
 ---
 
-Starts the MoQT relay server: accepts publishers and subscribers over
+The core `qumo` command: accepts publishers and subscribers over
 QUIC/WebTransport, and meshes with peer relays for content discovery.
 
 ```

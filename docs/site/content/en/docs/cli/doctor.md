@@ -8,7 +8,7 @@ Explains the relay's *effective* runtime configuration and why — read-only,
 it changes nothing.
 
 ```bash
-qumo doctor   # read-only, changes nothing
+qumo doctor
 ```
 
 Currently reports the effective GC target (which of `GOGC`, `RELAY_GOGC`, and
