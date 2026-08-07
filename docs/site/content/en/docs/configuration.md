@@ -5,9 +5,7 @@ weight: 2
 ---
 
 qumo is configured entirely through **environment variables** — there is no
-config file. The full annotated reference lives in
-[`relay-config.example.env`](https://github.com/qumo-dev/qumo/blob/main/relay-config.example.env)
-in the repo; this page groups the variables by concern.
+config file. This page groups every variable by concern.
 
 ```bash
 export $(grep -v '^#' relay.env | xargs)   # bash/zsh

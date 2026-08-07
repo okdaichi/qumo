@@ -10,13 +10,17 @@ qumo requires TLS 1.3 for its QUIC listener, configured via `CERT_FILE` /
 `KEY_FILE` (see [Configuration → Server]({{< relref "../configuration" >}}#server)
 for the full variable reference).
 
-For local development, `mage cert` generates a dev cert (mkcert if available,
-otherwise self-signed):
+For local development, generate a browser-trusted cert with
+[mkcert](https://github.com/FiloSottile/mkcert):
 
 ```bash
-mage cert
+mkcert -install
+mkcert -cert-file certs/server.crt -key-file certs/server.key localhost 127.0.0.1 ::1
 qumo relay
 ```
+
+(`qumo playground` needs no manual cert — it generates and trusts its own dev
+certificate automatically.)
 
 ## Mutual TLS between peers (optional)
 

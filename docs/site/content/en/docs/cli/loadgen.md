@@ -55,30 +55,8 @@ qumo loadgen publish       --relay <host:4433> --ca <cert.pem>               # t
 qumo loadgen subscribe --relay <host:4433> --ca <cert.pem> --hold 15s 12000  # measure N=12000
 ```
 
-`subscribe --results <dir>` appends a `capacity`-group record to
-`results.jsonl`, which the bench dashboard (`scripts/relay_bench_report.ts`)
-renders.
-
-## Sweeping / finding the ceiling
-
-Sweeping a list of session counts, or auto-finding the ceiling, is
-orchestration and lives in a separate driver — `tools/capacity` — that
-composes these primitives (starts a relay + publisher, then probes session
-counts):
-
-```bash
-go build -o capacity ./tools/capacity
-
-# One box: spawns a local relay (self-signed cert, no openssl), CPU-isolated
-# from the load via --relay-cores. A fresh relay starts per probe.
-./capacity --start-relay --relay-cores 0-1 --sessions "500 1000 2000" --hold 10s
-./capacity --start-relay --relay-cores 0-1 --auto --start 2000 --max 50000 --bisect
-
-# Two hosts: point at a relay running elsewhere; only generates load.
-./capacity --relay relay.example.net:4433 --ca cert.pem --auto --start 5000 --max 30000
-```
-
-A distributed (multi-machine) run is what a large session-ceiling claim needs
-to be *confirmed* rather than extrapolated — see [Observability]({{< relref "../observability" >}})
-for the metrics `loadgen` and `capacity` scrape to measure the relay's own
-per-session cost.
+`subscribe --results <dir>` appends a machine-readable capacity record to a
+JSONL file — useful input for your own sweep/reporting tooling if you're
+scripting a series of runs at increasing `N` to find a relay's session
+ceiling. See [Observability]({{< relref "../observability" >}}) for the
+metrics that back the numbers `loadgen` reports.
