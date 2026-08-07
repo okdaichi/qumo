@@ -156,9 +156,10 @@ export function PublishBoard(
 				},
 			});
 		}
-		if (audioContext && !audioEncodeNode) {
-			audioEncodeNode = new AudioEncodeNode(audioContext);
-		}
+		// Note: AudioEncodeNode is created later in the audio-setup block, NOT
+		// here. av-nodes starts its encode loop on construction (async worklet
+		// callback), so the node must be configured the instant it exists — see
+		// the comment there for why a gap between create and configure bricks it.
 
 		// Acquire media first — we need the actual track dimensions before configuring the encoder.
 		// Apply the chosen resolution/framerate as getUserMedia ideal constraints.
@@ -235,14 +236,24 @@ export function PublishBoard(
 		setCanvasWidth(actualWidth);
 		setCanvasHeight(actualHeight);
 
-		// Set up audio encoder (AudioContext.resume() works here as we're in a user-gesture handler).
-		if (audioContext && audioEncodeNode) {
+		// Set up the audio encoder. Create the node and configure() it on the
+		// SAME synchronous step: av-nodes starts its internal encode loop inside
+		// the worklet's async addModule() callback (not in the constructor), so a
+		// configure() called immediately after `new AudioEncodeNode` always beats
+		// the loop's first read — the encoder is configured before any frame is
+		// encoded. A gap between create and configure is fatal: if the context is
+		// running, the loop encodes on an unconfigured codec, throws
+		// InvalidStateError, and dies permanently (av-nodes can't recover the
+		// loop). That is why the node is created here, not earlier. resume()
+		// follows configure so the context only runs once the encoder is ready.
+		if (audioContext) {
 			try {
-				await audioContext.resume();
 				const audioCfg = await audioEncoderConfig({
 					sampleRate: audioContext.sampleRate,
 					channels: audioContext.destination.channelCount,
 				});
+				// Create on first Start; reuse and reconfigure on retry.
+				if (!audioEncodeNode) audioEncodeNode = new AudioEncodeNode(audioContext);
 				audioEncodeNode.configure(audioCfg);
 				audioTrackDef = {
 					name: "audio",
@@ -253,6 +264,9 @@ export function PublishBoard(
 					samplerate: audioCfg.sampleRate,
 					channelConfig: String(audioCfg.numberOfChannels),
 				};
+				// resume() is still in the Start click's user gesture, so Chrome
+				// honors it even after the config-probe await above.
+				await audioContext.resume();
 			} catch (err) {
 				log.warn("audio setup failed, continuing without audio", { err });
 			}
