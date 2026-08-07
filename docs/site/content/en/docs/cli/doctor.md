@@ -5,7 +5,8 @@ weight: 6
 ---
 
 Explains the relay's *effective* runtime configuration and why — read-only,
-it changes nothing.
+it changes nothing. It doesn't run a server or connect to a relay over the
+network; it only reads local environment variables.
 
 ```bash
 qumo doctor

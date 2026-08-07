@@ -4,7 +4,9 @@ description: One-command local demo — in-process relay plus the embedded web U
 weight: 5
 ---
 
-Starts a self-contained local demo: an in-process relay plus the embedded web UI.
+Starts a self-contained local demo: an in-process relay plus the embedded web
+UI. It's single-node only — `PEERS` is cleared on startup so it can't be
+pulled into a peer mesh even if you've set one in your environment.
 
 ```
 Usage: qumo playground [flags]
