@@ -4,6 +4,8 @@ description: Print build-time version information.
 weight: 8
 ---
 
+Prints build-time version info.
+
 ```bash
 qumo version
 # equivalent: qumo --version / qumo -v

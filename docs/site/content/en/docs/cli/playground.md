@@ -32,3 +32,5 @@ qumo playground --relay-addr 0.0.0.0:4433
 # The UI must be HTTPS: WebTransport requires a secure context (localhost excepted).
 # /config returns relayUrl=https://example.com:4433 (derived from the proxy's Host).
 ```
+
+For a standalone relay without the embedded UI, see [relay]({{< relref "relay" >}}).

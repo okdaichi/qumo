@@ -9,7 +9,7 @@ MoQT. Unlike `qumo relay`, this does **not** participate in the peer mesh (no
 peer connections, no announce relay) — it's a single self-contained origin.
 
 ```bash
-qumo rtmp
+qumo rtmp   # RTMP :1935 -> MoQT :4433
 ```
 
 ## Configuration

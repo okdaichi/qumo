@@ -9,7 +9,7 @@ bridges published streams to MoQT. Like [rtmp]({{< relref "rtmp" >}}), this is
 a self-contained origin and does not join the relay peer mesh.
 
 ```bash
-qumo rtsp-push
+qumo rtsp-push   # RTSP :8554 -> MoQT :4433
 ```
 
 ## Configuration
