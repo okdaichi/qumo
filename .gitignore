@@ -48,3 +48,7 @@ certs/
 *.pat
 # Ledger store written by `qumo hls` when run from the repo root.
 /ledger/
+
+# HLS egress scratch output from local runs with a custom data dir.
+/hls-data*/
+/hls-seedtest/
