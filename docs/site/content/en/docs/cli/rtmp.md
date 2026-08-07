@@ -9,6 +9,10 @@ MoQT. Like [rtsp]({{< relref "rtsp" >}}) and [rtsp-push]({{< relref "rtsp-push" 
 this is a self-contained origin and does not join the relay peer mesh (no
 peer connections, no announce relay).
 
+```
+Usage: qumo rtmp
+```
+
 ```bash
 qumo rtmp   # RTMP :1935 -> MoQT :4433
 ```

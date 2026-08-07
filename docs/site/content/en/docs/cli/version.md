@@ -7,6 +7,10 @@ weight: 8
 Prints build-time version info. It doesn't run a server or connect to a
 relay — purely local build metadata baked in at compile time.
 
+```
+Usage: qumo version
+```
+
 ```bash
 qumo version   # equivalent: qumo --version / qumo -v
 ```
