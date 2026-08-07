@@ -28,13 +28,9 @@ curl -L https://github.com/qumo-dev/qumo/releases/latest/download/qumo_0.4.0_lin
 {{< /tab >}}
 
 {{< tab name="Docker" >}}
-Prebuilt multi-arch images are published to GHCR:
-
-```bash
-docker pull ghcr.io/qumo-dev/qumo:latest
-```
-
-See [Deployment → Docker]({{< relref "deployment/docker" >}}) for compose examples and topology variants.
+Prebuilt multi-arch images are published to GHCR — see
+[Deployment → Docker]({{< relref "deployment/docker" >}}) for the pull/run
+commands and compose examples.
 {{< /tab >}}
 
 {{< tab name="Build from source" >}}

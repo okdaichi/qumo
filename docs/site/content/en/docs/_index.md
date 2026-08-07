@@ -23,11 +23,16 @@ in production — Docker topologies, peer discovery, Nomad, and TLS/mTLS:
 	{{< card link="deployment" title="Deployment" icon="globe-alt" subtitle="Docker topologies, peer discovery, Nomad, and TLS for deploying qumo relays." >}}
 {{< /cards >}}
 
-## Operating
+## Operate
 
 {{< cards >}}
 	{{< card link="observability" title="Observability" icon="chart-bar" subtitle="Prometheus metrics, health checks, and pprof." >}}
-	{{< card link="cli" title="CLI reference" icon="terminal" subtitle="relay, rtmp, rtsp, rtsp-push, playground, loadgen, doctor." >}}
+{{< /cards >}}
+
+## Reference
+
+{{< cards >}}
+	{{< card link="cli" title="CLI reference" icon="terminal" subtitle="relay, rtmp, rtsp, rtsp-push, playground, doctor, loadgen, version." >}}
 {{< /cards >}}
 
 ## Feedback 📋

@@ -1,7 +1,7 @@
 ---
 title: loadgen
 description: Out-of-process capacity load generator — pure remote clients for measuring relay capacity.
-weight: 6
+weight: 7
 ---
 
 Out-of-process capacity primitives against a running qumo relay. Both
