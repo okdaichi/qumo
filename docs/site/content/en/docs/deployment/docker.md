@@ -76,5 +76,5 @@ docker build -f docker/Dockerfile -t qumo:local .
 
 - The container listens on port `4433` for QUIC (UDP) and also serves HTTP
   health/metrics on the same port (TCP).
-- Configuration is driven entirely by environment variables — see
-  [Configuration]({{< relref "../configuration" >}}) for the full reference.
+- See [Configuration]({{< relref "../configuration" >}}) for the full
+  environment variable reference.

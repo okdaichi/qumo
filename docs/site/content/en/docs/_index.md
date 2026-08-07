@@ -16,14 +16,11 @@ aimed at **running and operating** it — start with Install, then Configuration
 
 ## Deployment
 
-Once qumo is running, these cover how relays mesh together and stay reachable
-in production:
+Once qumo is running, this covers how relays mesh together and stay reachable
+in production — Docker topologies, peer discovery, Nomad, and TLS/mTLS:
 
 {{< cards >}}
-	{{< card link="deployment/docker" title="Docker" icon="cube" subtitle="Compose files for single-relay and multi-region topologies." >}}
-	{{< card link="deployment/peer-topology" title="Peer topology" icon="globe-alt" subtitle="How relays discover and mesh with each other." >}}
-	{{< card link="deployment/nomad" title="Nomad" icon="server" subtitle="Cluster-native peer discovery via the Nomad service API." >}}
-	{{< card link="deployment/tls" title="TLS & mTLS" icon="lock-closed" subtitle="Certificates, and mutual TLS between peers." >}}
+	{{< card link="deployment" title="Deployment" icon="globe-alt" subtitle="Docker topologies, peer discovery, Nomad, and TLS for deploying qumo relays." >}}
 {{< /cards >}}
 
 ## Operating
