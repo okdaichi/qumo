@@ -19,7 +19,7 @@ For systemd, use `EnvironmentFile=/etc/qumo/relay.env`. For Docker, use
 
 | Variable | Default | Description |
 |---|---|---|
-| `RELAY_ADDR` | `0.0.0.0:4433` | Bind address (QUIC/MoQT). Also serves HTTP health/metrics on the same port. |
+| `RELAY_ADDR` | `:4433` | Bind address (QUIC/MoQT). Dual-stack — binds both IPv4 and IPv6, so `localhost` works on hosts where it resolves to `::1` (e.g. Windows). Also serves HTTP health/metrics on the same port. |
 | `CERT_FILE` / `KEY_FILE` | `certs/server.crt` / `certs/server.key` | TLS certificate and key. |
 | `INSECURE` | `false` | Generate an ephemeral self-signed cert (dev/test only). |
 
