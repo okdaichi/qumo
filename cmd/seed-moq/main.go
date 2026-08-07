@@ -141,7 +141,7 @@ func publish(ctx context.Context, tw *moqt.TrackWriter, interval time.Duration) 
 		}
 		frame := moqt.NewFrame(32)
 		// not actionable: Write only fails on a nil frame, which NewFrame is not.
-		_, _ = frame.Write([]byte(fmt.Sprintf("group-%d", seq)))
+		_, _ = fmt.Fprintf(frame, "group-%d", seq)
 		if err := gw.WriteFrame(frame); err != nil {
 			_ = gw.Close()
 			return
