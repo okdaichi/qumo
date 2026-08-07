@@ -11,7 +11,13 @@ it changes nothing.
 qumo doctor
 ```
 
-Currently reports the effective GC target (which of `GOGC`, `RELAY_GOGC`, and
-`GOMEMLIMIT` won, and why), with guidance for high-fan-out deployments. See
-[Observability → qumo doctor]({{< relref "../observability" >}}#qumo-doctor)
+## Configuration
+
+Takes no configuration of its own — it *inspects* the relay's, currently the
+effective GC target (which of `GOGC`, `RELAY_GOGC`, and `GOMEMLIMIT` won, and
+why), with guidance for high-fan-out deployments. See
+[Configuration → Capacity]({{< relref "../configuration" >}}#capacity) for
+those variables.
+
+See [Observability → qumo doctor]({{< relref "../observability" >}}#qumo-doctor)
 for full example output.

@@ -25,6 +25,10 @@ qumo relay --role hub     # hub node — discovers no local peers
 qumo relay --role edge    # edge node — discovers local hubs
 ```
 
-See [Configuration]({{< relref "../configuration" >}}) for the environment
-variables, and [Deployment → Peer topology]({{< relref "../deployment/peer-topology" >}})
+## Configuration
+
+See [Configuration]({{< relref "../configuration" >}}) for the full
+environment variable reference.
+
+See [Deployment → Peer topology]({{< relref "../deployment/peer-topology" >}})
 for how `--role` fits into peer discovery.

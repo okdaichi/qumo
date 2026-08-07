@@ -21,6 +21,13 @@ qumo playground   # relay + web UI at http://127.0.0.1:8080
 The browser learns the relay URL automatically from whatever host it opened
 the UI at, so there's no `--host` flag.
 
+## Configuration
+
+No environment variables of its own — the two flags above are the entire
+surface. playground sets the underlying relay's `RELAY_ADDR`/`CERT_FILE`/
+`KEY_FILE` automatically; see [Configuration]({{< relref "../configuration" >}})
+if you need to understand what it's setting.
+
 ## Public hosting
 
 Behind your own TLS-terminating reverse proxy:
