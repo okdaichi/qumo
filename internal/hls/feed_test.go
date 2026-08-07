@@ -85,6 +85,30 @@ func Test_initFromTrack(t *testing.T) {
 	assert.Nil(t, initFromTrack(&msf.Track{InitData: "!!!not-base64!!!"}), "malformed InitData yields no init")
 }
 
+// wallclockAt derives a group's wall-clock anchor from its media time, so the
+// timeline a manifest publishes advances with the media rather than with
+// whatever gap the network added between arrivals.
+func Test_wallclockAt(t *testing.T) {
+	anchor := time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC)
+	const timescale = uint32(1_000_000) // microseconds
+
+	tests := map[string]struct {
+		mediaTime int64
+		want      time.Time
+	}{
+		"at the anchor":    {mediaTime: 0, want: anchor},
+		"one second in":    {mediaTime: 1_000_000, want: anchor.Add(time.Second)},
+		"a fractional gap": {mediaTime: 1_006_500, want: anchor.Add(1_006_500 * time.Microsecond)},
+		"an hour of media": {mediaTime: 3600 * 1_000_000, want: anchor.Add(time.Hour)},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, tt.want, wallclockAt(anchor, tt.mediaTime, timescale))
+		})
+	}
+}
+
 // findTrack selects a track by name from the catalog.
 func Test_findTrack(t *testing.T) {
 	c := msf.Catalog{Tracks: []msf.Track{{Name: "video"}, {Name: "audio"}}}

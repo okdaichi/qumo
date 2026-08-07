@@ -88,7 +88,7 @@ func TestPackager_Fragment(t *testing.T) {
 	const interval = uint64(33_333) // ~30fps in microseconds
 	p := newPackager(t)
 
-	data, duration, err := p.Fragment(frames(1_000_000, interval, 30))
+	data, duration, err := p.Fragment(frames(1_000_000, interval, 30), 0)
 	require.NoError(t, err)
 
 	assert.Equal(t, []string{"moof", "mdat"}, boxes(t, data))
@@ -101,34 +101,40 @@ func TestPackager_Fragment(t *testing.T) {
 	assert.Equal(t, duration, got, "the reported extent is the one written into the trun")
 }
 
-// Fragments carry increasing sequence numbers and run back to back from zero,
-// which is the timeline the manifest publishes. The capture clock starts
-// wherever the browser's did, so following it would place the media thousands of
-// seconds from where a player seeks — the buffer fills and nothing plays.
+// Fragments are placed by the caller's running total, not by the capture clock
+// and not by a total the packager keeps itself. A second counter would drift the
+// moment the two disagreed about whether a group counted — an append the ledger
+// refused would advance one and not the other — and every later fragment would
+// claim a position the manifest does not list it at.
 func TestPackager_FragmentTimeline(t *testing.T) {
 	const interval = uint64(33_333)
 	p := newPackager(t)
 
 	// Capture timestamps start far from zero, and the second group begins well
 	// after the first one ended.
-	first, firstExtent, err := p.Fragment(frames(9_489_800, interval, 10))
+	first, firstExtent, err := p.Fragment(frames(9_489_800, interval, 10), 0)
 	require.NoError(t, err)
-	second, _, err := p.Fragment(frames(30_000_000, interval, 10))
+	second, _, err := p.Fragment(frames(30_000_000, interval, 10), firstExtent)
 	require.NoError(t, err)
 
 	assert.Equal(t, uint32(1), fragmentSequence(t, first))
 	assert.Equal(t, uint32(2), fragmentSequence(t, second))
 
 	assert.Equal(t, uint64(0), decodeTime(t, first),
-		"the track starts at zero, whatever the capture clock read")
-	assert.Equal(t, firstExtent, decodeTime(t, second),
-		"each fragment continues where the last ended, matching the ledger's media time")
+		"the track starts where the caller says, whatever the capture clock read")
+	assert.Equal(t, firstExtent, decodeTime(t, second))
+
+	// A group the caller did not count leaves the timeline where it was.
+	third, _, err := p.Fragment(frames(60_000_000, interval, 10), firstExtent)
+	require.NoError(t, err)
+	assert.Equal(t, firstExtent, decodeTime(t, third),
+		"the packager keeps no total of its own to drift from the ledger's")
 }
 
 // The first sample of a group is the keyframe a player seeks to; the rest are not.
 func TestPackager_SyncSample(t *testing.T) {
 	p := newPackager(t)
-	data, _, err := p.Fragment(frames(0, 33_333, 5))
+	data, _, err := p.Fragment(frames(0, 33_333, 5), 0)
 	require.NoError(t, err)
 
 	frag := parseFragment(t, data)
@@ -141,9 +147,34 @@ func TestPackager_SyncSample(t *testing.T) {
 	}
 }
 
-func TestPackager_FragmentRejectsEmpty(t *testing.T) {
-	_, _, err := newPackager(t).Fragment(nil)
-	assert.Error(t, err)
+// Timestamps arrive off the wire. A gap that runs backwards becomes an enormous
+// unsigned number that truncates into a 32-bit sample duration as noise, and
+// noise reads downstream exactly like a duration somebody meant — so a group
+// that cannot be measured is refused rather than given an invented extent.
+func TestPackager_FragmentRejectsUnmeasurable(t *testing.T) {
+	tests := map[string][]cmaf.Frame{
+		"no frames": nil,
+		"one frame": frames(0, 33_333, 1),
+		"backwards": {
+			{Timestamp: 100_000, Sync: true, Data: []byte{1}},
+			{Timestamp: 50_000, Data: []byte{2}},
+		},
+		"repeated timestamp": {
+			{Timestamp: 100_000, Sync: true, Data: []byte{1}},
+			{Timestamp: 100_000, Data: []byte{2}},
+		},
+		"implausible gap": {
+			{Timestamp: 0, Sync: true, Data: []byte{1}},
+			{Timestamp: 60 * uint64(cmaf.Timescale), Data: []byte{2}},
+		},
+	}
+
+	for name, f := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, _, err := newPackager(t).Fragment(f, 0)
+			assert.Error(t, err)
+		})
+	}
 }
 
 func parseFragment(tb testing.TB, data []byte) *mp4.Fragment {

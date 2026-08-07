@@ -248,16 +248,6 @@
 	grid-template-columns: minmax(0, 1fr);
 }
 
-/* The HLS scenario carries three boards — one publisher and both of its
-   consumers — so the comparison the scenario exists to show is on one screen.
-   It falls back to the two-column rule below 1200px and to a single column at
-   the shared breakpoint, since three side by side stop being readable first. */
-@media (min-width: 1200px) {
-	.boards.triple {
-		grid-template-columns: repeat(3, minmax(0, 1fr));
-	}
-}
-
 .publish-board,
 .subscribe-board {
 	background: var(--surface);

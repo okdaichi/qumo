@@ -127,21 +127,14 @@ export function ScenarioView(props: {
 				/>
 			)}
 
-			{
-				/* The HLS scenario shows both consumers of one publisher: the MoQ
-			    subscriber decoding LOC frames as they arrive, and the HLS player
-			    reading back the fragments the egress packaged from those same
-			    frames. Side by side, what each path costs in latency is visible
-			    rather than described. */
-			}
-			<div class={ingest ? "boards single" : isHls ? "boards triple" : "boards"}>
+			<div class={ingest ? "boards single" : "boards"}>
 				{!ingest && (
 					<PublishBoard
 						mux={mux}
 						path={props.path}
 					/>
 				)}
-				{(isHls || (isCamera ? pullActive() : true)) && (
+				{!isHls && (isCamera ? pullActive() : true) && (
 					<SubscribeBoard session={session} path={props.path} />
 				)}
 				{isHls && <HlsPlayer path={props.path} />}

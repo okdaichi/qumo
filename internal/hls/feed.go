@@ -280,8 +280,9 @@ func feedMedia(ctx context.Context, session *moqt.Session, m mediaInfo, w *ledge
 	frame := moqt.NewFrame(0)
 	// mediaTime accumulates the real extents rather than multiplying an ordinal
 	// by a fixed step, so a fragment that runs long or short moves the timeline
-	// by what it actually contains.
+	// by what it actually contains. anchor is the wall clock at mediaTime zero.
 	var mediaTime int64
+	var anchor time.Time
 	for {
 		// Bound the wait for the next group. A publisher that goes away without
 		// closing — a browser tab that navigated, a process killed — leaves this
@@ -312,15 +313,28 @@ func feedMedia(ctx context.Context, session *moqt.Session, m mediaInfo, w *ledge
 			continue
 		}
 
-		payload, units, err := m.packager.Fragment(frames)
+		// The ledger's running media time places the fragment, so the fragment
+		// and the segment listing cannot disagree about where it belongs — and
+		// a group the ledger refuses below advances neither.
+		payload, units, err := m.packager.Fragment(frames, uint64(mediaTime))
 		if err != nil {
 			slog.Warn("hls: package group, skipping", "group", gr.GroupSequence(), "err", err)
 			continue
 		}
 
+		// The wall clock is read once, when the first group lands, and every
+		// group after it is placed by its own media time. Reading the clock per
+		// group would stamp arrival jitter onto the timeline instead: two
+		// segments a second apart in media would carry whatever gap the network
+		// happened to add, and EXT-X-PROGRAM-DATE-TIME would describe the
+		// delivery rather than the media it names.
 		now := time.Now()
+		if anchor.IsZero() {
+			anchor = now
+		}
 		duration := int64(units)
-		info := groupInfo(uint64(gr.GroupSequence()), mediaTime, duration, uint64(len(frames)), now)
+		info := groupInfo(uint64(gr.GroupSequence()), mediaTime, duration, uint64(len(frames)),
+			wallclockAt(anchor, mediaTime, m.schema.Timescale))
 		if _, err := w.AppendGroup(ctx, info, payload); err != nil {
 			// A sealed group is immutable; a duplicate or ordering refusal is
 			// skipped rather than stopping the feed.
@@ -391,12 +405,27 @@ func drainGroup(gr *moqt.GroupReader, frame *moqt.Frame) ([]cmaf.Frame, error) {
 // Media time is the running sum of the groups actually appended rather than a
 // function of the producer's sequence, because MoQ sequences are gappy — a
 // dropped group must not leave a hole in the timeline.
-func groupInfo(seq uint64, mediaTime, durationUnits int64, objectCount uint64, now time.Time) ledger.GroupInfo {
+func groupInfo(seq uint64, mediaTime, durationUnits int64, objectCount uint64, at time.Time) ledger.GroupInfo {
 	return ledger.GroupInfo{
 		ID:          ledger.NewGroupID(0, seq),
 		MediaTime:   mediaTime,
 		Duration:    durationUnits,
-		Wallclock:   now.UnixNano(),
+		Wallclock:   at.UnixNano(),
 		ObjectCount: objectCount,
 	}
+}
+
+// wallclockAt places a media offset on the wall clock, relative to the anchor
+// taken when the feed's first group landed. Seconds and remainder are converted
+// separately so a long session cannot overflow the nanosecond multiply.
+func wallclockAt(anchor time.Time, mediaTime int64, timescale uint32) time.Time {
+	if timescale == 0 {
+		return anchor
+	}
+	ts := int64(timescale)
+	seconds := mediaTime / ts
+	remainder := mediaTime % ts
+	return anchor.
+		Add(time.Duration(seconds) * time.Second).
+		Add(time.Duration(remainder * int64(time.Second) / ts))
 }

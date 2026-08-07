@@ -54,18 +54,6 @@ type Frame struct {
 type Packager struct {
 	init     []byte
 	sequence uint32
-
-	// decodeTime is where the next fragment sits on the track's timeline,
-	// accumulated from the extents already packaged.
-	//
-	// It deliberately does not follow the encoder's own clock. A capture
-	// timestamp starts wherever the browser's clock happened to be — some
-	// thousands of seconds in — while the manifest describes a track that
-	// starts at zero and advances by each segment's duration. A player seeks to
-	// where the manifest says the media is, so a fragment stamped with the
-	// capture clock lands nowhere near it: the buffer fills, nothing overlaps
-	// the seek position, and playback stalls with no error to report.
-	decodeTime uint64
 }
 
 // VideoConfig is what a catalog states about a track, and all this package needs
@@ -111,21 +99,37 @@ func (p *Packager) Init() []byte {
 	return p.init
 }
 
-// Fragment packages one group of frames into a moof+mdat media fragment, and
-// reports the media extent it covers.
+// Fragment packages one group of frames into a moof+mdat media fragment placed
+// at decodeTime on the track's timeline, and reports the media extent it covers.
+//
+// decodeTime is passed in rather than accumulated here because the caller is
+// already keeping it: it is the same running total the ledger records as a
+// group's media time, and the manifest publishes. Two counters for one quantity
+// drift the moment they disagree about whether a group counted — an append the
+// ledger refuses would advance one and not the other, and every later fragment
+// would claim a position the manifest does not list it at.
+//
+// It deliberately is not the encoder's clock. A capture timestamp starts
+// wherever the browser's happened to be, thousands of seconds in, while the
+// manifest describes a track starting at zero; a fragment stamped with the
+// capture clock lands nowhere near where a player seeks, so the buffer fills
+// while nothing overlaps the seek position and playback stalls silently.
 //
 // Sample durations come from the gaps between timestamps, which leaves the last
 // frame of a group without one — its successor belongs to the next group and has
 // not arrived. Rather than hold the fragment back a whole GOP to learn it, the
 // last sample takes the mean of the others: the error is under one frame
-// interval, and it cannot accumulate because the next fragment re-anchors the
-// timeline from its own first timestamp.
-func (p *Packager) Fragment(frames []Frame) (data []byte, duration uint64, err error) {
+// interval, and it cannot accumulate because the next fragment is placed by the
+// caller's total rather than by this one's end.
+func (p *Packager) Fragment(frames []Frame, decodeTime uint64) (data []byte, duration uint64, err error) {
 	if len(frames) == 0 {
 		return nil, 0, fmt.Errorf("cmaf: no frames to package")
 	}
 
-	durations := sampleDurations(frames)
+	durations, err := sampleDurations(frames)
+	if err != nil {
+		return nil, 0, err
+	}
 	var total uint64
 	for _, d := range durations {
 		total += uint64(d)
@@ -137,11 +141,6 @@ func (p *Packager) Fragment(frames []Frame) (data []byte, duration uint64, err e
 		return nil, 0, fmt.Errorf("cmaf: create fragment: %w", err)
 	}
 
-	// Fragments run back to back from zero, which is the timeline the manifest
-	// publishes: the ledger's media time is the same running sum of the same
-	// durations, so a fragment says exactly what the segment listing says about
-	// where it belongs.
-	decodeTime := p.decodeTime
 	for i, f := range frames {
 		flags := mp4.NonSyncSampleFlags
 		if f.Sync {
@@ -159,29 +158,50 @@ func (p *Packager) Fragment(frames []Frame) (data []byte, duration uint64, err e
 	if err := frag.Encode(&buf); err != nil {
 		return nil, 0, fmt.Errorf("cmaf: encode fragment: %w", err)
 	}
-	p.decodeTime += total
 	return buf.Bytes(), total, nil
 }
 
-// sampleDurations derives each frame's extent from the gap to the next one. A
-// single frame, or one whose successor does not advance the clock, falls back to
-// the mean — with nothing to average, to one frame at 30fps, which is a guess
-// but a bounded one about a fragment that holds a single sample.
-func sampleDurations(frames []Frame) []uint32 {
-	durations := make([]uint32, len(frames))
+// maxSampleDuration bounds a plausible gap between two frames. Timestamps arrive
+// off the wire, and a gap beyond this is a corrupt one rather than slow media —
+// worth saying so, because the difference is invisible once it has been
+// truncated into a 32-bit sample duration and written into a trun.
+const maxSampleDuration = 10 * Timescale
+
+// sampleDurations derives each frame's extent from the gap to the next one.
+//
+// Timestamps must advance: a gap of zero, one that runs backwards, or one
+// beyond [maxSampleDuration] means the group cannot be measured, and a group
+// that cannot be measured is skipped rather than given an invented extent. A
+// backwards gap is the dangerous case — unsigned subtraction turns it into a
+// huge number that truncates to noise, which reads downstream exactly like a
+// duration somebody meant.
+//
+// The last frame has no successor, so it takes the mean of the others; with a
+// single frame there is nothing to average and no extent to state.
+func sampleDurations(frames []Frame) ([]uint32, error) {
 	if len(frames) == 1 {
-		durations[0] = Timescale / 30
-		return durations
+		return nil, fmt.Errorf("cmaf: a single frame states no duration")
 	}
 
+	durations := make([]uint32, len(frames))
 	var sum uint64
 	for i := range len(frames) - 1 {
-		delta := frames[i+1].Timestamp - frames[i].Timestamp
+		this, next := frames[i].Timestamp, frames[i+1].Timestamp
+		if next <= this {
+			return nil, fmt.Errorf(
+				"cmaf: frame %d timestamp %d does not advance on %d", i+1, next, this)
+		}
+		delta := next - this
+		if delta > maxSampleDuration {
+			return nil, fmt.Errorf(
+				"cmaf: frame %d is %d units after its predecessor, beyond %d",
+				i+1, delta, uint64(maxSampleDuration))
+		}
 		durations[i] = uint32(delta)
 		sum += delta
 	}
 	durations[len(frames)-1] = uint32(sum / uint64(len(frames)-1))
-	return durations
+	return durations, nil
 }
 
 // describe attaches the codec-specific sample description to the track.
