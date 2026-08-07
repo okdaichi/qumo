@@ -248,6 +248,16 @@
 	grid-template-columns: minmax(0, 1fr);
 }
 
+/* The HLS scenario carries three boards — one publisher and both of its
+   consumers — so the comparison the scenario exists to show is on one screen.
+   It falls back to the two-column rule below 1200px and to a single column at
+   the shared breakpoint, since three side by side stop being readable first. */
+@media (min-width: 1200px) {
+	.boards.triple {
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+	}
+}
+
 .publish-board,
 .subscribe-board {
 	background: var(--surface);
@@ -441,7 +451,8 @@ input[type="range"] {
 	position: relative;
 }
 
-.video-preview canvas {
+.video-preview canvas,
+.video-preview video {
 	display: block;
 	width: 100% !important;
 	max-width: 100% !important;
@@ -450,6 +461,13 @@ input[type="range"] {
 	border: 1px solid var(--border);
 	border-radius: 8px;
 	background: #000;
+}
+
+/* Placeholder for a player waiting on its stream. The video element stays
+   mounted so its ref is live; it just carries this surface until the first
+   frame arrives, keeping the panel's shape stable instead of collapsing. */
+.video-preview--waiting video {
+	background: var(--surface);
 }
 
 /* --- Live stats overlay (#139) --- */

@@ -24,15 +24,18 @@ func Test_openTrack_createsThenOpens(t *testing.T) {
 		MIME: "video/mp4", Encoding: "fmp4",
 	}
 
-	track, err := openTrack(ctx, store, path, schema)
+	track, adopted, err := openTrack(ctx, store, path, schema)
 	require.NoError(t, err)
+	assert.False(t, adopted, "the first call creates the track")
 	info := track.Root()
 	assert.Equal(t, path, info.Track)
 	assert.Equal(t, uint32(90000), info.Timescale)
 	assert.Equal(t, ledger.TimeSourceIngest, info.TimeSource)
 
-	again, err := openTrack(ctx, store, path, schema)
+	again, adopted, err := openTrack(ctx, store, path, schema)
 	require.NoError(t, err, "a second openTrack must adopt the existing track")
+	assert.True(t, adopted,
+		"the caller needs to know it inherited someone else's groups, and must open its own epoch")
 	assert.Equal(t, path, again.Root().Track)
 }
 

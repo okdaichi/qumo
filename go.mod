@@ -13,11 +13,12 @@ require (
 )
 
 require (
+	github.com/Eyevinn/mp4ff v0.55.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dunglas/httpsfv v1.1.0 // indirect
-	github.com/kylelemons/godebug v1.1.1 // indirect
+	github.com/kylelemons/godebug v1.1.0 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/okdaichi/webtransport-go v0.12.0-okdaichi.2 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect

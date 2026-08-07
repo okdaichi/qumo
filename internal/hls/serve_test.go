@@ -41,7 +41,11 @@ func Test_serve_playlist(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	handler, err := stream.NewHandler(track, stream.Options{})
+	// An fmp4 track needs an init segment: without one the manifests would omit
+	// #EXT-X-MAP and no player could use them, so the handler refuses to build.
+	handler, err := stream.NewHandler(track, stream.Options{
+		InitSegment: stream.InitSegment{Bytes: []byte("init-bytes")},
+	})
 	require.NoError(t, err)
 	ts := httptest.NewServer(handler)
 	defer ts.Close()

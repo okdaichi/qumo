@@ -5,11 +5,12 @@
     "jsr:@okdaichi/golikejs@0.10.0": "0.10.0",
     "jsr:@okdaichi/media-log@0.1": "0.1.0",
     "jsr:@qumo/moq@0.17": "0.17.0",
+    "jsr:@std/assert@*": "1.0.16",
+    "jsr:@std/internal@^1.0.12": "1.0.12",
     "npm:@deno/vite-plugin@^2.0.2": "2.0.2_vite@8.1.3__@types+node@26.1.0_@types+node@26.1.0",
     "npm:@types/node@^26.1.0": "26.1.0",
     "npm:hls.js@^1.5.20": "1.6.16",
     "npm:lucide-solid@^1.23.0": "1.23.0_solid-js@1.9.14",
-    "npm:mp4-muxer@^5.2.1": "5.2.2",
     "npm:solid-js@^1.9.14": "1.9.14",
     "npm:typescript@~6.0.3": "6.0.3",
     "npm:vite-plugin-solid@^2.11.12": "2.11.12_solid-js@1.9.14_vite@8.1.3__@types+node@26.1.0_@types+node@26.1.0",
@@ -35,6 +36,15 @@
         "jsr:@okdaichi/golikejs",
         "npm:zod"
       ]
+    },
+    "@std/assert@1.0.16": {
+      "integrity": "6a7272ed1eaa77defe76e5ff63ca705d9c495077e2d5fd0126d2b53fc5bd6532",
+      "dependencies": [
+        "jsr:@std/internal"
+      ]
+    },
+    "@std/internal@1.0.12": {
+      "integrity": "972a634fd5bc34b242024402972cd5143eac68d8dffaca5eaa4dba30ce17b027"
     }
   },
   "npm": {
@@ -765,8 +775,7 @@
       "jsr:@okdaichi/golikejs@0.10.0",
       "jsr:@okdaichi/media-log@0.1",
       "jsr:@qumo/moq@0.17",
-      "npm:hls.js@^1.5.20",
-      "npm:mp4-muxer@^5.2.1"
+      "npm:hls.js@^1.5.20"
     ],
     "packageJson": {
       "dependencies": [

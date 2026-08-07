@@ -1,5 +1,5 @@
 import { type Accessor, createSignal, onCleanup, onMount, Show } from "solid-js";
-import { type BroadcastPath, type GroupWriter, TrackMux } from "@qumo/moq";
+import { type BroadcastPath, type GroupWriter, TrackMux, type TrackWriter } from "@qumo/moq";
 import { Broadcast, type Track } from "@qumo/moq/msf";
 import {
 	AudioEncodeNode,
@@ -12,7 +12,6 @@ import {
 import { getMediaStream, type MediaSourceType } from "./media.ts";
 import { background, type CancelFunc, type Context, withCancel } from "@okdaichi/golikejs/context";
 import { MediaFrame } from "./media_frame.ts";
-import { CmafGopMuxer, RawBytes, splitInitFragment } from "./cmaf.ts";
 import { friendlyMessage } from "../errors.ts";
 import { createMediaLogger, MediaTags } from "@okdaichi/media-log";
 import { createStatsTicker } from "../stats.ts";
@@ -59,11 +58,9 @@ const SOURCES: { id: MediaSourceType; label: string; icon: Component<{ class?: s
 ];
 
 export function PublishBoard(
-	props: { mux: TrackMux; path: Accessor<string>; packaging?: "loc" | "cmaf" },
+	props: { mux: TrackMux; path: Accessor<string> },
 ) {
 	const mux = props.mux;
-	const packaging = props.packaging ?? "loc";
-	const isCmaf = packaging === "cmaf";
 
 	const [sourceType, setSourceType] = createSignal<MediaSourceType>("camera");
 	const [isStreaming, setIsStreaming] = createSignal(false);
@@ -86,6 +83,11 @@ export function PublishBoard(
 
 	let canvasEle: HTMLCanvasElement | undefined;
 	let lastKeyframeTime = 0;
+	// Identifies the current publish session. An encode node is reused across
+	// sessions and detaches a destination only when its output reports that
+	// destination is finished, so each session's encoder callback captures the
+	// token it started under and reports itself finished once this moves past it.
+	let publishSession = 0;
 	let videoContext: VideoContext | undefined;
 	let sourceNode: MediaStreamVideoSourceNode | null = null;
 	let videoEncodeNode: VideoEncodeNode | undefined;
@@ -133,6 +135,15 @@ export function PublishBoard(
 		// Creating on demand means no encode node exists until the user actually
 		// publishes, so teardown's context.close() has nothing unconfigured to
 		// flush. Create-on-first-use so retries reuse the same node rather than leak.
+		// Keyframe cadence is measured against this session's own clock. A new
+		// source starts its timestamps wherever it likes, and one that begins
+		// behind the previous session's last keyframe would never appear to have
+		// reached the next GOP — so no keyframe, and nothing to open a fragment.
+		lastKeyframeTime = 0;
+
+		// This session's identity, captured by its encoder callback below.
+		const session = ++publishSession;
+
 		if (!videoEncodeNode) {
 			videoEncodeNode = new VideoEncodeNode(videoContext, {
 				isKey: (timestamp, _) => {
@@ -250,12 +261,18 @@ export function PublishBoard(
 		const initialTrack: Track = {
 			name: "video",
 			role: "video",
-			packaging,
+			packaging: "loc",
 			isLive: true,
 			codec: config.codec,
 			width: config.width,
 			height: config.height,
 		};
+
+		// The catalog describes the track completely — codec, picture size, and
+		// for AVC its parameter sets — so a subscriber can configure a decoder,
+		// or package the frames into a container, without waiting for media.
+		// This board publishes encoded frames and nothing else; containers are
+		// a consumer's concern.
 
 		// Broadcast auto-serves the "catalog" track as MSF catalog JSON.
 		const initialTracks: Track[] = audioTrackDef
@@ -263,88 +280,131 @@ export function PublishBoard(
 			: [initialTrack];
 		const broadcast = new Broadcast({ version: 1, tracks: initialTracks });
 
-		// Register video track handler — runs the encoder loop when subscribed.
+		// ---- Publish pipeline -------------------------------------------
+		//
+		// The encoder pipeline runs from Start, not from the first subscribe.
+		// Attaching the encoder output before the source is wired guarantees
+		// every chunk has a consumer — including the first keyframe, the only
+		// one WebCodecs attaches decoderConfig to. Driving the encoder from
+		// serveTrack instead meant that chunk was routinely produced while no
+		// handler was attached, losing the config the muxer needs to write a
+		// moov. serveTrack now only binds the sink.
+
+		// Every attached subscriber's track writer. One encoder feeds all of
+		// them: a single slot would mean a second subscriber silently displaces
+		// the first. Media produced while the set is empty is dropped — this is
+		// a live stream, so a late subscriber starts at the next fragment
+		// rather than replaying a backlog.
+		const writers = new Set<TrackWriter>();
+
+		// The LOC path writes a group per GOP, so each subscriber needs its own
+		// open group; keyed by writer and cleared when that writer detaches.
+		const currentGroups = new Map<TrackWriter, GroupWriter>();
+		let initDataPublished = false;
+
+		// Update the catalog with a Base64 initData for the video track.
+		const publishInitData = (initData: string) => {
+			const updatedTrack: Track = { ...initialTrack, initData };
+			const tracks: Track[] = audioTrackDef ? [updatedTrack, audioTrackDef] : [updatedTrack];
+			// setCatalog validates synchronously before it awaits, so a rejected
+			// catalog throws rather than returning a rejected promise — .catch()
+			// alone would miss it, and av-nodes swallows anything thrown from the
+			// encoder callback.
+			try {
+				broadcast.setCatalog({ version: 1, tracks })
+					.then(() =>
+						log.info("publish: codec config in catalog", {
+							bytes: initData.length,
+						})
+					)
+					.catch((err: unknown) => log.error("setCatalog failed", { err }));
+			} catch (err) {
+				log.error("setCatalog threw", { err });
+			}
+		};
+
+		const { done: encodeDone } = videoEncodeNode.encodeTo({
+			output: async (
+				chunk: EncodedVideoChunk,
+				decoderConfig?: VideoDecoderConfig,
+			) => {
+				// Returning an error is how a destination tells the encode node
+				// it is finished, and the node then stops sending to it. A
+				// stopped session has to say so: otherwise it stays attached to
+				// a node built to be reused, and goes on consuming the chunks —
+				// the decoder config among them — that the next session needs.
+				if (session !== publishSession) {
+					return new Error("publish: session ended");
+				}
+
+				{
+					// Codecs that carry their configuration out of band — AVC
+					// and HEVC — state it once here, so both a WebCodecs
+					// decoder and the egress's packager can describe the track
+					// before the first frame. VP9 and AV1 carry theirs in the
+					// codec string and supply no description.
+					if (decoderConfig?.description && !initDataPublished) {
+						initDataPublished = true;
+						publishInitData(
+							encodeBase64(decoderConfig.description as ArrayBufferLike),
+						);
+					}
+
+					// No subscriber: nothing to write to.
+					if (writers.size === 0) return;
+
+					// Each subscriber carries its own open group, and one failing
+					// subscriber must not stop the others.
+					const written = await Promise.allSettled(
+						[...writers].map(async (writer) => {
+							let group = currentGroups.get(writer);
+							if (chunk.type === "key") {
+								if (group) void group.close();
+								const [opened, openErr] = await writer.openGroup();
+								if (openErr) throw openErr;
+								group = opened;
+								currentGroups.set(writer, opened);
+							} else if (!group) {
+								return; // drop delta frames until first keyframe
+							}
+							const writeErr = await group.writeFrame(new MediaFrame(chunk));
+							if (writeErr) throw writeErr;
+						}),
+					);
+					for (const result of written) {
+						if (result.status === "rejected") {
+							log.error("publish frame failed", { err: result.reason });
+						}
+					}
+				}
+
+				// Tally the published bytes for the live stats overlay…
+				videoStats.mark(chunk.byteLength);
+				// …and for the periodic diagnostic log line (fps + bitrate).
+				encFps.mark();
+				encBitrate.mark(chunk.byteLength);
+			},
+		});
+		// The encoder loop owns the pipeline for the session; surface a failure
+		// rather than let it vanish as an unhandled rejection.
+		encodeDone.catch((err: unknown) => log.error("video encode loop ended", { err }));
+
+		// Register the video track handler. It does not drive the encoder — it
+		// binds this subscriber as the sink and holds the subscription open
+		// until the publish context ends.
 		await broadcast.registerTrack(initialTrack, {
 			async serveTrack(trackWriter) {
-				if (!videoEncodeNode) throw new Error("Encode node not initialized");
-
-				let currentGroup: GroupWriter | undefined;
-				let gopMuxer: CmafGopMuxer | undefined;
-				// Tracks whether we have published an initData-bearing catalog for the
-				// current encoder configuration. Reset when the encoder is reconfigured.
-				let initDataPublished = false;
-
-				// Update the catalog with a Base64 initData for the video track.
-				const publishInitData = (initData: string) => {
-					const updatedTrack: Track = { ...initialTrack, initData };
-					const tracks: Track[] = audioTrackDef
-						? [updatedTrack, audioTrackDef]
-						: [updatedTrack];
-					broadcast.setCatalog({ version: 1, tracks }).catch((err: unknown) =>
-						log.error("setCatalog failed", { err })
-					);
-				};
-
-				const { done } = videoEncodeNode.encodeTo({
-					output: async (
-						chunk: EncodedVideoChunk,
-						decoderConfig?: VideoDecoderConfig,
-					) => {
-						if (isCmaf) {
-							// CMAF: mux one fMP4 fragment per GOP and publish it raw (no LOC
-							// timestamp framing) so the HLS egress serves it verbatim.
-							if (chunk.type === "key") {
-								if (gopMuxer) {
-									const { init, fragment } = splitInitFragment(
-										gopMuxer.finalize(),
-									);
-									if (!initDataPublished) {
-										initDataPublished = true;
-										publishInitData(encodeBase64(init));
-									}
-									const [group, oerr] = await trackWriter.openGroup();
-									if (oerr) return oerr;
-									const werr = await group.writeFrame(new RawBytes(fragment));
-									void group.close();
-									if (werr) throw werr;
-								}
-								gopMuxer = new CmafGopMuxer(config.width, config.height);
-							} else if (!gopMuxer) {
-								return; // drop delta frames until first keyframe
-							}
-							gopMuxer.addVideoChunk(chunk);
-						} else {
-							// LOC: push the SPS/PPS description into the catalog as initData
-							// (Base64) so subscribers can configure their VideoDecoder.
-							if (decoderConfig?.description && !initDataPublished) {
-								initDataPublished = true;
-								publishInitData(
-									encodeBase64(decoderConfig.description as ArrayBufferLike),
-								);
-							}
-
-							if (chunk.type === "key") {
-								if (currentGroup) void currentGroup.close();
-								const [group, err] = await trackWriter.openGroup();
-								if (err) return err;
-								currentGroup = group;
-							} else if (!currentGroup) {
-								return; // drop delta frames until first keyframe
-							}
-
-							const err = await currentGroup!.writeFrame(new MediaFrame(chunk));
-							if (err) throw err;
-						}
-
-						// Tally the published bytes for the live stats overlay…
-						videoStats.mark(chunk.byteLength);
-						// …and for the periodic diagnostic log line (fps + bitrate).
-						encFps.mark();
-						encBitrate.mark(chunk.byteLength);
-					},
+				writers.add(trackWriter);
+				log.info("publish: subscriber attached", {
+					track: trackWriter.trackName,
+					subscribers: writers.size,
 				});
-
-				await done;
+				try {
+					await publishCtx!.done();
+				} finally {
+					writers.delete(trackWriter);
+					currentGroups.delete(trackWriter);
+				}
 			},
 		});
 
@@ -379,18 +439,38 @@ export function PublishBoard(
 			return;
 		}
 
-		// Announce to relay — Broadcast routes "catalog" and "video" internally.
-		mux.publish(
-			publishCtx!.done(),
-			props.path() as BroadcastPath,
-			broadcast,
-		);
-
-		// Connect source nodes and start encoding.
+		// Connect source nodes and start encoding. This happens before the
+		// announce: the encoder output is already attached, so the pipeline
+		// produces the init segment without needing a subscriber to trigger it.
 		sourceNode = new MediaStreamVideoSourceNode(videoContext, { mediaStream: stream });
 		sourceNode.connect(videoContext.destination);
 		sourceNode.connect(videoEncodeNode);
 		sourceNode.start();
+
+		// Announce to relay — Broadcast routes "catalog" and "video" internally.
+		// publish() is async; surface a rejected announce (e.g. an invalid path)
+		// instead of letting it vanish as an unhandled rejection.
+		//
+		// CMAF waits for initData to be in the catalog first. The init segment
+		// is only knowable once the muxer has written a moov, so announcing
+		// earlier publishes a catalog subscribers cannot use, and leaves them
+		// polling for an init that arrives later. Waiting costs roughly one GOP
+		// and makes the catalog correct the first time it is read.
+		// teardown() may have run while awaiting the media above.
+		if (disposed) {
+			stream.getTracks().forEach((t) => t.stop());
+			return;
+		}
+
+		log.info("publish: announcing broadcast", { path: props.path() });
+		mux.publish(
+			publishCtx!.done(),
+			props.path() as BroadcastPath,
+			broadcast,
+		).catch((err: unknown) => {
+			log.error("mux.publish failed — broadcast not announced to relay", { err });
+			setError(friendlyMessage(err));
+		});
 
 		// Route audio from the media stream into AudioEncodeNode. Only do this
 		// when the encoder was actually configured above — feeding an
@@ -422,6 +502,15 @@ export function PublishBoard(
 			sourceNode.dispose();
 			sourceNode = null;
 		}
+
+		// Retires this session's encoder destinations. An encode node holds each
+		// destination until its output reports one is finished, so a session that
+		// simply stops leaves its callback attached and still receiving chunks —
+		// including the one chunk carrying the decoder config, which the next
+		// session then waits for forever. Moving the token past what the running
+		// callbacks captured is how they learn to detach; see the encoder output.
+		publishSession++;
+
 		videoStats.stop();
 		setIsStreaming(false);
 	};
@@ -437,7 +526,8 @@ export function PublishBoard(
 		// post-await checkpoint (see the `disposed` check before mux.publish).
 		disposed = true;
 		stopStreaming();
-		// Fire-and-forget: dispose/close are async but we're unmounting.
+		// Fire-and-forget: dispose/close are async but we're unmounting. The
+		// nodes outlive a session by design and are only disposed here.
 		videoEncodeNode?.dispose().catch(() => {});
 		videoEncodeNode = undefined;
 		audioEncodeNode?.dispose().catch(() => {});

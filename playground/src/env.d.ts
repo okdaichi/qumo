@@ -5,6 +5,9 @@ interface ImportMetaEnv {
 	// SHA-256 hash of the relay's WebTransport cert (hex). Optional in dev —
 	// when unset the demo surfaces remediation guidance in the UI.
 	readonly VITE_CERT_HASH?: string;
+	// Base URL of the HLS egress (`qumo hls`), e.g. "http://localhost:8081".
+	// Optional — HlsPlayer falls back to the default dev port when unset.
+	readonly VITE_HLS_URL?: string;
 }
 
 interface ImportMeta {

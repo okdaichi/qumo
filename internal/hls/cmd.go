@@ -14,6 +14,8 @@ import (
 
 	"github.com/qumo-dev/gomoqt/moqt"
 
+	"github.com/qumo-dev/qumo/internal/cors"
+
 	"github.com/okdaichi/qumo-ledger/ledger"
 	"github.com/okdaichi/qumo-ledger/ledger/store/fsstore"
 	"github.com/okdaichi/qumo-ledger/stream"
@@ -29,32 +31,50 @@ import (
 //	LEDGER_ROOT        - qumo-ledger filesystem store directory (default "./ledger")
 //	LEDGER_TRACK       - ledger track path (default "live/cam1/video")
 //	RELAY_URL          - MoQ relay URL, e.g. "https://host:4433" (default "https://localhost:4433")
-//	RELAY_TRACK_PATH   - MoQ broadcast path whose catalog to read (default "/live/cam1")
+//	RELAY_TRACK_PATH   - MoQ broadcast path whose catalog to read (default "/hls/live",
+//	                     the playground's HLS scenario)
 //	RELAY_TRACK_NAME   - media track name in the catalog to relay (default "video")
-//	TIMESCALE          - fallback timescale when the catalog omits it (default 90000)
-//	GROUP_DURATION_MS  - assumed group duration for media-time derivation (default 2000)
+//	HLS_WINDOW         - segments kept in the manifest, i.e. the live window and
+//	                     how far back a viewer can seek (default 12). Zero lists
+//	                     the whole track, which makes it a recording rather than
+//	                     a live stream: players open an unwindowed playlist at
+//	                     its first segment and play the history forward.
+//	HLS_LIVE_TIMEOUT_S - seconds of silence after which the publisher is treated
+//	                     as gone: the feed reconnects, and manifests answer 503
+//	                     rather than describe media that stopped arriving
+//	                     (default 10)
 //	RELAY_TLS_INSECURE - skip relay TLS verification, dev only (default "true")
+//	CORS_ALLOWED_ORIGINS - comma-separated origins allowed to fetch manifests
+//	                     and segments, or "*" for any. Unset disables CORS.
+//	                     Required when the player is served from another origin,
+//	                     e.g. "http://localhost:5173" for the playground.
 func Run(_ []string) error {
 	addr := envOr("HLS_ADDR", ":8080")
 	root := envOr("LEDGER_ROOT", "./ledger")
 	ledgerTrack := ledger.TrackPath(envOr("LEDGER_TRACK", "live/cam1/video"))
 
-	fallbackTimescale, err := envUint("TIMESCALE", 90000)
+	window, err := envUint("HLS_WINDOW", 12)
 	if err != nil {
-		return fmt.Errorf("invalid TIMESCALE: %w", err)
+		return fmt.Errorf("invalid HLS_WINDOW: %w", err)
 	}
-	groupMs, err := envUint("GROUP_DURATION_MS", 2000)
+	liveTimeoutSec, err := envUint("HLS_LIVE_TIMEOUT_S", 10)
 	if err != nil {
-		return fmt.Errorf("invalid GROUP_DURATION_MS: %w", err)
+		return fmt.Errorf("invalid HLS_LIVE_TIMEOUT_S: %w", err)
 	}
+	liveTimeout := time.Duration(liveTimeoutSec) * time.Second
 
 	cfg := feedConfig{
 		relayURL:  envOr("RELAY_URL", "https://localhost:4433"),
-		trackPath: envOr("RELAY_TRACK_PATH", "/live/cam1"),
+		trackPath: envOr("RELAY_TRACK_PATH", "/hls/live"),
 		trackName: envOr("RELAY_TRACK_NAME", "video"),
-		groupMs:   groupMs,
 		insecure:  envOr("RELAY_TLS_INSECURE", "true") == "true",
+
+		liveTimeout: liveTimeout,
 	}
+
+	// Shared between the feed, which records each committed group, and the
+	// server, which will not claim a stream is live without them.
+	var live liveness
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -65,8 +85,12 @@ func Run(_ []string) error {
 	}
 
 	// Read the catalog before opening the track or building the handler: the
-	// schema and fMP4 init come from the catalog.
-	session, media, err := connect(ctx, cfg, uint32(fallbackTimescale))
+	// schema and fMP4 init both come from it. The publisher and the egress are
+	// started independently (there is no ordering guarantee between them), so a
+	// broadcast that does not exist yet — or a catalog that does not carry its
+	// init segment yet — is expected at startup, not fatal. connectWithRetry
+	// backs off until the publisher is fully ready.
+	session, media, err := connectWithRetry(ctx, cfg)
 	if err != nil {
 		return err
 	}
@@ -75,7 +99,7 @@ func Run(_ []string) error {
 		_ = session.CloseWithError(moqt.NoError, "hls egress stopped")
 	}()
 
-	track, err := openTrack(ctx, store, ledgerTrack, media.schema)
+	track, adopted, err := openTrack(ctx, store, ledgerTrack, media.schema)
 	if err != nil {
 		return err
 	}
@@ -84,28 +108,52 @@ func Run(_ []string) error {
 		return fmt.Errorf("hls: open writer: %w", err)
 	}
 
-	opts := stream.Options{}
-	if len(media.init) > 0 {
-		opts.InitSegment = stream.InitSegment{Bytes: media.init}
+	// A track that already held groups was filled by an earlier run, and this
+	// publisher numbers its own groups from zero. Continuing that epoch would
+	// collide with the IDs already committed, and a sealed group is immutable —
+	// every group of this stream would be refused while the manifest went on
+	// serving the previous run's. Opening an epoch gives this producer its own
+	// sequence space.
+	if adopted {
+		if err := writer.NewEpoch(ctx); err != nil {
+			return fmt.Errorf("hls: begin epoch on an existing track: %w", err)
+		}
+		slog.Info("hls: adopted an existing track, new epoch opened", "track", ledgerTrack)
 	}
-	handler, err := stream.NewHandler(track, opts)
+
+	go runFeed(ctx, session, media, writer, &live, cfg)
+
+	// The init segment is derived from the catalog, so it exists as soon as the
+	// track is described — before any media arrives. The handler is built once,
+	// complete, and never serves a manifest that lacks #EXT-X-MAP.
+	// The window is what makes this a live stream rather than a recording. The
+	// ledger keeps every group, so an unwindowed manifest lists the whole track
+	// from its first segment — and a player opening that starts at the oldest
+	// one and plays the history forward, however long ago it was captured.
+	// Windowing keeps the manifest at the live edge; the older segments stay
+	// fetchable for anyone holding their URLs.
+	handler, err := stream.NewHandler(track, stream.Options{
+		InitSegment: stream.InitSegment{Bytes: media.packager.Init()},
+		Window:      int(window),
+		// This egress opens an epoch per producer lifetime — on startup over an
+		// existing track, and on every reconnect — so the newest one is this
+		// publisher's current session. Anything older is a session that has
+		// ended, and listing it would put a finished stream in front of a live
+		// viewer.
+		EpochWindow: 1,
+	})
 	if err != nil {
 		return fmt.Errorf("hls: build stream handler: %w", err)
 	}
 
 	httpServer := &http.Server{
-		Addr:              addr,
-		Handler:           handler,
+		Addr: addr,
+		// CORS outermost so its headers reach every response, including the
+		// 503 a stale feed produces — a browser cannot read a refusal it is not
+		// allowed to see, and would report it as a network failure instead.
+		Handler:           withCORS(withLiveness(handler, &live, liveTimeout), cors.LoadAllowed()),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
-
-	// The feed writes MoQ groups into the ledger; it is independent of the HTTP
-	// server so a feed failure leaves the already-recorded track replayable.
-	go func() {
-		if err := feedMedia(ctx, session, media, writer, cfg); err != nil && ctx.Err() == nil {
-			slog.Error("hls: feed ended", "err", err)
-		}
-	}()
 
 	go func() {
 		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -127,16 +175,23 @@ func Run(_ []string) error {
 
 // openTrack creates the ledger track if absent, adopting an existing one. The
 // schema comes from the MSF catalog (its TimeSource is ingest: the feed stamps
-// Wallclock from its own clock).
-func openTrack(ctx context.Context, store *fsstore.Store, path ledger.TrackPath, schema ledger.TrackSchema) (*ledger.Track, error) {
+// Wallclock from its own clock). The second result reports that an existing
+// track was adopted rather than created, which the caller needs because a track
+// with someone else's groups in it cannot simply be written to.
+func openTrack(ctx context.Context, store *fsstore.Store, path ledger.TrackPath, schema ledger.TrackSchema) (*ledger.Track, bool, error) {
 	track, err := ledger.Create(ctx, store, path, schema, ledger.Config{})
-	if err != nil {
-		if errors.Is(err, ledger.ErrTrackExists) {
-			return ledger.Open(ctx, store, path, ledger.Config{})
-		}
-		return nil, fmt.Errorf("hls: create track: %w", err)
+	if err == nil {
+		return track, false, nil
 	}
-	return track, nil
+	if !errors.Is(err, ledger.ErrTrackExists) {
+		return nil, false, fmt.Errorf("hls: create track: %w", err)
+	}
+
+	track, err = ledger.Open(ctx, store, path, ledger.Config{})
+	if err != nil {
+		return nil, false, fmt.Errorf("hls: open track: %w", err)
+	}
+	return track, true, nil
 }
 
 func envOr(key, def string) string {

@@ -46,3 +46,5 @@ certs/
 
 # PAT files
 *.pat
+# Ledger store written by `qumo hls` when run from the repo root.
+/ledger/
