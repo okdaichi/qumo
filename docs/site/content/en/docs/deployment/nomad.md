@@ -24,11 +24,11 @@ discovery uses the separate remote resolver instead (see
 
 ## Configuration
 
-```
-LOCAL_RESOLVER_ADDR=http://nomad.service.consul:4646   # default: http://localhost:4646
-LOCAL_RESOLVER_SERVICE_NAME=qumo-relay                  # default: qumo-relay
-LOCAL_RESOLVER_INTERVAL=15s                             # default: 15s
-```
+| Variable | Default | Description |
+|---|---|---|
+| `LOCAL_RESOLVER_ADDR` | `http://localhost:4646` | Nomad HTTP API address (e.g. `http://nomad.service.consul:4646`). |
+| `LOCAL_RESOLVER_SERVICE_NAME` | `qumo-relay` | Nomad service name to query for peer discovery. |
+| `LOCAL_RESOLVER_INTERVAL` | `15s` | Polling interval. |
 
 See [Configuration → Local resolver]({{< relref "../configuration" >}}#local-resolver--nomad-native-discovery)
 for the full reference. `--role hub`/`--role edge` is a CLI flag on

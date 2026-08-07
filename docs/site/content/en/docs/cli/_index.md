@@ -26,8 +26,8 @@ All commands are configured via environment variables — see
 {{< cards >}}
 	{{< card link="relay" title="relay" icon="server" subtitle="Start the MoQ relay server." >}}
 	{{< card link="rtmp" title="rtmp" icon="video-camera" subtitle="Standalone RTMP ingest server." >}}
-	{{< card link="rtsp" title="rtsp" icon="video-camera" subtitle="Pull an RTSP source (IP camera) into MoQT." >}}
-	{{< card link="rtsp-push" title="rtsp-push" icon="video-camera" subtitle="Standalone RTSP push ingest server." >}}
+	{{< card link="rtsp" title="rtsp" icon="cloud-download" subtitle="Pull an RTSP source (IP camera) into MoQT." >}}
+	{{< card link="rtsp-push" title="rtsp-push" icon="cloud-upload" subtitle="Standalone RTSP push ingest server." >}}
 	{{< card link="playground" title="playground" icon="lightning-bolt" subtitle="One-command local demo." >}}
 	{{< card link="doctor" title="doctor" icon="beaker" subtitle="Explain effective runtime config." >}}
 	{{< card link="loadgen" title="loadgen" icon="chart-bar" subtitle="Out-of-process capacity load generator." >}}

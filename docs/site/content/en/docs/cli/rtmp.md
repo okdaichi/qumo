@@ -21,5 +21,5 @@ qumo rtmp   # RTMP :1935 -> MoQT :4433
 | `CERT_FILE` / `KEY_FILE` | `certs/server.crt` / `certs/server.key` | TLS certificate and key. |
 | `CORS_ALLOWED_ORIGINS` | (unset) | Comma-separated WebTransport origins (default: same-origin only; `*` allows any). |
 
-See [Deployment → Docker]({{< relref "../deployment/docker" >}}#demo-scenarios)
-for a compose-based RTMP demo scenario.
+See [Deployment → Docker]({{< relref "../deployment/docker" >}}) to run it as
+a container.

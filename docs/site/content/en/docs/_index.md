@@ -35,7 +35,7 @@ in production — Docker topologies, peer discovery, Nomad, and TLS/mTLS:
 	{{< card link="cli" title="CLI reference" icon="terminal" subtitle="relay, rtmp, rtsp, rtsp-push, playground, doctor, loadgen, version." >}}
 {{< /cards >}}
 
-## Feedback 📋
+## Feedback
 
 If you find any mistakes, gaps, or would like to contribute improvements,
 please open an Issue or Pull Request on [GitHub](https://github.com/qumo-dev/qumo).
