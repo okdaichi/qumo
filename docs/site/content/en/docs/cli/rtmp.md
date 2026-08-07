@@ -5,8 +5,9 @@ weight: 2
 ---
 
 Starts a standalone RTMP ingest server that bridges published streams to
-MoQT. Unlike `qumo relay`, this does **not** participate in the peer mesh (no
-peer connections, no announce relay) — it's a single self-contained origin.
+MoQT. Like [rtsp]({{< relref "rtsp" >}}) and [rtsp-push]({{< relref "rtsp-push" >}}),
+this is a self-contained origin and does not join the relay peer mesh (no
+peer connections, no announce relay).
 
 ```bash
 qumo rtmp   # RTMP :1935 -> MoQT :4433
