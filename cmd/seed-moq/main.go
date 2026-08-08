@@ -11,8 +11,8 @@
 // carries #EXT-X-MAP) but the segments are not decodable; real fMP4 comes from a
 // WebCodecs publisher.
 //
-// It generates an ephemeral self-signed certificate, so point the egress at it
-// with RELAY_TLS_INSECURE=true (the egress default).
+// It generates an ephemeral self-signed certificate, which the egress will not
+// trust by default — point it at the seeder with RELAY_TLS_INSECURE=true.
 package main
 
 import (

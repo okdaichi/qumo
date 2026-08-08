@@ -43,7 +43,9 @@ import (
 //	                     as gone: the feed reconnects, and manifests answer 503
 //	                     rather than describe media that stopped arriving
 //	                     (default 10)
-//	RELAY_TLS_INSECURE - skip relay TLS verification, dev only (default "true")
+//	RELAY_TLS_INSECURE - skip relay TLS verification, for a self-signed dev relay
+//	                     such as seed-moq (default "false"; the egress verifies
+//	                     the relay's certificate by default)
 //	CORS_ALLOWED_ORIGINS - comma-separated origins allowed to fetch manifests
 //	                     and segments, or "*" for any. Unset disables CORS.
 //	                     Required when the player is served from another origin,
@@ -67,7 +69,7 @@ func Run(_ []string) error {
 		relayURL:  envOr("RELAY_URL", "https://localhost:4433"),
 		trackPath: envOr("RELAY_TRACK_PATH", "/hls/live"),
 		trackName: envOr("RELAY_TRACK_NAME", "video"),
-		insecure:  envOr("RELAY_TLS_INSECURE", "true") == "true",
+		insecure:  envOr("RELAY_TLS_INSECURE", "false") == "true",
 
 		liveTimeout: liveTimeout,
 	}
@@ -121,7 +123,7 @@ func Run(_ []string) error {
 		slog.Info("hls: adopted an existing track, new epoch opened", "track", ledgerTrack)
 	}
 
-	go runFeed(ctx, session, media, writer, &live, cfg)
+	go runFeed(ctx, cancel, session, media, writer, &live, cfg)
 
 	// The init segment is derived from the catalog, so it exists as soon as the
 	// track is described — before any media arrives. The handler is built once,

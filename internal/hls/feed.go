@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -221,14 +222,16 @@ func initFromTrack(t *msf.Track) []byte {
 // publisher stops, the connection drops, a subscribe is rejected) reconnects
 // via connectWithRetry rather than giving up. This is what lets a publisher
 // restart (stop/start in the browser, a crash, a network blip) recover
-// without restarting the egress. It returns only when ctx is cancelled.
+// without restarting the egress. It returns when ctx is cancelled, and cancels
+// ctx itself if the ledger cannot close a finished epoch — a feed that cannot
+// reopen has no recovery path.
 //
 // session/media is the already-connected catalog handoff from [Run]'s initial
 // connectWithRetry call, so the very first iteration feeds immediately without
 // reconnecting; every iteration after a feed failure reconnects first.
-func runFeed(ctx context.Context, session *moqt.Session, media mediaInfo, w *ledger.Writer, live *liveness, cfg feedConfig) {
+func runFeed(ctx context.Context, cancel context.CancelFunc, session *moqt.Session, media mediaInfo, w *ledger.Writer, live *liveness, cfg feedConfig) {
 	for {
-		if err := feedMedia(ctx, session, media, w, live, cfg); err != nil && ctx.Err() == nil {
+		if err := feedMedia(ctx, sessionSubscriber{session}, media, w, live, cfg); err != nil && ctx.Err() == nil {
 			slog.Warn("hls: feed ended", "err", err)
 		}
 		// not actionable: the session already failed or ctx is ending; either
@@ -248,7 +251,13 @@ func runFeed(ctx context.Context, session *moqt.Session, media mediaInfo, w *led
 		// groups from zero, and appending those to a filled epoch collides with
 		// IDs already committed, which a sealed group will not accept.
 		if err := w.NewEpoch(ctx); err != nil {
-			slog.Error("hls: close the finished publisher's epoch", "err", err)
+			// A ledger that cannot close an epoch cannot accept a restarted
+			// publisher's groups either, so the feed has no recovery path.
+			// Stop the egress — cancelling the root context shuts the HTTP
+			// server down too — and let a supervisor restart it, rather than
+			// staying up serving stale segments.
+			slog.Error("hls: cannot close the finished publisher's epoch; stopping the egress", "err", err)
+			cancel()
 			return
 		}
 		slog.Info("hls: publisher finished, epoch closed")
@@ -263,6 +272,77 @@ func runFeed(ctx context.Context, session *moqt.Session, media mediaInfo, w *led
 	}
 }
 
+// The feed talks to two libraries it cannot stand up in a test — a MoQ session
+// (which needs a live QUIC relay) and the ledger writer (which needs a store and
+// track) — so it depends on small consumer-side interfaces at those seams rather
+// than the concrete types. The MoQ seam cannot be [moqt.Session] directly: its
+// Subscribe returns the concrete *moqt.TrackReader, which a test cannot build, so
+// a thin adapter closes the gap and lets feedMedia's orchestration — skip a group
+// that fails to read or package, advance the timeline only on a committed append,
+// treat silence as the publisher leaving — run against a fake without a relay.
+
+// mediaSubscriber subscribes to a media track and returns its group source.
+type mediaSubscriber interface {
+	SubscribeMedia(ctx context.Context, m mediaInfo) (groupFeeder, error)
+}
+
+// groupFeeder is a subscribed track: a stream of groups, closed when the feed ends.
+type groupFeeder interface {
+	AcceptGroup(ctx context.Context) (receivedGroup, error)
+	Close() error
+}
+
+// receivedGroup is one MoQ group: its producer sequence and its frames, read one
+// at a time until io.EOF.
+type receivedGroup interface {
+	GroupSequence() moqt.GroupSequence
+	ReadFrame(*moqt.Frame) error
+}
+
+// groupAppender commits a packaged group. The ledger writer satisfies it; a fake
+// records what the feed tried to append.
+type groupAppender interface {
+	AppendGroup(ctx context.Context, meta ledger.GroupInfo, payload []byte) (ledger.GroupInfo, error)
+}
+
+// sessionSubscriber adapts [moqt.Session] to [mediaSubscriber].
+type sessionSubscriber struct{ sess *moqt.Session }
+
+func (s sessionSubscriber) SubscribeMedia(ctx context.Context, m mediaInfo) (groupFeeder, error) {
+	tr, err := s.sess.Subscribe(ctx, m.path, m.name, &moqt.SubscribeConfig{Ordered: true})
+	if err != nil {
+		return nil, err
+	}
+	return trackFeeder{tr}, nil
+}
+
+// trackFeeder adapts [moqt.TrackReader] to [groupFeeder].
+type trackFeeder struct{ tr *moqt.TrackReader }
+
+func (t trackFeeder) AcceptGroup(ctx context.Context) (receivedGroup, error) {
+	gr, err := t.tr.AcceptGroup(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return moqtGroup{gr}, nil
+}
+
+func (t trackFeeder) Close() error { return t.tr.Close() }
+
+// moqtGroup adapts [moqt.GroupReader] to [receivedGroup].
+type moqtGroup struct{ gr *moqt.GroupReader }
+
+func (g moqtGroup) GroupSequence() moqt.GroupSequence { return g.gr.GroupSequence() }
+func (g moqtGroup) ReadFrame(f *moqt.Frame) error     { return g.gr.ReadFrame(f) }
+
+// Compile-time checks that the adapters and the ledger writer satisfy the seams.
+var (
+	_ mediaSubscriber = sessionSubscriber{}
+	_ groupFeeder     = trackFeeder{}
+	_ receivedGroup   = moqtGroup{}
+	_ groupAppender   = (*ledger.Writer)(nil)
+)
+
 // feedMedia subscribes to the media track and relays each received group into
 // the ledger as a sealed group. It blocks until ctx is cancelled or the
 // subscription fails.
@@ -271,12 +351,12 @@ func runFeed(ctx context.Context, session *moqt.Session, media mediaInfo, w *led
 // publisher packaged — so the ledger segment is what the player fetches.
 // MediaTime/Duration are still derived (gomoqt v0.15.0 carries no per-frame
 // timestamp); the Timescale now comes from the catalog.
-func feedMedia(ctx context.Context, session *moqt.Session, m mediaInfo, w *ledger.Writer, live *liveness, cfg feedConfig) error {
-	tr, err := session.Subscribe(ctx, m.path, m.name, &moqt.SubscribeConfig{Ordered: true})
+func feedMedia(ctx context.Context, sub mediaSubscriber, m mediaInfo, w groupAppender, live *liveness, cfg feedConfig) error {
+	src, err := sub.SubscribeMedia(ctx, m)
 	if err != nil {
 		return fmt.Errorf("hls: subscribe %s: %w", m.name, err)
 	}
-	defer tr.Close()
+	defer src.Close()
 
 	slog.Info("hls: subscribed", "path", m.path, "name", m.name)
 
@@ -294,13 +374,17 @@ func feedMedia(ctx context.Context, session *moqt.Session, m mediaInfo, w *ledge
 		// publisher needs. Treating silence as the feed ending puts that
 		// recovery on a clock the egress controls.
 		acceptCtx, cancelAccept := context.WithTimeout(ctx, cfg.liveTimeout)
-		gr, err := tr.AcceptGroup(acceptCtx)
+		gr, err := src.AcceptGroup(acceptCtx)
 		cancelAccept()
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil
 			}
-			if acceptCtx.Err() != nil {
+			// DeadlineExceeded, not a bare acceptCtx.Err(): cancelAccept just
+			// ran, so the context is already Canceled on every error path —
+			// only an expired deadline distinguishes a silent publisher from a
+			// real accept failure.
+			if errors.Is(acceptCtx.Err(), context.DeadlineExceeded) {
 				return fmt.Errorf("hls: no group for %s, treating the publisher as gone",
 					cfg.liveTimeout)
 			}
@@ -376,7 +460,7 @@ func drainRaw(gr *moqt.GroupReader, frame *moqt.Frame) ([]byte, error) {
 //
 // The first frame of a group is the sync sample. A MoQ group begins at each
 // keyframe, so the boundary carries what LOC itself does not state.
-func drainGroup(gr *moqt.GroupReader, frame *moqt.Frame) ([]cmaf.Frame, error) {
+func drainGroup(gr receivedGroup, frame *moqt.Frame) ([]cmaf.Frame, error) {
 	var frames []cmaf.Frame
 	for {
 		if err := gr.ReadFrame(frame); err != nil {
