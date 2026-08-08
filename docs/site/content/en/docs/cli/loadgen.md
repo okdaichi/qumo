@@ -1,6 +1,6 @@
 ---
 title: loadgen
-description: Out-of-process capacity load generator — pure remote clients for measuring relay capacity.
+description: Drive an out-of-process capacity load against a running relay.
 weight: 7
 ---
 
@@ -21,38 +21,44 @@ Subcommands:
 ## publish
 
 ```
-Usage of loadgen publish:
-  -ca string        PEM file of the relay's TLS cert/CA to trust (required)
-  -gps float         groups per second (trickle rate) (default 0.5)
-  -idle-timeout duration  QUIC max idle timeout (default 30s)
-  -keepalive duration     QUIC keep-alive period (default 5s)
-  -metrics string    relay /metrics URL (default http://<relay>/metrics)
-  -path string        broadcast path (default "/bench/carry")
-  -relay string        relay moqt address (host:port) (default "127.0.0.1:4433")
-  -size int             frame size in bytes (min 16) (default 64)
-  -track string        track name (default "data")
+Usage: qumo loadgen publish [flags]
 ```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--ca <file>` | (required) | PEM file of the relay's TLS cert/CA to trust. |
+| `--relay <host:port>` | `127.0.0.1:4433` | Relay MoQT address to dial. |
+| `--path <path>` | `/bench/carry` | Broadcast path. |
+| `--track <name>` | `data` | Track name. |
+| `--gps <float>` | `0.5` | Groups per second (trickle rate). |
+| `--size <bytes>` | `64` | Frame size in bytes (min 16). |
+| `--metrics <url>` | `http://<relay>/metrics` | Relay `/metrics` URL. |
+| `--keepalive <dur>` | `5s` | QUIC keep-alive period. |
+| `--idle-timeout <dur>` | `30s` | QUIC max idle timeout. |
 
 ## subscribe
 
 ```
-Usage of loadgen subscribe:
-  -ca string        PEM file of the relay's TLS cert/CA to trust (required)
-  -hold duration      how long to hold sessions after establishment (default 30s)
-  -idle-timeout duration  QUIC max idle timeout (default 30s)
-  -keepalive duration     QUIC keep-alive period (default 5s)
-  -metrics string    relay /metrics URL (default http://<relay>/metrics)
-  -path string        broadcast path (default "/bench/carry")
-  -relay string        relay moqt address (host:port) (default "127.0.0.1:4433")
-  -results string    dir to append a capacity JSONL record (optional)
-  -track string        track name (default "data")
+Usage: qumo loadgen subscribe [flags] <N>
 ```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--ca <file>` | (required) | PEM file of the relay's TLS cert/CA to trust. |
+| `--relay <host:port>` | `127.0.0.1:4433` | Relay MoQT address to dial. |
+| `--path <path>` | `/bench/carry` | Broadcast path. |
+| `--track <name>` | `data` | Track name. |
+| `--hold <dur>` | `30s` | How long to hold sessions after establishment. |
+| `--results <dir>` | (optional) | Directory to append a capacity JSONL record to. |
+| `--metrics <url>` | `http://<relay>/metrics` | Relay `/metrics` URL. |
+| `--keepalive <dur>` | `5s` | QUIC keep-alive period. |
+| `--idle-timeout <dur>` | `30s` | QUIC max idle timeout. |
 
 ## Example
 
 ```bash
-qumo loadgen publish       --relay <host:4433> --ca <cert.pem>               # trickle source
-qumo loadgen subscribe --relay <host:4433> --ca <cert.pem> --hold 15s 12000  # measure N=12000
+qumo loadgen publish   --relay <host:4433> --ca <cert.pem>                    # trickle source
+qumo loadgen subscribe --relay <host:4433> --ca <cert.pem> --hold 15s 12000   # measure N=12000
 ```
 
 `subscribe --results <dir>` appends a machine-readable capacity record to a

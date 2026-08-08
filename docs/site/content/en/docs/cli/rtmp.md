@@ -1,6 +1,6 @@
 ---
 title: rtmp
-description: Standalone RTMP ingest server that bridges published streams to MoQT.
+description: Start the RTMP ingest server, bridging published streams to MoQT.
 weight: 2
 ---
 

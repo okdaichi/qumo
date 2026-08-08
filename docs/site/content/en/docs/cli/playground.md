@@ -1,6 +1,6 @@
 ---
 title: playground
-description: One-command local demo — in-process relay plus the embedded web UI.
+description: Start a local demo — in-process relay plus the embedded web UI.
 weight: 5
 ---
 
@@ -10,11 +10,12 @@ pulled into a peer mesh even if you've set one in your environment.
 
 ```
 Usage: qumo playground [flags]
-
-Flags:
-  --ui-addr <addr>    UI HTTP bind address (default: 127.0.0.1:8080)
-  --relay-addr <addr> relay WebTransport bind address (default: 127.0.0.1:4433)
 ```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--ui-addr <addr>` | `127.0.0.1:8080` | UI HTTP bind address. |
+| `--relay-addr <addr>` | `127.0.0.1:4433` | Relay WebTransport bind address. |
 
 ```bash
 qumo playground   # relay + web UI at http://127.0.0.1:8080

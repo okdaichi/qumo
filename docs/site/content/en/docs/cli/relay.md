@@ -9,15 +9,11 @@ QUIC/WebTransport, and meshes with peer relays for content discovery.
 
 ```
 Usage: qumo relay [flags]
-
-Start the MoQT relay server.
-
-Flags:
-  --role <hub|edge>  node topology role (default: flat / single-node)
-
-All other configuration is via environment variables;
-see relay-config.example.env for the full list.
 ```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--role <hub\|edge>` | flat / single-node | Node topology role. Everything else is configured via environment variables. |
 
 ```bash
 qumo relay                # standalone / flat relay

@@ -1,6 +1,6 @@
 ---
 title: rtsp-push
-description: Standalone RTSP push ingest server (ANNOUNCE/RECORD) that bridges published streams to MoQT.
+description: Start the RTSP push ingest server (ANNOUNCE/RECORD), bridging published streams to MoQT.
 weight: 4
 ---
 

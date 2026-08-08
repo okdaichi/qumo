@@ -14,11 +14,14 @@ does not join the relay peer mesh.
 Usage: qumo rtsp <rtsp-url> [broadcast-path]
 ```
 
+| Argument | Default | Description |
+|---|---|---|
+| `<rtsp-url>` | (required) | Source to pull from — `rtsp://[user:pass@]host/path`. |
+| `[broadcast-path]` | `/live/camera` | MoQT broadcast path to republish on. |
+
 ```bash
 qumo rtsp rtsp://user:pass@192.168.1.50/stream1 /live/camera
 ```
-
-- `broadcast-path` defaults to `/live/camera`.
 
 ## Configuration
 
