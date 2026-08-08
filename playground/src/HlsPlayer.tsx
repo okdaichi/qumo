@@ -85,11 +85,19 @@ export function HlsPlayer(props: { path: Accessor<string> }) {
 	let seenEdge: string | undefined;
 
 	let probeTimer: number | undefined;
+	// A generation token so a probe retired by reset() stops itself instead of
+	// rescheduling. Without it, a probe whose fetch was in flight when reset()
+	// cleared probeTimer resolves after the clear, sets a fresh probeTimer, and
+	// keeps polling the old URL — racing the new probe and never stopping.
+	let probeGen = 0;
 	const probe = async (url: string, delay = PROBE_INTERVAL_MS) => {
+		const gen = probeGen;
 		try {
 			const resp = await fetch(url, { cache: "no-store" });
+			if (gen !== probeGen) return;
 			if (resp.ok) {
 				const edge = liveEdge(await resp.text());
+				if (gen !== probeGen) return;
 				// Attach only once the playlist has actually moved between two
 				// polls. A recent newest segment is not enough: a publisher that
 				// stopped a moment ago leaves one just as recent as a publisher
@@ -105,6 +113,7 @@ export function HlsPlayer(props: { path: Accessor<string> }) {
 				seenEdge = edge;
 			}
 		} catch {
+			if (gen !== probeGen) return;
 			// reason: the egress not being up yet is the expected case here; it
 			// is reported through the waiting state, not as an error. Whatever
 			// edge was seen is void: a server that cannot be reached is not
@@ -117,13 +126,20 @@ export function HlsPlayer(props: { path: Accessor<string> }) {
 		const next = seenEdge !== undefined
 			? PROBE_INTERVAL_MS
 			: Math.min(delay * PROBE_BACKOFF, PROBE_INTERVAL_MAX_MS);
-		probeTimer = setTimeout(() => void probe(url, next), delay);
+		// Re-check before scheduling, and guard the closure: reset() may have
+		// retired this generation while the fetch was resolving.
+		if (gen !== probeGen) return;
+		probeTimer = setTimeout(() => {
+			if (gen !== probeGen) return;
+			void probe(url, next);
+		}, delay);
 	};
 
 	// Tear the player down and go back to waiting. Used when the stream ends and
 	// when the path changes, so a restarted publisher is picked up rather than
 	// leaving a dead player showing a stale error.
 	const reset = () => {
+		probeGen++;
 		if (probeTimer !== undefined) clearTimeout(probeTimer);
 		probeTimer = undefined;
 		if (latencyTimer !== undefined) clearInterval(latencyTimer);

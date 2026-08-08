@@ -208,6 +208,9 @@ func initFromTrack(t *msf.Track) []byte {
 	}
 	b, err := base64.StdEncoding.DecodeString(t.InitData)
 	if err != nil {
+		// Treated as absent: the packager rejects a track it cannot describe
+		// (an AVC catalog without parameter sets) with a clearer message than a
+		// base64 error would give here.
 		return nil
 	}
 	return b

@@ -3,11 +3,13 @@
 // catalog + CMAF groups into the ledger, served back as HLS — without a full
 // relay and publisher.
 //
-// It serves the MSF catalog (carrying the track's fMP4 init in initData) on the
-// reserved "catalog" track and publishes one placeholder CMAF fragment per
-// interval. Payloads and the init are placeholders — the playlist is
-// structurally valid (and carries #EXT-X-MAP) but not playable; real fMP4
-// comes from a WebCodecs publisher.
+// It serves the MSF catalog for a VP9 placeholder track on the reserved
+// "catalog" track — VP9 carries its configuration in the codec string, so the
+// catalog needs no fMP4 init in initData — and publishes one placeholder group
+// per interval: a run of LOC frames the egress packages into a CMAF fragment.
+// Payloads are placeholder bytes, so the playlist is structurally valid (and
+// carries #EXT-X-MAP) but the segments are not decodable; real fMP4 comes from a
+// WebCodecs publisher.
 //
 // It generates an ephemeral self-signed certificate, so point the egress at it
 // with RELAY_TLS_INSECURE=true (the egress default).
@@ -21,7 +23,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"math/big"
@@ -61,15 +62,19 @@ func main() {
 		fmt.Fprintln(os.Stderr, "seed-moq:", err)
 		os.Exit(1)
 	}
-	// The catalog carries the track's packaging (CMAF/fMP4) and its init in
-	// initData; the egress reads both to build the ledger schema and the HLS
-	// init segment.
+	// The catalog states the track's packaging (CMAF/fMP4) and codec; the egress
+	// builds the ledger schema and the HLS init segment from it. VP9 is the
+	// placeholder codec because it carries its configuration in the codec string
+	// and needs no out-of-band init — an AVC placeholder would be rejected at the
+	// egress for lacking parameter sets. The picture size is required: the
+	// packager refuses a track that states none.
 	if err := broadcast.RegisterTrack(msf.Track{
 		Name:      trackName,
 		Packaging: msf.PackagingCMAF,
-		InitData:  base64.StdEncoding.EncodeToString([]byte("FAKE-FMP4-INIT")),
 		Timescale: ptrInt64(int64(timescale)),
-		Codec:     "avc1.42c01e",
+		Codec:     "vp09.00.10.08",
+		Width:     ptrInt64(1280),
+		Height:    ptrInt64(720),
 		Role:      msf.RoleVideo,
 		IsLive:    ptrBool(true),
 	}, moqt.TrackHandlerFunc(func(tw *moqt.TrackWriter) {
@@ -115,9 +120,18 @@ func main() {
 	}
 }
 
-// publish streams a live track to one subscriber: a placeholder CMAF fragment
-// every interval, each carrying a single small frame. It returns when ctx is
-// cancelled or the subscriber disconnects.
+// framesPerGroup and frameInterval shape each placeholder group like a 30 fps
+// GOP. The egress's packager needs at least two frames with advancing timestamps
+// to measure sample durations, so a one-frame group would be skipped; a run of
+// frames one interval apart gives it a real (placeholder) extent to package.
+const (
+	framesPerGroup = 30
+	frameInterval  = 33_333 // ~30 fps, in microseconds (the LOC/CMAF timescale)
+)
+
+// publish streams a live track to one subscriber: one placeholder group every
+// interval, each a run of LOC frames the egress packages into a CMAF fragment.
+// It returns when ctx is cancelled or the subscriber disconnects.
 func publish(ctx context.Context, tw *moqt.TrackWriter, interval time.Duration) {
 	slog.Info("seed-moq: subscriber connected")
 	defer slog.Info("seed-moq: subscriber gone")
@@ -125,7 +139,7 @@ func publish(ctx context.Context, tw *moqt.TrackWriter, interval time.Duration) 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	var seq uint64
+	var group uint64
 	for {
 		select {
 		case <-ctx.Done():
@@ -135,19 +149,59 @@ func publish(ctx context.Context, tw *moqt.TrackWriter, interval time.Duration) 
 		case <-ticker.C:
 		}
 
-		gw, err := tw.OpenGroupAt(ctx, moqt.GroupSequence(seq))
+		gw, err := tw.OpenGroupAt(ctx, moqt.GroupSequence(group))
 		if err != nil {
 			return
 		}
-		frame := moqt.NewFrame(32)
-		// not actionable: Write only fails on a nil frame, which NewFrame is not.
-		_, _ = fmt.Fprintf(frame, "group-%d", seq)
-		if err := gw.WriteFrame(frame); err != nil {
-			_ = gw.Close()
-			return
+		// Timestamps advance within the group so the packager can derive sample
+		// durations from the gaps. Their absolute value is irrelevant — the
+		// egress places each fragment by its own running media time, not the
+		// capture clock — but they must strictly increase.
+		base := group * framesPerGroup * frameInterval
+		for i := range framesPerGroup {
+			payload := []byte(fmt.Sprintf("g%d-f%d", group, i))
+			if err := gw.WriteFrame(locFrame(base+uint64(i)*frameInterval, payload)); err != nil {
+				_ = gw.Close()
+				return
+			}
 		}
 		_ = gw.Close()
-		seq++
+		group++
+	}
+}
+
+// locFrame builds one LOC frame — the wire format the egress decodes — from a
+// microsecond timestamp and a payload: a QUIC variable-length integer (RFC 9000
+// §16) for the timestamp, another for the payload size, then the payload. The
+// seeder is not an encoder; the payload is placeholder bytes, but the container
+// is real so the egress's LOC decoder and duration math read it and the group
+// reaches the ledger instead of being skipped as undecodable.
+func locFrame(timestamp uint64, payload []byte) *moqt.Frame {
+	var b []byte
+	b = appendQuicVarint(b, timestamp)
+	b = appendQuicVarint(b, uint64(len(payload)))
+	b = append(b, payload...)
+	f := moqt.NewFrame(len(b))
+	// not actionable: Write only fails on a nil frame, which NewFrame is not.
+	_, _ = f.Write(b)
+	return f
+}
+
+// appendQuicVarint encodes v as a QUIC variable-length integer, the inverse of
+// the decoder in internal/cmaf. The top two bits of the first byte carry the
+// encoding length (1, 2, 4, or 8 bytes).
+func appendQuicVarint(b []byte, v uint64) []byte {
+	switch {
+	case v < 1<<6:
+		return append(b, byte(v))
+	case v < 1<<14:
+		return append(b, byte(v>>8)|0x40, byte(v))
+	case v < 1<<30:
+		return append(b, byte(v>>24)|0x80, byte(v>>16), byte(v>>8), byte(v))
+	default:
+		return append(b,
+			byte(v>>56)|0xc0, byte(v>>48), byte(v>>40), byte(v>>32),
+			byte(v>>24), byte(v>>16), byte(v>>8), byte(v))
 	}
 }
 
