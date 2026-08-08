@@ -43,9 +43,14 @@ import (
 //	                     as gone: the feed reconnects, and manifests answer 503
 //	                     rather than describe media that stopped arriving
 //	                     (default 10)
-//	RELAY_TLS_INSECURE - skip relay TLS verification, for a self-signed dev relay
-//	                     such as seed-moq (default "false"; the egress verifies
-//	                     the relay's certificate by default)
+//	RELAY_CA_FILE       - PEM cert to trust as the relay's root, overriding the
+//	                     system roots (e.g. the relay's own cert when it is
+//	                     self-signed). Unset means verify against the system root
+//	                     store.
+//	RELAY_TLS_INSECURE  - skip relay TLS verification entirely, for a self-signed
+//	                     dev relay such as seed-moq (default "false"; the egress
+//	                     verifies the relay's certificate by default). Dominates
+//	                     RELAY_CA_FILE when both are set.
 //	CORS_ALLOWED_ORIGINS - comma-separated origins allowed to fetch manifests
 //	                     and segments, or "*" for any. Unset disables CORS.
 //	                     Required when the player is served from another origin,
@@ -69,6 +74,7 @@ func Run(_ []string) error {
 		relayURL:  envOr("RELAY_URL", "https://localhost:4433"),
 		trackPath: envOr("RELAY_TRACK_PATH", "/hls/live"),
 		trackName: envOr("RELAY_TRACK_NAME", "video"),
+		caFile:    envOr("RELAY_CA_FILE", ""),
 		insecure:  envOr("RELAY_TLS_INSECURE", "false") == "true",
 
 		liveTimeout: liveTimeout,

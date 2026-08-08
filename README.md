@@ -67,15 +67,20 @@ qumo version     # Print build-time version info
 
 For environment variables and configuration, see `relay-config.example.env`. For Docker-based deployment, see [docker/README.md](docker/README.md).
 
-### HLS / DASH egress
+### TLS — clients verify by default
 
-`qumo hls` is a separate process: it subscribes to a MoQ relay's catalog, packages each received group into a CMAF (fMP4) fragment, writes it to a qumo-ledger track, and serves that track's HLS playlist and DASH MPD over HTTP. The subcommand's env-var doc comment (`internal/hls/cmd.go`) is the full configuration reference.
+qumo's servers (`relay`, `rtmp`, `rtsp`, `rtsp-push`, `playground`) present TLS from `CERT_FILE` / `KEY_FILE` (default `certs/server.crt` + `.key`; generate one with `mage cert`). The clients that dial a relay **verify its certificate by default** — verification is the default, not an opt-in:
 
-The egress **verifies the relay's TLS certificate by default** — `RELAY_TLS_INSECURE` defaults to `false`. A self-signed dev relay such as `cmd/seed-moq` (which presents an ephemeral certificate, not in any trust store) is therefore not trusted; set the flag to point the egress at one:
+- `qumo loadgen` and `tools/capacity` require the relay's cert as a trust anchor (`--ca <cert.pem>`); they have no insecure mode.
+- `qumo hls` verifies against the system root store by default. Trust a specific relay cert with `RELAY_CA_FILE`, or disable verification for a self-signed dev relay with `RELAY_TLS_INSECURE=true`:
 
-```bash
-RELAY_TLS_INSECURE=true qumo hls   # relay presenting a self-signed cert
-```
+  ```bash
+  qumo hls                                   # verify against the system roots
+  RELAY_CA_FILE=certs/server.crt qumo hls    # trust this relay's cert
+  RELAY_TLS_INSECURE=true qumo hls           # dev relay with a self-signed cert
+  ```
+
+`cmd/seed-moq`, the dev seeder, presents an ephemeral self-signed certificate — point the egress at it with `RELAY_TLS_INSECURE=true`.
 
 ## Architecture
 

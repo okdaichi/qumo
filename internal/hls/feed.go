@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"time"
 
 	"github.com/qumo-dev/gomoqt/moqt"
@@ -25,7 +27,13 @@ type feedConfig struct {
 	relayURL  string // relay URL, e.g. "https://host:4433"
 	trackPath string // MoQ broadcast path (catalog and media track live under it)
 	trackName string // MoQ track name to relay, selected from the catalog
-	insecure  bool   // skip relay TLS verification
+	// caFile, when set, is a PEM cert trusted as the relay's root, overriding
+	// the system roots. Empty means verify against the system root store.
+	caFile string
+	// insecure skips relay TLS verification entirely for a self-signed dev
+	// relay. It dominates caFile when both are set — matching crypto/tls, where
+	// InsecureSkipVerify short-circuits verification regardless of RootCAs.
+	insecure bool
 
 	// liveTimeout is how long the feed waits for a group before deciding the
 	// publisher is gone. It is also how stale a manifest may be before the
@@ -78,13 +86,47 @@ func connectWithRetry(ctx context.Context, cfg feedConfig) (*moqt.Session, media
 	}
 }
 
+// relayTLSConfig builds the client TLS config for dialing the relay. The egress
+// verifies the relay's certificate by default: against the system root store
+// when caFile is empty, or against a single relay cert when caFile names a PEM.
+// insecure opts out of verification entirely for a self-signed dev relay.
+func relayTLSConfig(caFile string, insecure bool) (*tls.Config, error) {
+	tc := &tls.Config{MinVersion: tls.VersionTLS13}
+	switch {
+	case insecure:
+		tc.InsecureSkipVerify = true
+	case caFile != "":
+		pool, err := loadCAPool(caFile)
+		if err != nil {
+			return nil, err
+		}
+		tc.RootCAs = pool
+	}
+	return tc, nil
+}
+
+// loadCAPool reads a PEM cert file into a fresh pool. The relay's self-signed
+// cert is its own issuer, so trusting the cert itself is sufficient — mirrors
+// internal/loadgen.loadCAPool.
+func loadCAPool(caFile string) (*x509.CertPool, error) {
+	pemCert, err := os.ReadFile(caFile)
+	if err != nil {
+		return nil, fmt.Errorf("read relay cert %q: %w", caFile, err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(pemCert) {
+		return nil, fmt.Errorf("no certificates found in relay cert %q", caFile)
+	}
+	return pool, nil
+}
+
 // connect dials the relay, reads the MSF catalog, and returns the selected
 // media track's identity, ledger schema, and fMP4 init. The session stays open
 // for [feedMedia] to subscribe on.
 func connect(ctx context.Context, cfg feedConfig) (*moqt.Session, mediaInfo, error) {
-	tc := &tls.Config{MinVersion: tls.VersionTLS13}
-	if cfg.insecure {
-		tc.InsecureSkipVerify = true
+	tc, err := relayTLSConfig(cfg.caFile, cfg.insecure)
+	if err != nil {
+		return nil, mediaInfo{}, fmt.Errorf("hls: relay TLS config: %w", err)
 	}
 	session, err := (&moqt.Dialer{TLSConfig: tc}).Dial(ctx, cfg.relayURL, moqt.NewTrackMux(0))
 	if err != nil {
