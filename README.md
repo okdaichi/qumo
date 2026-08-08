@@ -59,12 +59,23 @@ qumo relay       # Start MoQ relay server (QUIC/MoQT, WebTransport, peer mesh)
 qumo rtmp        # Start RTMP ingest server (bridges RTMP → MoQT)
 qumo rtsp        # Pull from an RTSP source (e.g. IP camera) and republish as MoQT
 qumo rtsp-push   # Start the RTSP push ingest server (bridges RTSP → MoQT)
+qumo hls         # Start the HLS/DASH egress server (subscribes to a MoQ relay, serves HLS/DASH)
 qumo playground  # One-command local demo: in-process relay + embedded web UI on http://127.0.0.1:8080
 qumo loadgen     # Out-of-process capacity load generator (publish|subscribe) — see Benchmarking
 qumo version     # Print build-time version info
 ```
 
 For environment variables and configuration, see `relay-config.example.env`. For Docker-based deployment, see [docker/README.md](docker/README.md).
+
+### HLS / DASH egress
+
+`qumo hls` is a separate process: it subscribes to a MoQ relay's catalog, packages each received group into a CMAF (fMP4) fragment, writes it to a qumo-ledger track, and serves that track's HLS playlist and DASH MPD over HTTP. The subcommand's env-var doc comment (`internal/hls/cmd.go`) is the full configuration reference.
+
+The egress **verifies the relay's TLS certificate by default** — `RELAY_TLS_INSECURE` defaults to `false`. A self-signed dev relay such as `cmd/seed-moq` (which presents an ephemeral certificate, not in any trust store) is therefore not trusted; set the flag to point the egress at one:
+
+```bash
+RELAY_TLS_INSECURE=true qumo hls   # relay presenting a self-signed cert
+```
 
 ## Architecture
 
