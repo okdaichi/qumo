@@ -19,7 +19,7 @@ qumo-dev project's Go implementation of the MoQ protocol.
 - **High-performance relay** — built on QUIC for low-latency media streaming
 - **MoQT protocol** — full Media over QUIC Transport support (moq-lite draft-04)
 - **Peer-based topology** — relays connect to each other via `ANNOUNCE_PLEASE` for decentralized content discovery
-- **Observability** — Prometheus metrics, health probes, and status APIs
+- **Observability** — Prometheus metrics, a health probe, and opt-in pprof profiling
 - **TLS security** — built-in TLS 1.3 support, with optional mTLS between peers
 - **Docker support** — env-var zero-config; prebuilt multi-arch images on GHCR (`ghcr.io/qumo-dev/qumo`)
 - **RTMP/RTSP ingest** — bridge existing encoders and IP cameras into MoQT
