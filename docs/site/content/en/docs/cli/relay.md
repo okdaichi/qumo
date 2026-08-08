@@ -33,12 +33,14 @@ curl http://localhost:4433/health
 
 ## Configuration
 
-See [Configuration]({{< relref "../configuration" >}}) for the full
-environment variable reference, and
-[Observability]({{< relref "../observability" >}}) for `/health`, `/metrics`,
-and `qumo doctor` once it's running.
+Everything other than `--role` is an environment variable: bind address, TLS
+certificates, peer discovery, capacity tuning, and credential auth. Unlike
+the ingest commands, the relay's surface is large enough to have its own
+page — see [Configuration]({{< relref "../configuration" >}}) for the full
+reference.
 
 See [Deployment → Peer topology]({{< relref "../deployment/peer-topology" >}})
-for how `--role` fits into peer discovery, and
+for how `--role` fits into peer discovery,
 [Deployment → Docker]({{< relref "../deployment/docker" >}}) to run it as a
-container.
+container, and [Observability]({{< relref "../observability" >}}) for
+`/health`, `/metrics`, and `qumo doctor` once it's running.

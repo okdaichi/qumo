@@ -18,6 +18,7 @@ qumo dev
   go:     go1.26.5
 ```
 
-Release builds (`mage build`, or the binaries on
-[GitHub Releases](https://github.com/qumo-dev/qumo/releases)) embed the real
-version, commit, and build date instead of `dev`/`none`/`unknown`.
+The `dev`/`none`/`unknown` values above are what an unstamped local build
+reports. Official binaries — from
+[GitHub Releases](https://github.com/qumo-dev/qumo/releases) or the GHCR
+images — embed the real version, commit, and build date.
