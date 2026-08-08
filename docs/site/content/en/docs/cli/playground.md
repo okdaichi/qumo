@@ -1,0 +1,34 @@
+---
+title: playground
+description: One-command local demo — in-process relay plus the embedded web UI.
+weight: 5
+---
+
+Starts a self-contained local demo: an in-process relay plus the embedded web UI.
+
+```
+Usage: qumo playground [flags]
+
+Flags:
+  --ui-addr <addr>    UI HTTP bind address (default: 127.0.0.1:8080)
+  --relay-addr <addr> relay WebTransport bind address (default: 127.0.0.1:4433)
+```
+
+```bash
+qumo playground
+# → relay + web UI at http://127.0.0.1:8080
+```
+
+The browser learns the relay URL automatically from whatever host it opened
+the UI at, so there's no `--host` flag.
+
+## Public hosting
+
+Behind your own TLS-terminating reverse proxy:
+
+```bash
+qumo playground --relay-addr 0.0.0.0:4433
+# proxy https://example.com -> 127.0.0.1:8080; relay UDP/4433 reachable directly.
+# The UI must be HTTPS: WebTransport requires a secure context (localhost excepted).
+# /config returns relayUrl=https://example.com:4433 (derived from the proxy's Host).
+```

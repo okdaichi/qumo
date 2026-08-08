@@ -1,0 +1,102 @@
+baseURL: https://qumo-dev.github.io/qumo/
+languageCode: en
+title: qumo
+description: A high-performance Media over QUIC (MoQ) relay server with peer-based content discovery.
+
+module:
+  imports:
+    - path: github.com/imfing/hextra
+
+# Menu bar configuration
+menu:
+  main:
+    - identifier: about
+      name: About
+      weight: 1
+      url: /about/
+    - identifier: docs
+      name: Docs
+      weight: 2
+      url: /docs/
+    - identifier: sponsor
+      name: ❤ Sponsor ↗
+      weight: 3
+      url: https://github.com/sponsors/qumo-dev
+    - identifier: search
+      name: Search
+      params:
+        type: search
+    - identifier: github
+      name: GitHub
+      url: "https://github.com/qumo-dev/qumo"
+      params:
+        icon: github
+
+  sidebar:
+    - identifier: appendix
+      name: Appendix
+      params:
+        type: separator
+      weight: 1
+    - identifier: qumo
+      name: qumo on pkg.go.dev
+      url: https://pkg.go.dev/github.com/qumo-dev/qumo
+      weight: 2
+    - identifier: gomoqt
+      name: gomoqt (protocol library)
+      url: https://qumo-dev.github.io/gomoqt/
+      weight: 3
+    - identifier: moq-lite-spec
+      name: "MoQ-Lite Spec (draft-04)"
+      weight: 4
+      url: https://www.ietf.org/archive/id/draft-lcurley-moq-lite-04.html
+
+# Logo and Title configuration
+params:
+  page:
+    tabs:
+      sync: true
+  navbar:
+    displayTitle: true
+    displayLogo: false
+    width: wide
+  editURL:
+    enable: true
+    base: "https://github.com/qumo-dev/qumo/edit/main/docs/site"
+
+  # SEO and Social Media Configuration
+  social:
+    images:
+      - /images/og-image.png
+    siteName: qumo
+    siteDescription: A high-performance Media over QUIC (MoQ) relay server with peer-based content discovery.
+
+# SEO and Social Media Settings
+enableRobotsTXT: true
+
+sitemap:
+  changefreq: weekly
+  filename: sitemap.xml
+  priority: 0.5
+
+# Allow raw HTML in Markdown for hero wrappers and containers
+markup:
+  highlight:
+    noClasses: false
+  goldmark:
+    renderer:
+      unsafe: true
+
+# Allow inline shortcodes if used inside paragraphs
+enableInlineShortcodes: true
+
+enableGitInfo: true
+
+defaultContentLanguage: en
+
+languages:
+  en:
+    languageName: English
+    weight: 1
+    title: qumo
+    contentDir: content/en

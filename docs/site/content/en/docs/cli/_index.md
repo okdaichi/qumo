@@ -1,0 +1,35 @@
+---
+title: CLI reference
+description: qumo's subcommands — relay, rtmp, rtsp, rtsp-push, playground, loadgen, doctor, version.
+weight: 5
+cascade:
+  type: docs
+---
+
+```
+Usage: qumo <command>
+
+Commands:
+  relay      Start the MoQ relay server (--role hub|edge; default flat)
+  rtmp       Start the RTMP ingest server
+  rtsp       Pull from an RTSP source (e.g. IP camera) and republish as MoQT
+  rtsp-push  Start the RTSP push ingest server (ANNOUNCE/RECORD)
+  playground Start a local demo (relay + web UI) on http://127.0.0.1:8080
+  doctor     Explain effective runtime config (GC target) — read-only
+  loadgen    Drive an out-of-process capacity load against a relay (subscribe|publish)
+  version    Print version information
+```
+
+All commands are configured via environment variables — see
+[Configuration]({{< relref "../configuration" >}}).
+
+{{< cards >}}
+	{{< card link="relay" title="relay" icon="server" subtitle="Start the MoQ relay server." >}}
+	{{< card link="rtmp" title="rtmp" icon="video-camera" subtitle="Standalone RTMP ingest server." >}}
+	{{< card link="rtsp" title="rtsp" icon="video-camera" subtitle="Pull an RTSP source (IP camera) into MoQT." >}}
+	{{< card link="rtsp-push" title="rtsp-push" icon="video-camera" subtitle="Standalone RTSP push ingest server." >}}
+	{{< card link="playground" title="playground" icon="lightning-bolt" subtitle="One-command local demo." >}}
+	{{< card link="loadgen" title="loadgen" icon="chart-bar" subtitle="Out-of-process capacity load generator." >}}
+	{{< card link="doctor" title="doctor" icon="beaker" subtitle="Explain effective runtime config." >}}
+	{{< card link="version" title="version" icon="tag" subtitle="Print build-time version info." >}}
+{{< /cards >}}
