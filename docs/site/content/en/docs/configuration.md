@@ -36,7 +36,6 @@ qumo relay --role hub    # or "edge"; omit for a standalone / flat relay
 | Variable | Default | Description |
 |---|---|---|
 | `RELAY_NAME` | hostname | Human-readable node identifier. |
-| `ADVERTISE_ADDR` | (empty) | Public address advertised to peers. Required when `RELAY_ADDR` is a wildcard (`0.0.0.0` / `::`). |
 
 ## Static peers
 
@@ -71,7 +70,7 @@ See [Deployment → Nomad]({{< relref "deployment/nomad" >}}).
 | Variable | Default | Description |
 |---|---|---|
 | `CA_FILE` | (empty) | PEM CA certificate. When set, mutual TLS is enabled between peers. |
-| `MTLS_REQUIRED` | `false` | When `true`, every connection must present a client cert signed by `CA_FILE`. |
+| `MTLS_REQUIRED` | `true` | Whether every connection must present a client cert signed by `CA_FILE`. Set to `false` to accept connections without one (verified if presented), e.g. when the relay also serves browser/WebTransport traffic directly. Only applies when `CA_FILE` is set. |
 
 See [Deployment → TLS & mTLS]({{< relref "deployment/tls" >}}).
 

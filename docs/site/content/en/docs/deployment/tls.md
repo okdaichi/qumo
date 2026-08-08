@@ -25,17 +25,20 @@ qumo relay
 
 Setting `CA_FILE` enables mutual TLS for the relay's peer mesh:
 
-- incoming peer connections that present a client cert are verified against this CA;
+- incoming connections must present a client cert signed by this CA;
 - the dialer presents this node's `CERT_FILE` cert to remote relays and trusts only the CA pool;
 - remote resolver clients also present the client cert and verify the remote server against this CA (when `REMOTE_TLS_ENABLED=true`).
 
-Connections **without** a client cert are still allowed by default, so
-browser/WebTransport clients keep working unmodified.
+Because mTLS is required by default once `CA_FILE` is set, browsers — which
+don't present a client cert — can no longer connect. If the same relay also
+serves browser/WebTransport traffic directly, set `MTLS_REQUIRED=false`: peer
+certs are still verified when presented, but connections without one are
+accepted.
 
 | Variable | Default | Description |
 |---|---|---|
 | `CA_FILE` | (unset) | PEM CA certificate. Leave unset to disable mTLS entirely. |
-| `MTLS_REQUIRED` | `false` | When `true`, every connection must present a client cert signed by `CA_FILE`. Use this for relay-only clusters with no direct browser traffic. |
+| `MTLS_REQUIRED` | `true` | Whether every connection must present a client cert signed by `CA_FILE`. Set `false` to also accept connections without one. |
 
 ## Remote resolver TLS
 
