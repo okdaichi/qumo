@@ -141,40 +141,13 @@ func testMediaInfo(tb testing.TB) mediaInfo {
 // never fires while the feeder answers immediately.
 func feedCfg() feedConfig { return feedConfig{liveTimeout: time.Second} }
 
-// locBody encodes one LOC frame — the wire format drainGroup decodes — so a
-// fake group built from several exercises the real packager. It mirrors the
-// encoder in cmd/seed-moq (there is no shared one): a QUIC varint timestamp, a
-// QUIC varint payload length, then the payload.
-func locBody(ts uint64, payload []byte) []byte {
-	b := appendQuicVarint(nil, ts)
-	b = appendQuicVarint(b, uint64(len(payload)))
-	return append(b, payload...)
-}
-
-// appendQuicVarint encodes v as a QUIC variable-length integer (RFC 9000 §16):
-// the top two bits of the first byte carry the length, the rest the value.
-func appendQuicVarint(b []byte, v uint64) []byte {
-	switch {
-	case v < 1<<6:
-		return append(b, byte(v))
-	case v < 1<<14:
-		return append(b, byte(v>>8)|0x40, byte(v))
-	case v < 1<<30:
-		return append(b, byte(v>>24)|0x80, byte(v>>16), byte(v>>8), byte(v))
-	default:
-		return append(b,
-			byte(v>>56)|0xc0, byte(v>>48), byte(v>>40), byte(v>>32),
-			byte(v>>24), byte(v>>16), byte(v>>8), byte(v))
-	}
-}
-
 // validGroupBodies builds n LOC frames with strictly increasing microsecond
 // timestamps spaced step apart from base — the shape drainGroup and
 // sampleDurations accept (two or more advancing frames).
 func validGroupBodies(base, step uint64, n int) [][]byte {
 	bodies := make([][]byte, n)
 	for i := range n {
-		bodies[i] = locBody(base+uint64(i)*step, []byte("frame"))
+		bodies[i] = cmaf.EncodeLOC(base+uint64(i)*step, []byte("frame"))
 	}
 	return bodies
 }
@@ -228,7 +201,7 @@ func TestFeedMedia_SkipsGroupThatFailsToPackage(t *testing.T) {
 	appender := &fakeAppender{}
 	sub := &fakeSubscriber{feeder: &fakeFeeder{groups: []acceptResult{
 		{group: &fakeGroup{seq: 0, bodies: validGroupBodies(0, 33_333, 30)}},
-		{group: &fakeGroup{seq: 1, bodies: [][]byte{locBody(0, []byte("only"))}}}, // one frame → no durations
+		{group: &fakeGroup{seq: 1, bodies: [][]byte{cmaf.EncodeLOC(0, []byte("only"))}}}, // one frame → no durations
 		{group: &fakeGroup{seq: 2, bodies: validGroupBodies(2_000_000, 33_333, 30)}},
 	}, tail: errFeederDone}}
 

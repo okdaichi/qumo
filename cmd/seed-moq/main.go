@@ -37,6 +37,7 @@ import (
 	"github.com/qumo-dev/gomoqt/moqt"
 	"github.com/qumo-dev/gomoqt/msf"
 
+	"github.com/qumo-dev/qumo/internal/cmaf"
 	"github.com/qumo-dev/qumo/internal/envconfig"
 )
 
@@ -173,38 +174,16 @@ func publish(ctx context.Context, tw *moqt.TrackWriter, interval time.Duration) 
 }
 
 // locFrame builds one LOC frame — the wire format the egress decodes — from a
-// microsecond timestamp and a payload: a QUIC variable-length integer (RFC 9000
-// §16) for the timestamp, another for the payload size, then the payload. The
+// microsecond timestamp and a payload, then wraps it in a moqt.Frame. The
 // seeder is not an encoder; the payload is placeholder bytes, but the container
 // is real so the egress's LOC decoder and duration math read it and the group
 // reaches the ledger instead of being skipped as undecodable.
 func locFrame(timestamp uint64, payload []byte) *moqt.Frame {
-	var b []byte
-	b = appendQuicVarint(b, timestamp)
-	b = appendQuicVarint(b, uint64(len(payload)))
-	b = append(b, payload...)
+	b := cmaf.EncodeLOC(timestamp, payload)
 	f := moqt.NewFrame(len(b))
 	// not actionable: Write only fails on a nil frame, which NewFrame is not.
 	_, _ = f.Write(b)
 	return f
-}
-
-// appendQuicVarint encodes v as a QUIC variable-length integer, the inverse of
-// the decoder in internal/cmaf. The top two bits of the first byte carry the
-// encoding length (1, 2, 4, or 8 bytes).
-func appendQuicVarint(b []byte, v uint64) []byte {
-	switch {
-	case v < 1<<6:
-		return append(b, byte(v))
-	case v < 1<<14:
-		return append(b, byte(v>>8)|0x40, byte(v))
-	case v < 1<<30:
-		return append(b, byte(v>>24)|0x80, byte(v>>16), byte(v>>8), byte(v))
-	default:
-		return append(b,
-			byte(v>>56)|0xc0, byte(v>>48), byte(v>>40), byte(v>>32),
-			byte(v>>24), byte(v>>16), byte(v>>8), byte(v))
-	}
 }
 
 // selfSignedTLS builds an ephemeral self-signed certificate valid for localhost

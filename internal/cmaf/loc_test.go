@@ -60,6 +60,29 @@ func TestDecodeLOC(t *testing.T) {
 	}
 }
 
+// EncodeLOC must produce the same bytes this test's independent locFrame does,
+// so a frame the seeder builds with EncodeLOC is the one DecodeLOC reads.
+// locFrame is hand-written here (it does not call EncodeLOC), so this catches a
+// bug the encoder and decoder could share. Each varint width is covered, and
+// because TestDecodeLOC already round-trips locFrame, EncodeLOC round-trips too.
+func TestEncodeLOC(t *testing.T) {
+	payload := []byte("encoded-frame-bytes")
+
+	tests := map[string]uint64{
+		"1-byte varint": 42,
+		"2-byte varint": 16_000,
+		"4-byte varint": 1_000_000_000,
+		"8-byte varint": 5_000_000_000,
+		"zero":          0,
+	}
+
+	for name, timestamp := range tests {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, locFrame(timestamp, payload), cmaf.EncodeLOC(timestamp, payload))
+		})
+	}
+}
+
 // A frame carrying no payload is still a well-formed frame; it must not be read
 // as a truncated one.
 func TestDecodeLOC_EmptyPayload(t *testing.T) {
