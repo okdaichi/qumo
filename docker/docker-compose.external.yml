@@ -11,9 +11,9 @@ services:
       - "8080:4433"      # host 8080 -> container 4433 (HTTP health/metrics)
     environment:
       RELAY_ADDR: "0.0.0.0:4433"
-      INSECURE: "true"
       RELAY_NAME: "relay-1"
     volumes:
+      # Generate certs first: mkcert -cert-file certs/server.crt -key-file certs/server.key localhost
       - ../certs:/app/certs:ro
     restart: unless-stopped
     healthcheck:
