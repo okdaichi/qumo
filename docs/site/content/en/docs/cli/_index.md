@@ -1,6 +1,6 @@
 ---
 title: CLI reference
-description: qumo's subcommands — relay, rtmp, rtsp, rtsp-push, playground, doctor, loadgen, version.
+description: qumo's subcommands — relay, rtmp, rtsp, rtsp-push, hls, playground, doctor, loadgen, version.
 weight: 5
 cascade:
   type: docs
@@ -14,6 +14,7 @@ Commands:
   rtmp       Start the RTMP ingest server
   rtsp       Pull from an RTSP source (e.g. IP camera) and republish as MoQT
   rtsp-push  Start the RTSP push ingest server (ANNOUNCE/RECORD)
+  hls        Start the HLS/DASH egress server
   playground Start a local demo (relay + web UI) on http://127.0.0.1:8080
   doctor     Explain effective runtime config (GC target) — read-only
   loadgen    Drive an out-of-process capacity load against a relay (subscribe|publish)
@@ -28,6 +29,7 @@ All commands are configured via environment variables — see
 	{{< card link="rtmp" title="rtmp" icon="video-camera" subtitle="Standalone RTMP ingest server." >}}
 	{{< card link="rtsp" title="rtsp" icon="cloud-download" subtitle="Pull an RTSP source (IP camera) into MoQT." >}}
 	{{< card link="rtsp-push" title="rtsp-push" icon="cloud-upload" subtitle="Standalone RTSP push ingest server." >}}
+	{{< card link="hls" title="hls" icon="globe-alt" subtitle="Serve a MoQ stream as HLS/DASH." >}}
 	{{< card link="playground" title="playground" icon="lightning-bolt" subtitle="One-command local demo." >}}
 	{{< card link="doctor" title="doctor" icon="beaker" subtitle="Explain effective runtime config." >}}
 	{{< card link="loadgen" title="loadgen" icon="chart-bar" subtitle="Out-of-process capacity load generator." >}}

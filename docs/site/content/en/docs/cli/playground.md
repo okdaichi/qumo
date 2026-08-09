@@ -1,7 +1,7 @@
 ---
 title: playground
 description: Start a local demo — in-process relay plus the embedded web UI.
-weight: 5
+weight: 6
 ---
 
 Starts a self-contained local demo: an in-process relay plus the embedded web

@@ -32,7 +32,7 @@ in production — Docker topologies, peer discovery, Nomad, and TLS/mTLS:
 ## Reference
 
 {{< cards >}}
-	{{< card link="cli" title="CLI reference" icon="terminal" subtitle="relay, rtmp, rtsp, rtsp-push, playground, doctor, loadgen, version." >}}
+	{{< card link="cli" title="CLI reference" icon="terminal" subtitle="relay, rtmp, rtsp, rtsp-push, hls, playground, doctor, loadgen, version." >}}
 {{< /cards >}}
 
 ## Feedback
