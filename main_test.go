@@ -202,10 +202,10 @@ func TestMain_Subprocess(t *testing.T) {
 			wantOutputContains: []string{"unknown command", "Usage: qumo"},
 		},
 		"relay env validation error": {
-			// cli.RunRelay validates env vars; default wildcard addr requires ADVERTISE_ADDR
+			// cli.RunRelay fails fast when it can't load the default TLS cert/key.
 			args:               []string{"relay"},
 			wantExitNonZero:    true,
-			wantOutputContains: []string{"ADVERTISE_ADDR is required", "error:"},
+			wantOutputContains: []string{"failed to setup TLS", "error:"},
 		},
 	}
 

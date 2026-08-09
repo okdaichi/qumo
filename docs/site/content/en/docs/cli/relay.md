@@ -27,7 +27,6 @@ It needs a TLS certificate to bind at all — `CERT_FILE`/`KEY_FILE`, default
 $ RELAY_ADDR=127.0.0.1:4443 RELAY_NAME=relay-1 qumo relay
 INFO relay: UDP receive buffer size="default 262144 (256 KB)"
 	Host    : 127.0.0.1:4443
-	Advertise: 127.0.0.1:4443
 	Node ID : relay-1
 	/       : WebTransport endpoint
 	/health : health probe

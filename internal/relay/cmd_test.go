@@ -144,18 +144,8 @@ func TestServeComponents_ReturnsErrorOnPanic(t *testing.T) {
 	}
 }
 
-func TestRun_WildcardRequiresAdvertiseAddr(t *testing.T) {
-	t.Setenv("RELAY_ADDR", "0.0.0.0:4433")
-	t.Setenv("ADVERTISE_ADDR", "")
-
-	err := Run(nil)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "ADVERTISE_ADDR is required")
-}
-
 func TestRun_InvalidGroupCacheSize(t *testing.T) {
 	t.Setenv("RELAY_ADDR", "localhost:4433")
-	t.Setenv("ADVERTISE_ADDR", "localhost:4433")
 	t.Setenv("GROUP_CACHE_SIZE", "not-a-number")
 
 	err := Run(nil)

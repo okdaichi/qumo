@@ -12,6 +12,10 @@
 # Hub topology : hubs connect to each other cross-region via static PEERS
 # Edge topology: edges connect to their local hub via static PEERS
 #
+# --role is set per-service via `command:` (it's a CLI flag, not an env var —
+# see `qumo relay --help`); REGION is deployment-level metadata (Nomad/remote
+# resolver tags) that the relay binary itself doesn't read, so it's omitted here.
+#
 # Usage:
 #   docker compose -f docker/docker-compose.static.yml up --build
 #
@@ -27,7 +31,6 @@ x-relay-base: &relay-base
   build:
     context: ..
     dockerfile: docker/Dockerfile
-  command: ["relay"]
   restart: unless-stopped
   environment:
     RELAY_ADDR: "0.0.0.0:4433"
@@ -48,11 +51,9 @@ services:
   relay-hub-asia:
     <<: *relay-base
     container_name: qumo-relay-hub-asia
+    command: ["relay", "--role", "hub"]
     environment:
       RELAY_NAME: "relay-hub-asia"
-      REGION: "asia"
-      ROLE: "hub"
-      ADVERTISE_ADDR: "relay-hub-asia:4433"
       # Connect to hubs in other regions
       PEERS: "moqt://relay-hub-europe:4433,moqt://relay-hub-americas:4433"
     ports:
@@ -62,14 +63,12 @@ services:
   relay-edge-asia:
     <<: *relay-base
     container_name: qumo-relay-edge-asia
+    command: ["relay", "--role", "edge"]
     depends_on:
       relay-hub-asia:
         condition: service_healthy
     environment:
       RELAY_NAME: "relay-edge-asia"
-      REGION: "asia"
-      ROLE: "edge"
-      ADVERTISE_ADDR: "relay-edge-asia:4433"
       # Connect to local hub
       PEERS: "moqt://relay-hub-asia:4433"
     ports:
@@ -81,11 +80,9 @@ services:
   relay-hub-europe:
     <<: *relay-base
     container_name: qumo-relay-hub-europe
+    command: ["relay", "--role", "hub"]
     environment:
       RELAY_NAME: "relay-hub-europe"
-      REGION: "europe"
-      ROLE: "hub"
-      ADVERTISE_ADDR: "relay-hub-europe:4433"
       # Connect to hubs in other regions
       PEERS: "moqt://relay-hub-asia:4433,moqt://relay-hub-americas:4433"
     ports:
@@ -95,14 +92,12 @@ services:
   relay-edge-europe:
     <<: *relay-base
     container_name: qumo-relay-edge-europe
+    command: ["relay", "--role", "edge"]
     depends_on:
       relay-hub-europe:
         condition: service_healthy
     environment:
       RELAY_NAME: "relay-edge-europe"
-      REGION: "europe"
-      ROLE: "edge"
-      ADVERTISE_ADDR: "relay-edge-europe:4433"
       # Connect to local hub
       PEERS: "moqt://relay-hub-europe:4433"
     ports:
@@ -114,11 +109,9 @@ services:
   relay-hub-americas:
     <<: *relay-base
     container_name: qumo-relay-hub-americas
+    command: ["relay", "--role", "hub"]
     environment:
       RELAY_NAME: "relay-hub-americas"
-      REGION: "americas"
-      ROLE: "hub"
-      ADVERTISE_ADDR: "relay-hub-americas:4433"
       # Connect to hubs in other regions
       PEERS: "moqt://relay-hub-asia:4433,moqt://relay-hub-europe:4433"
     ports:
@@ -128,14 +121,12 @@ services:
   relay-edge-americas:
     <<: *relay-base
     container_name: qumo-relay-edge-americas
+    command: ["relay", "--role", "edge"]
     depends_on:
       relay-hub-americas:
         condition: service_healthy
     environment:
       RELAY_NAME: "relay-edge-americas"
-      REGION: "americas"
-      ROLE: "edge"
-      ADVERTISE_ADDR: "relay-edge-americas:4433"
       # Connect to local hub
       PEERS: "moqt://relay-hub-americas:4433"
     ports:

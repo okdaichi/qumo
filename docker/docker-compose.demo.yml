@@ -49,7 +49,6 @@ services:
     environment:
       <<: *qumo-env
       RELAY_ADDR: "0.0.0.0:4433"
-      ADVERTISE_ADDR: "localhost:4433"
       RELAY_NAME: "demo-relay"
     ports:
       - "4433:4433/udp"   # MoQT (QUIC)
