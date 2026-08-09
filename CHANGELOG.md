@@ -79,6 +79,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   local hubs; hubs take no local action) — that branch never engaged. Fixed
   by passing `--role` on the container command/args in both files.
 
+- **`qumo rtsp` panicked on a malformed broadcast path.** `moqt.NewAnnouncement`
+  panics if the path doesn't start with `/`, and `ingest.NewSession` called it
+  without validating first. Now `NewSession` rejects an invalid path with a
+  clean error before reaching gomoqt — protecting all three ingest entry points
+  (`rtmp`, `rtsp`, `rtsp-push`).
+
 - **`internal/playground` restricted pull-server CORS origins.** The on-demand
   RTSP pull ingest server (`:4543`) allowed any WebTransport origin (`"*"`),
   letting an arbitrary malicious page initiate a Cross-Site WebTransport
