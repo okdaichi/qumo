@@ -83,22 +83,22 @@ func TestLoadCAPool(t *testing.T) {
 	require.NoError(t, os.WriteFile(bad, []byte("not a pem"), 0o600))
 
 	t.Run("valid cert", func(t *testing.T) {
-		pool, err := LoadCAPool(good)
+		pool, err := loadCAPool(good)
 		require.NoError(t, err)
 		assert.NotNil(t, pool)
 	})
 	t.Run("empty path returns a nil pool, no error", func(t *testing.T) {
 		// Empty means "verify against the system roots" — not a missing file.
-		pool, err := LoadCAPool("")
+		pool, err := loadCAPool("")
 		require.NoError(t, err)
 		assert.Nil(t, pool)
 	})
 	t.Run("no certs in file", func(t *testing.T) {
-		_, err := LoadCAPool(bad)
+		_, err := loadCAPool(bad)
 		assert.Error(t, err)
 	})
 	t.Run("missing file", func(t *testing.T) {
-		_, err := LoadCAPool(filepath.Join(dir, "absent.pem"))
+		_, err := loadCAPool(filepath.Join(dir, "absent.pem"))
 		assert.Error(t, err)
 	})
 }

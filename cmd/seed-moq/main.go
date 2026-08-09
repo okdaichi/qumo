@@ -164,10 +164,12 @@ func publish(ctx context.Context, tw *moqt.TrackWriter, interval time.Duration) 
 		for i := range framesPerGroup {
 			payload := []byte(fmt.Sprintf("g%d-f%d", group, i))
 			if err := gw.WriteFrame(locFrame(base+uint64(i)*frameInterval, payload)); err != nil {
+				// not actionable: the frame write already failed; closing abandons this group regardless.
 				_ = gw.Close()
 				return
 			}
 		}
+		// not actionable: a failed close drops this group; the seeder publishes the next one.
 		_ = gw.Close()
 		group++
 	}

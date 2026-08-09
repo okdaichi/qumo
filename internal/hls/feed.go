@@ -121,6 +121,7 @@ func connect(ctx context.Context, cfg feedConfig) (*moqt.Session, mediaInfo, err
 
 	track := findTrack(catalog, cfg.trackName)
 	if track == nil {
+		// not actionable: the close outcome is irrelevant once the track was not found.
 		_ = session.CloseWithError(moqt.NoError, "track not found")
 		return nil, mediaInfo{}, fmt.Errorf("hls: track %q not in catalog", cfg.trackName)
 	}
@@ -133,6 +134,7 @@ func connect(ctx context.Context, cfg feedConfig) (*moqt.Session, mediaInfo, err
 	// broadcast.
 	packager, err := packagerForTrack(track)
 	if err != nil {
+		// not actionable: the close outcome is irrelevant once the catalog could not describe the track.
 		_ = session.CloseWithError(moqt.NoError, "catalog cannot describe the track")
 		return nil, mediaInfo{}, err
 	}

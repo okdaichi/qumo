@@ -32,7 +32,7 @@ func Apply(tc *tls.Config, caFile string, insecure bool) error {
 		tc.InsecureSkipVerify = true
 		return nil
 	}
-	pool, err := LoadCAPool(caFile)
+	pool, err := loadCAPool(caFile)
 	if err != nil {
 		return err
 	}
@@ -40,11 +40,11 @@ func Apply(tc *tls.Config, caFile string, insecure bool) error {
 	return nil
 }
 
-// LoadCAPool reads a PEM cert file into a fresh pool. The relay's self-signed
+// loadCAPool reads a PEM cert file into a fresh pool. The relay's self-signed
 // cert is its own issuer, so passing the cert itself is sufficient to trust it;
 // this does not seed the system root store. An empty caFile returns a nil pool
 // (no error), leaving the caller free to verify against the system roots.
-func LoadCAPool(caFile string) (*x509.CertPool, error) {
+func loadCAPool(caFile string) (*x509.CertPool, error) {
 	if caFile == "" {
 		return nil, nil
 	}
