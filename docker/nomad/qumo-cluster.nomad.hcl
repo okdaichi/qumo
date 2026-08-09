@@ -48,7 +48,6 @@ job "qumo-cluster" {
       }
 
       env {
-        INSECURE   = "true"
         RELAY_ADDR = "0.0.0.0:4433"
         RELAY_NAME = "hub-asia-${NOMAD_ALLOC_INDEX}"
         # Hubs point at the local resolver too, though they take no local action.
@@ -92,7 +91,6 @@ job "qumo-cluster" {
       }
 
       env {
-        INSECURE   = "true"
         RELAY_ADDR = "0.0.0.0:4433"
         RELAY_NAME = "edge-asia-${NOMAD_ALLOC_INDEX}"
         # The path under test: edge -> LocalResolver -> Nomad -> all local hubs.

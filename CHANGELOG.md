@@ -61,6 +61,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   wildcard-bind guard that required it is gone too. Also removed from
   `relay-config.example.env`, the Docker Compose files, and the Nomad job
   spec.
+- **`INSECURE`** — removed from all Docker Compose files, the Nomad job spec,
+  and `relay-config.example.env`. No Go code ever read this variable; it was
+  leftover from an unimplemented "generate ephemeral self-signed cert" idea.
+  Setting it had no effect — the relay still required `CERT_FILE`/`KEY_FILE`
+  to exist. The compose files now carry a comment pointing to `mkcert` for
+  generating the cert they mount.
 
 ### Fixed
 - **Nomad/Compose demo topologies never actually applied `--role`.**

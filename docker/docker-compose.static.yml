@@ -34,7 +34,9 @@ x-relay-base: &relay-base
   restart: unless-stopped
   environment:
     RELAY_ADDR: "0.0.0.0:4433"
-    INSECURE: "true"
+  volumes:
+    # Generate certs first: mkcert -cert-file certs/server.crt -key-file certs/server.key localhost
+    - ../certs:/app/certs:ro
   healthcheck:
     test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:4433/health"]
     interval: 15s
