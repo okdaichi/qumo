@@ -46,6 +46,7 @@ type config struct {
 	gps                                       float64
 	size                                      int
 	startRelay                                bool
+	insecure                                  bool
 	relayCores                                string
 	gogc                                      int
 }
@@ -54,7 +55,7 @@ func run(args []string) error {
 	fs := flag.NewFlagSet("capacity", flag.ContinueOnError)
 	qumo := fs.String("qumo", "qumo", "qumo binary (path, or a name on $PATH)")
 	relay := fs.String("relay", "127.0.0.1:4433", "relay moqt address (host:port)")
-	caFile := fs.String("ca", "", "relay cert/CA to trust (required unless --start-relay)")
+	caFile := fs.String("ca", "", "relay cert/CA to trust (required unless --start-relay or --insecure)")
 	bpath := fs.String("path", "/bench/carry", "broadcast path")
 	track := fs.String("track", "data", "track name")
 	hold := fs.Duration("hold", 15*time.Second, "hold duration per probe")
@@ -62,6 +63,7 @@ func run(args []string) error {
 	size := fs.Int("size", 64, "frame size in bytes")
 	results := fs.String("results", "capacity-results", "dir for results.jsonl (dashboard input)")
 	startRelay := fs.Bool("start-relay", false, "spawn a local relay (self-signed cert generated in-process)")
+	insecure := fs.Bool("insecure", false, "skip relay TLS verification, passed to loadgen (dev; self-signed relay)")
 	relayCores := fs.String("relay-cores", "", "taskset CPU list for the relay (Linux; --start-relay)")
 	gogc := fs.Int("gogc", 800, "GOGC for the relay (--start-relay)")
 	sessionsArg := fs.String("sessions", "", `explicit session counts to probe, e.g. "2000 5000 8000"`)
@@ -97,7 +99,7 @@ func run(args []string) error {
 	cfg := config{
 		qumo: *qumo, relay: *relay, caFile: *caFile, path: *bpath, track: *track, results: *results,
 		hold: *hold, gps: *gps, size: *size,
-		startRelay: *startRelay, relayCores: *relayCores, gogc: *gogc,
+		startRelay: *startRelay, insecure: *insecure, relayCores: *relayCores, gogc: *gogc,
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -134,8 +136,8 @@ func orchestrate(ctx context.Context, cfg config, sessions []int, auto bool, sea
 	} else {
 		// Remote mode: the relay is a persistent external service we don't own,
 		// so we can't cycle it — one publisher for the whole run.
-		if cfg.caFile == "" {
-			return errors.New("--ca is required unless --start-relay")
+		if cfg.caFile == "" && !cfg.insecure {
+			return errors.New("--ca is required unless --start-relay or --insecure")
 		}
 		if err := waitForMetrics(ctx, metricsURL(cfg), 30*time.Second); err != nil {
 			return err
@@ -237,11 +239,21 @@ func startRelay(ctx context.Context, cfg config, certFile, keyFile string) (func
 	return func() { stopProc(cmd) }, nil
 }
 
+// loadgenTLSArgs returns the TLS flags to pass to a spawned loadgen process:
+// --insecure when configured, otherwise --ca with the trust anchor.
+func loadgenTLSArgs(cfg config) []string {
+	if cfg.insecure {
+		return []string{"--insecure"}
+	}
+	return []string{"--ca", cfg.caFile}
+}
+
 func startPublisher(ctx context.Context, cfg config) (func(), error) {
-	cmd := exec.CommandContext(ctx, cfg.qumo, "loadgen", "publish",
-		"--relay", cfg.relay, "--ca", cfg.caFile, "--path", cfg.path, "--track", cfg.track,
-		"--gps", strconv.FormatFloat(cfg.gps, 'f', -1, 64), "--size", strconv.Itoa(cfg.size),
-	)
+	args := []string{"loadgen", "publish", "--relay", cfg.relay}
+	args = append(args, loadgenTLSArgs(cfg)...)
+	args = append(args, "--path", cfg.path, "--track", cfg.track,
+		"--gps", strconv.FormatFloat(cfg.gps, 'f', -1, 64), "--size", strconv.Itoa(cfg.size))
+	cmd := exec.CommandContext(ctx, cfg.qumo, args...)
 	cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start publisher: %w", err)
@@ -251,11 +263,12 @@ func startPublisher(ctx context.Context, cfg config) (func(), error) {
 }
 
 func runSubscribe(ctx context.Context, cfg config, n int) error {
-	cmd := exec.CommandContext(ctx, cfg.qumo, "loadgen", "subscribe",
-		"--relay", cfg.relay, "--ca", cfg.caFile, "--path", cfg.path, "--track", cfg.track,
+	args := []string{"loadgen", "subscribe", "--relay", cfg.relay}
+	args = append(args, loadgenTLSArgs(cfg)...)
+	args = append(args, "--path", cfg.path, "--track", cfg.track,
 		"--hold", cfg.hold.String(), "--results", cfg.results,
-		strconv.Itoa(n), // positional N (after flags)
-	)
+		strconv.Itoa(n)) // positional N (after flags)
+	cmd := exec.CommandContext(ctx, cfg.qumo, args...)
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr // surface the per-probe report
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("subscribe %d: %w", n, err)

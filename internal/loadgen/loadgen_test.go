@@ -149,12 +149,22 @@ func TestBindCommon(t *testing.T) {
 	ca := filepath.Join(dir, "cert.pem")
 	require.NoError(t, os.WriteFile(ca, selfSignedCertPEM(t), 0o600))
 
-	t.Run("ca required", func(t *testing.T) {
+	t.Run("ca or insecure required", func(t *testing.T) {
 		fs := newTestFlagSet(t)
 		finalize := bindCommon(fs)
 		require.NoError(t, fs.Parse([]string{"--relay", "host:9"}))
 		_, err := finalize()
 		assert.Error(t, err)
+	})
+
+	t.Run("insecure satisfies without ca", func(t *testing.T) {
+		fs := newTestFlagSet(t)
+		finalize := bindCommon(fs)
+		require.NoError(t, fs.Parse([]string{"--relay", "host:9", "--insecure"}))
+		target, err := finalize()
+		require.NoError(t, err)
+		assert.True(t, target.tls.InsecureSkipVerify, "--insecure skips verification without a --ca")
+		assert.Nil(t, target.tls.RootCAs)
 	})
 
 	t.Run("derives metrics url from relay", func(t *testing.T) {
