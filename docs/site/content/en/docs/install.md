@@ -23,22 +23,14 @@ Download the latest archive from [GitHub Releases](https://github.com/qumo-dev/q
 curl -L https://github.com/qumo-dev/qumo/releases/latest/download/qumo_0.4.0_linux_amd64.tar.gz | tar xz
 ./qumo playground      # one-command demo: relay + web UI at http://127.0.0.1:8080
 
-# Or for a standalone relay:
-mage cert              # generate a dev cert (mkcert or self-signed)
-./qumo relay           # start the relay (certs/server.crt + .key)
-
 # Windows: download qumo_0.4.0_windows_amd64.zip from the releases page
 ```
 {{< /tab >}}
 
 {{< tab name="Docker" >}}
-Prebuilt multi-arch images are published to GHCR:
-
-```bash
-docker pull ghcr.io/qumo-dev/qumo:latest
-```
-
-See [Deployment → Docker]({{< relref "deployment/docker" >}}) for compose examples and topology variants.
+Prebuilt multi-arch images are published to GHCR — see
+[Deployment → Docker]({{< relref "deployment/docker" >}}) for the pull/run
+commands and compose examples.
 {{< /tab >}}
 
 {{< tab name="Build from source" >}}

@@ -4,26 +4,25 @@ description: Environment variables and flags for configuring the qumo relay.
 weight: 2
 ---
 
-qumo is configured entirely through **environment variables** — there is no
-config file. The full annotated reference lives in
-[`relay-config.example.env`](https://github.com/qumo-dev/qumo/blob/main/relay-config.example.env)
-in the repo; this page groups the variables by concern.
+Apart from `--role`, qumo is configured entirely through **environment
+variables** — there is no config file. This page groups every variable by
+concern.
+
+Set them however your platform prefers — inline, an env file, systemd's
+`EnvironmentFile=`, or Docker's `--env-file`:
 
 ```bash
-export $(grep -v '^#' relay.env | xargs)   # bash/zsh
+RELAY_NAME=relay-tokyo qumo relay          # inline
+set -a && . ./relay.env && set +a          # from a file you wrote
 qumo relay
 ```
-
-For systemd, use `EnvironmentFile=/etc/qumo/relay.env`. For Docker, use
-`docker run --env-file relay.env ...`.
 
 ## Server
 
 | Variable | Default | Description |
 |---|---|---|
-| `RELAY_ADDR` | `0.0.0.0:4433` | Bind address (QUIC/MoQT). Also serves HTTP health/metrics on the same port. |
-| `CERT_FILE` / `KEY_FILE` | `certs/server.crt` / `certs/server.key` | TLS certificate and key. |
-| `INSECURE` | `false` | Generate an ephemeral self-signed cert (dev/test only). |
+| `RELAY_ADDR` | `:4433` | Bind address (QUIC/MoQT). Dual-stack — binds both IPv4 and IPv6, so `localhost` works on hosts where it resolves to `::1` (e.g. Windows). Also serves HTTP health/metrics on the same port. |
+| `CERT_FILE` / `KEY_FILE` | `certs/server.crt` / `certs/server.key` | TLS certificate and key. Required — the relay exits at startup if it can't load them. |
 
 The node's **topology role** is a CLI flag, not an env var:
 

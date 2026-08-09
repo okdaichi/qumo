@@ -6,20 +6,21 @@ weight: 4
 
 ## Server TLS
 
-qumo requires TLS 1.3 for its QUIC listener.
+qumo requires TLS 1.3 for its QUIC listener, configured via `CERT_FILE` /
+`KEY_FILE` (see [Configuration → Server]({{< relref "../configuration" >}}#server)
+for the full variable reference).
 
-| Variable | Default | Description |
-|---|---|---|
-| `CERT_FILE` / `KEY_FILE` | `certs/server.crt` / `certs/server.key` | TLS certificate and key. |
-| `INSECURE` | `false` | Generate an ephemeral self-signed cert (dev/test only). |
-
-For local development, `mage cert` generates a dev cert (mkcert if available,
-otherwise self-signed):
+For local development, generate a browser-trusted cert with
+[mkcert](https://github.com/FiloSottile/mkcert):
 
 ```bash
-mage cert
+mkcert -install
+mkcert -cert-file certs/server.crt -key-file certs/server.key localhost 127.0.0.1 ::1
 qumo relay
 ```
+
+(`qumo playground` needs no manual cert — it generates and trusts its own dev
+certificate automatically.)
 
 ## Mutual TLS between peers (optional)
 
@@ -30,12 +31,10 @@ Setting `CA_FILE` enables mutual TLS for the relay's peer mesh:
 - remote resolver clients also present the client cert and verify the remote server against this CA (when `REMOTE_TLS_ENABLED=true`).
 
 Connections **without** a client cert are still allowed by default, so
-browser/WebTransport clients keep working unmodified.
-
-| Variable | Default | Description |
-|---|---|---|
-| `CA_FILE` | (unset) | PEM CA certificate. Leave unset to disable mTLS entirely. |
-| `MTLS_REQUIRED` | `false` | When `true`, every connection must present a client cert signed by `CA_FILE`. Use this for relay-only clusters with no direct browser traffic. |
+browser/WebTransport clients keep working unmodified — set `MTLS_REQUIRED=true`
+for relay-only clusters with no direct browser traffic. See
+[Configuration → mTLS]({{< relref "../configuration" >}}#mtls-optional) for
+the `CA_FILE` / `MTLS_REQUIRED` variable reference.
 
 ## Remote resolver TLS
 

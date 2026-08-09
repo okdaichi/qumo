@@ -1,7 +1,7 @@
 ---
 title: loadgen
-description: Out-of-process capacity load generator — pure remote clients for measuring relay capacity.
-weight: 6
+description: Drive an out-of-process capacity load against a running relay.
+weight: 7
 ---
 
 Out-of-process capacity primitives against a running qumo relay. Both
@@ -10,75 +10,85 @@ and never spawn a relay themselves. This matters: running load clients and
 the relay in one process makes client-side QUIC-handshake CPU, not the relay,
 the bottleneck.
 
-```
-Usage: qumo loadgen <subcommand> [flags]
-
-Subcommands:
-  publish          Publish one trickle track to the relay (keep running during a run)
-  subscribe <N>    Launch N subscriber sessions and measure the relay's hold + per-session cost
-```
-
-## publish
+## Usage
 
 ```
-Usage of loadgen publish:
-  -ca string        PEM file of the relay's TLS cert/CA to trust (required)
-  -gps float         groups per second (trickle rate) (default 0.5)
-  -idle-timeout duration  QUIC max idle timeout (default 30s)
-  -keepalive duration     QUIC keep-alive period (default 5s)
-  -metrics string    relay /metrics URL (default http://<relay>/metrics)
-  -path string        broadcast path (default "/bench/carry")
-  -relay string        relay moqt address (host:port) (default "127.0.0.1:4433")
-  -size int             frame size in bytes (min 16) (default 64)
-  -track string        track name (default "data")
+qumo loadgen <subcommand> [flags]
 ```
 
-## subscribe
+| Subcommand | Description |
+|---|---|
+| `publish` | Publish one trickle track to the relay (keep running during a run). |
+| `subscribe <N>` | Launch N subscriber sessions and measure the relay's hold + per-session cost. |
 
-```
-Usage of loadgen subscribe:
-  -ca string        PEM file of the relay's TLS cert/CA to trust (required)
-  -hold duration      how long to hold sessions after establishment (default 30s)
-  -idle-timeout duration  QUIC max idle timeout (default 30s)
-  -keepalive duration     QUIC keep-alive period (default 5s)
-  -metrics string    relay /metrics URL (default http://<relay>/metrics)
-  -path string        broadcast path (default "/bench/carry")
-  -relay string        relay moqt address (host:port) (default "127.0.0.1:4433")
-  -results string    dir to append a capacity JSONL record (optional)
-  -track string        track name (default "data")
-```
+### publish
+
+| Flag | Default | Description |
+|---|---|---|
+| `--ca <file>` | (required) | PEM file of the relay's TLS cert/CA to trust. |
+| `--relay <host:port>` | `127.0.0.1:4433` | Relay MoQT address to dial. |
+| `--path <path>` | `/bench/carry` | Broadcast path. |
+| `--track <name>` | `data` | Track name. |
+| `--gps <float>` | `0.5` | Groups per second (trickle rate). |
+| `--size <bytes>` | `64` | Frame size in bytes (min 16). |
+| `--metrics <url>` | `http://<relay>/metrics` | Relay `/metrics` URL. |
+| `--keepalive <dur>` | `5s` | QUIC keep-alive period. |
+| `--idle-timeout <dur>` | `30s` | QUIC max idle timeout. |
+
+### subscribe
+
+| Flag | Default | Description |
+|---|---|---|
+| `--ca <file>` | (required) | PEM file of the relay's TLS cert/CA to trust. |
+| `--relay <host:port>` | `127.0.0.1:4433` | Relay MoQT address to dial. |
+| `--path <path>` | `/bench/carry` | Broadcast path. |
+| `--track <name>` | `data` | Track name. |
+| `--hold <dur>` | `30s` | How long to hold sessions after establishment. |
+| `--results <dir>` | (optional) | Directory to append a capacity JSONL record to. |
+| `--metrics <url>` | `http://<relay>/metrics` | Relay `/metrics` URL. |
+| `--keepalive <dur>` | `5s` | QUIC keep-alive period. |
+| `--idle-timeout <dur>` | `30s` | QUIC max idle timeout. |
 
 ## Example
 
-```bash
-qumo loadgen publish       --relay <host:4433> --ca <cert.pem>               # trickle source
-qumo loadgen subscribe --relay <host:4433> --ca <cert.pem> --hold 15s 12000  # measure N=12000
+Run the publisher and the subscriber load against a relay running elsewhere —
+the publisher stays up for the duration of the run:
+
+```console
+$ qumo loadgen publish --relay 127.0.0.1:4443 --ca certs/server.crt
+INFO loadgen publishing relay=127.0.0.1:4443 path=/bench/carry gps=0.5 size=64
 ```
 
-`subscribe --results <dir>` appends a `capacity`-group record to
-`results.jsonl`, which the bench dashboard (`scripts/relay_bench_report.ts`)
-renders.
+Then, in another shell, launch the subscriber load. It reports the relay's
+own per-session cost, scraped from its `/metrics` before and after:
 
-## Sweeping / finding the ceiling
-
-Sweeping a list of session counts, or auto-finding the ceiling, is
-orchestration and lives in a separate driver — `tools/capacity` — that
-composes these primitives (starts a relay + publisher, then probes session
-counts):
-
-```bash
-go build -o capacity ./tools/capacity
-
-# One box: spawns a local relay (self-signed cert, no openssl), CPU-isolated
-# from the load via --relay-cores. A fresh relay starts per probe.
-./capacity --start-relay --relay-cores 0-1 --sessions "500 1000 2000" --hold 10s
-./capacity --start-relay --relay-cores 0-1 --auto --start 2000 --max 50000 --bisect
-
-# Two hosts: point at a relay running elsewhere; only generates load.
-./capacity --relay relay.example.net:4433 --ca cert.pem --auto --start 5000 --max 30000
+```console
+$ qumo loadgen subscribe --relay 127.0.0.1:4443 --ca certs/server.crt --hold 5s 50
+loadgen subscribe → relay 127.0.0.1:4443 (path /bench/carry)
+  offered sessions : 50
+  connected        : 50
+  receiving        : 50
+  relay Δgoroutines: 384 (7.7/session)
+  relay ΔRSS       : 13.1 MB (267.8 KB/session)
+  relay sessions   : 51 active (relay-reported)
+  e2e latency      : p50 1.1ms  p95 2.3ms  p99 2.6ms  (100 samples)
+  verdict          : HOLDS
 ```
 
-A distributed (multi-machine) run is what a large session-ceiling claim needs
-to be *confirmed* rather than extrapolated — see [Observability]({{< relref "../observability" >}})
-for the metrics `loadgen` and `capacity` scrape to measure the relay's own
-per-session cost.
+`verdict: HOLDS` means the relay carried every offered session for the full
+hold; raise `N` until it stops holding to find the ceiling.
+
+`subscribe --results <dir>` appends a machine-readable capacity record to a
+JSONL file — useful input for your own sweep/reporting tooling if you're
+scripting a series of runs at increasing `N` to find a relay's session
+ceiling.
+
+## Configuration
+
+No environment variables — the flags above are the entire surface. The
+relay it measures is configured separately.
+
+## See also
+
+- [Observability]({{< relref "../observability" >}}) — the metrics that back the numbers `loadgen` reports.
+- [relay]({{< relref "relay" >}}) — the server you point it at.

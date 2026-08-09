@@ -78,6 +78,6 @@ shutdown, it redirects clients/peers to a successor relay. See
 
 ## Related
 
-- [Docker]({{< relref "docker" >}}) — `docker-compose.static.yml` wires a full 3-region topology with static `PEERS`.
-- [Nomad]({{< relref "nomad" >}}) — exercises the Nomad-native `LocalResolver` path.
+- [Docker]({{< relref "docker" >}}) — running relays as containers, with static `PEERS`.
+- [Nomad]({{< relref "nomad" >}}) — the Nomad-native `LocalResolver` path.
 - [Configuration → Static peers]({{< relref "../configuration" >}}#static-peers) and [Local resolver]({{< relref "../configuration" >}}#local-resolver--nomad-native-discovery).

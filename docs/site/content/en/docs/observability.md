@@ -5,8 +5,7 @@ weight: 4
 ---
 
 The relay's HTTP port (same port as QUIC/MoQT — `RELAY_ADDR`, default
-`0.0.0.0:4433`) serves three endpoints alongside the MoQT WebTransport
-handler:
+`:4433`) serves three endpoints alongside the MoQT WebTransport handler:
 
 | Path | Purpose |
 |---|---|

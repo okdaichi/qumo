@@ -16,24 +16,26 @@ aimed at **running and operating** it — start with Install, then Configuration
 
 ## Deployment
 
-Once qumo is running, these cover how relays mesh together and stay reachable
-in production:
+Once qumo is running, this covers how relays mesh together and stay reachable
+in production — Docker topologies, peer discovery, Nomad, and TLS/mTLS:
 
 {{< cards >}}
-	{{< card link="deployment/docker" title="Docker" icon="cube" subtitle="Compose files for single-relay and multi-region topologies." >}}
-	{{< card link="deployment/peer-topology" title="Peer topology" icon="globe-alt" subtitle="How relays discover and mesh with each other." >}}
-	{{< card link="deployment/nomad" title="Nomad" icon="server" subtitle="Cluster-native peer discovery via the Nomad service API." >}}
-	{{< card link="deployment/tls" title="TLS & mTLS" icon="lock-closed" subtitle="Certificates, and mutual TLS between peers." >}}
+	{{< card link="deployment" title="Deployment" icon="globe-alt" subtitle="Docker topologies, peer discovery, Nomad, and TLS for deploying qumo relays." >}}
 {{< /cards >}}
 
-## Operating
+## Operate
 
 {{< cards >}}
 	{{< card link="observability" title="Observability" icon="chart-bar" subtitle="Prometheus metrics, health checks, and pprof." >}}
-	{{< card link="cli" title="CLI reference" icon="terminal" subtitle="relay, rtmp, rtsp, rtsp-push, playground, loadgen, doctor." >}}
 {{< /cards >}}
 
-## Feedback 📋
+## Reference
+
+{{< cards >}}
+	{{< card link="cli" title="CLI reference" icon="terminal" subtitle="relay, rtmp, rtsp, rtsp-push, playground, doctor, loadgen, version." >}}
+{{< /cards >}}
+
+## Feedback
 
 If you find any mistakes, gaps, or would like to contribute improvements,
 please open an Issue or Pull Request on [GitHub](https://github.com/qumo-dev/qumo).
