@@ -316,8 +316,25 @@ export function PublishBoard(
 		const currentGroups = new Map<TrackWriter, GroupWriter>();
 		let initDataPublished = false;
 
-		// Update the catalog with a Base64 initData for the video track.
-		const publishInitData = (initData: string) => {
+		// catalogReady resolves once the catalog is complete enough for a
+		// subscriber (the egress) to describe the track on its first read — after
+		// the first keyframe, and for AVC/HEVC after that keyframe's
+		// decoderConfig has put initData (the parameter sets) into the catalog.
+		// VP9/AV1 carry config in the codec string, so for them it resolves on the
+		// first keyframe with no wait. The announce below awaits this so the
+		// egress's first connect sees a usable catalog instead of racing the
+		// initData and failing ~one GOP early.
+		let resolveCatalogReady: () => void = () => {};
+		const catalogReady = new Promise<void>((resolve) => {
+			resolveCatalogReady = resolve;
+		});
+		let firstKeyframeHandled = false;
+
+		// Update the catalog with a Base64 initData for the video track. Returns
+		// the setCatalog promise so the announce gate can wait for initData to
+		// land; the promise always settles fulfilled (errors are logged) so a
+		// .finally on it is safe.
+		const publishInitData = (initData: string): Promise<void> => {
 			const updatedTrack: Track = { ...initialTrack, initData };
 			const tracks: Track[] = audioTrackDef ? [updatedTrack, audioTrackDef] : [updatedTrack];
 			// setCatalog validates synchronously before it awaits, so a rejected
@@ -325,7 +342,7 @@ export function PublishBoard(
 			// alone would miss it, and av-nodes swallows anything thrown from the
 			// encoder callback.
 			try {
-				broadcast.setCatalog({ version: 1, tracks })
+				return broadcast.setCatalog({ version: 1, tracks })
 					.then(() =>
 						log.info("publish: codec config in catalog", {
 							bytes: initData.length,
@@ -334,6 +351,7 @@ export function PublishBoard(
 					.catch((err: unknown) => log.error("setCatalog failed", { err }));
 			} catch (err) {
 				log.error("setCatalog threw", { err });
+				return Promise.resolve();
 			}
 		};
 
@@ -359,9 +377,21 @@ export function PublishBoard(
 					// codec string and supply no description.
 					if (decoderConfig?.description && !initDataPublished) {
 						initDataPublished = true;
-						publishInitData(
+						const settled = publishInitData(
 							encodeBase64(decoderConfig.description as ArrayBufferLike),
 						);
+						// The first keyframe carries the config, so the catalog
+						// isn't complete until its initData lands — hold the
+						// announce gate (catalogReady) until setCatalog settles.
+						if (!firstKeyframeHandled) {
+							firstKeyframeHandled = true;
+							void settled.finally(resolveCatalogReady);
+						}
+					} else if (chunk.type === "key" && !firstKeyframeHandled) {
+						// Config is in the codec string — the catalog was
+						// complete from the start, so the gate clears now.
+						firstKeyframeHandled = true;
+						resolveCatalogReady();
 					}
 
 					// No subscriber: nothing to write to.
@@ -400,8 +430,13 @@ export function PublishBoard(
 			},
 		});
 		// The encoder loop owns the pipeline for the session; surface a failure
-		// rather than let it vanish as an unhandled rejection.
-		encodeDone.catch((err: unknown) => log.error("video encode loop ended", { err }));
+		// rather than let it vanish as an unhandled rejection. Its settle also
+		// unblocks the announce gate — if encoding ends before the first keyframe
+		// (camera died at Start, or the session was retired), startStreaming would
+		// otherwise await catalogReady forever.
+		encodeDone
+			.finally(resolveCatalogReady)
+			.catch((err: unknown) => log.error("video encode loop ended", { err }));
 
 		// Register the video track handler. It does not drive the encoder — it
 		// binds this subscriber as the sink and holds the subscription open
@@ -465,13 +500,16 @@ export function PublishBoard(
 		// publish() is async; surface a rejected announce (e.g. an invalid path)
 		// instead of letting it vanish as an unhandled rejection.
 		//
-		// CMAF waits for initData to be in the catalog first. The init segment
-		// is only knowable once the muxer has written a moov, so announcing
-		// earlier publishes a catalog subscribers cannot use, and leaves them
-		// polling for an init that arrives later. Waiting costs roughly one GOP
-		// and makes the catalog correct the first time it is read.
-		// teardown() may have run while awaiting the media above.
-		if (disposed) {
+		// Wait for the catalog to be complete first (see catalogReady). The egress
+		// reads the catalog on connect; for AVC/HEVC that read needs the parameter
+		// sets which arrive in the first keyframe's decoderConfig. Announcing
+		// earlier races that initData — the first catalog read lacks it, the
+		// egress's first connect fails, and it only self-heals ~one GOP later when
+		// initData lands. VP9/AV1 carry config in the codec string, so catalogReady
+		// for them resolves on the first keyframe with no real wait.
+		await catalogReady;
+		// teardown() or a session switch may have run while we waited.
+		if (disposed || session !== publishSession) {
 			stream.getTracks().forEach((t) => t.stop());
 			return;
 		}
