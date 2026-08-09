@@ -96,9 +96,6 @@ Environment variables (relay)
 |---|---|---|
 | `RELAY_ADDR` | `0.0.0.0:4433` | Bind address |
 | `RELAY_NAME` | `relay-$HOSTNAME` | Node ID |
-| `REGION` | (empty) | Region label |
-| `ROLE` | (empty) | `hub` or `edge` |
-| `ADVERTISE_ADDR` | (empty) | Public address for peers |
 | `CERT_FILE` / `KEY_FILE` | `certs/server.crt` / `certs/server.key` | TLS cert/key (mount them; e.g. from `mage cert`) |
 | `PEERS` | (empty) | Comma-separated static peer addresses |
 | `LOCAL_RESOLVER_ADDR` | `http://localhost:4646` | Nomad HTTP API address |

@@ -45,14 +45,11 @@ func sanitizeLog(s string) string {
 //	CERT_FILE                    - TLS certificate file (default: "certs/server.crt")
 //	KEY_FILE                     - TLS key file (default: "certs/server.key")
 //	CA_FILE                      - PEM CA certificate; enables mTLS when set
-//	MTLS_REQUIRED                - "true" to require a client cert on every connection
-//	                               (default: false)
+//	MTLS_REQUIRED                - "false" to allow connections without a client
+//	                               cert when mTLS is enabled (default: true)
 //	RELAY_NAME                   - node ID (default: "relay-" + hostname)
-//	REGION                       - geographic region (default: "")
-//	ROLE                         - node role: "hub" or "edge" (default: "")
-//	ADVERTISE_ADDR               - address advertised to peers
-//	GROUP_CACHE_SIZE             - max group caches (default: 100) [TODO]
-//	FRAME_CAPACITY               - frame buffer size in bytes (default: 1500) [TODO]
+//	GROUP_CACHE_SIZE             - completed groups retained per track (default: 8)
+//	FRAME_CAPACITY               - frame buffer size in bytes (default: 1500)
 //	PEERS                        - comma-separated list of static peer addresses	//	LOCAL_RESOLVER_ADDR            - Nomad HTTP API address (default: http://localhost:4646)
 //	LOCAL_RESOLVER_SERVICE_NAME    - Nomad service name to query (default: "qumo-relay")
 //	LOCAL_RESOLVER_INTERVAL        - Nomad discovery polling interval (default: "15s")
@@ -95,14 +92,6 @@ func Run(args []string) error {
 		return fmt.Errorf("invalid FRAME_CAPACITY: %w", err)
 	}
 
-	advertiseAddr := os.Getenv("ADVERTISE_ADDR")
-	if advertiseAddr == "" {
-		if isWildcardAddress(addr) {
-			return fmt.Errorf("ADVERTISE_ADDR is required when RELAY_ADDR is %q", addr)
-		}
-		advertiseAddr = addr
-	}
-
 	var peers []Peer
 	if raw := os.Getenv("PEERS"); raw != "" {
 		for p := range strings.SplitSeq(raw, ",") {
@@ -120,18 +109,18 @@ func Run(args []string) error {
 	}
 
 	// mTLS: load CA pool and configure mutual authentication when CA_FILE is set.
-	// Default (MTLS_REQUIRED unset): VerifyClientCertIfGiven — relay peers are verified,
-	// browser clients without a cert are still allowed through (Nginx "optional" mode).
-	// MTLS_REQUIRED=true: RequireAndVerifyClientCert — every connection must present a
-	// cert signed by the CA (use this for relay-only clusters with no browser traffic).
+	// Default (MTLS_REQUIRED unset): RequireAndVerifyClientCert — every connection
+	// must present a cert signed by the CA. Set MTLS_REQUIRED=false to relax this
+	// to VerifyClientCertIfGiven (relay peers are verified, browser clients
+	// without a cert are still allowed through — Nginx "optional" mode).
 	caPool, err := loadCACertPool(os.Getenv("CA_FILE"))
 	if err != nil {
 		return fmt.Errorf("failed to load CA_FILE: %w", err)
 	}
 	if caPool != nil {
-		clientAuth := tls.VerifyClientCertIfGiven
-		if os.Getenv("MTLS_REQUIRED") == "true" {
-			clientAuth = tls.RequireAndVerifyClientCert
+		clientAuth := tls.RequireAndVerifyClientCert
+		if os.Getenv("MTLS_REQUIRED") == "false" {
+			clientAuth = tls.VerifyClientCertIfGiven
 		}
 		tlsConfig.ClientAuth = clientAuth
 		tlsConfig.ClientCAs = caPool
@@ -166,7 +155,6 @@ func Run(args []string) error {
 	relayCfg := Config{
 		NodeID:                nodeID,
 		Role:                  flags.Role,
-		AdvertiseAddr:         advertiseAddr,
 		GroupCacheSize:        groupCacheSize,
 		FrameCapacity:         frameCapacity,
 		Peers:                 peers,
@@ -280,7 +268,6 @@ func Run(args []string) error {
 	}
 
 	log.Printf("\t%-8s: %s\n", "Host", sanitizeLog(addr))
-	log.Printf("\t%-8s: %s\n", "Advertise", sanitizeLog(relayCfg.AdvertiseAddr))
 	log.Printf("\t%-8s: %s\n", "Node ID", sanitizeLog(relayCfg.NodeID))
 	log.Printf("\t%-8s: WebTransport endpoint\n", "/")
 	log.Printf("\t%-8s: health probe\n", "/health")
@@ -405,10 +392,6 @@ func serveComponents(ctx context.Context, relaySrv server, httpSrv server, shutd
 	<-shutdownDone
 
 	return err
-}
-
-func isWildcardAddress(addr string) bool {
-	return strings.HasPrefix(addr, ":") || strings.HasPrefix(addr, "0.0.0.0") || strings.HasPrefix(addr, "[::]") || addr == "::"
 }
 
 func envInt(key string, defaultVal int) (int, error) {

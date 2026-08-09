@@ -34,7 +34,9 @@ job "qumo-cluster" {
         image        = "qumo:local" # build first: docker build -f docker/Dockerfile -t qumo:local .
         network_mode = "qumo-net"   # share the compose network with edges + Nomad
         ports        = ["moqt"]
-        args         = ["relay"]
+        # --role is a CLI flag, not an env var (see `qumo relay --help`); the
+        # hub/edge branch in server.go's peer-discovery loop keys off this.
+        args = ["relay", "--role", "hub"]
       }
 
       # Task-level service (required for address_mode = "driver").
@@ -46,14 +48,8 @@ job "qumo-cluster" {
       }
 
       env {
-        INSECURE   = "true"
         RELAY_ADDR = "0.0.0.0:4433"
-        ROLE       = "hub"
-        REGION     = "asia"
         RELAY_NAME = "hub-asia-${NOMAD_ALLOC_INDEX}"
-        # Required because RELAY_ADDR is a wildcard. Note: peers dial the address
-        # from Nomad's service registration (address_mode=driver), not this value.
-        ADVERTISE_ADDR = "${attr.unique.network.ip-address}:4433"
         # Hubs point at the local resolver too, though they take no local action.
         LOCAL_RESOLVER_ADDR         = "http://nomad:4646"
         LOCAL_RESOLVER_SERVICE_NAME = "qumo-relay"
@@ -84,7 +80,7 @@ job "qumo-cluster" {
         image        = "qumo:local"
         network_mode = "qumo-net"
         ports        = ["moqt"]
-        args         = ["relay"]
+        args         = ["relay", "--role", "edge"]
       }
 
       service {
@@ -95,12 +91,8 @@ job "qumo-cluster" {
       }
 
       env {
-        INSECURE       = "true"
-        RELAY_ADDR     = "0.0.0.0:4433"
-        ROLE           = "edge"
-        REGION         = "asia"
-        RELAY_NAME     = "edge-asia-${NOMAD_ALLOC_INDEX}"
-        ADVERTISE_ADDR = "${attr.unique.network.ip-address}:4433"
+        RELAY_ADDR = "0.0.0.0:4433"
+        RELAY_NAME = "edge-asia-${NOMAD_ALLOC_INDEX}"
         # The path under test: edge -> LocalResolver -> Nomad -> all local hubs.
         LOCAL_RESOLVER_ADDR         = "http://nomad:4646"
         LOCAL_RESOLVER_SERVICE_NAME = "qumo-relay"

@@ -3,8 +3,11 @@
 [![CI](https://github.com/qumo-dev/qumo/actions/workflows/ci.yml/badge.svg)](https://github.com/qumo-dev/qumo/actions/workflows/ci.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/qumo-dev/qumo)](https://goreportcard.com/report/github.com/qumo-dev/qumo)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![Docs](https://img.shields.io/badge/docs-qumo--dev.github.io-blue)](https://qumo-dev.github.io/qumo/)
 
 **qumo** is a high-performance Media over QUIC (MoQ) relay server with peer-based content discovery, enabling distributed media streaming over the QUIC transport protocol.
+
+📚 **Documentation:** [https://qumo-dev.github.io/qumo/](https://qumo-dev.github.io/qumo/)
 
 ## Features
 

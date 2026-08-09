@@ -53,7 +53,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fan-out. Efficiency change only: measured e2e latency is unchanged.
   Backpressure semantics (30 ms bound, drop-group-and-continue) preserved.
 
+- **`MTLS_REQUIRED` now defaults to `true`** — once `CA_FILE` enables mTLS, the
+  relay now requires every connection to present a client cert signed by that
+  CA by default (`tls.RequireAndVerifyClientCert`). Set `MTLS_REQUIRED=false`
+  to opt back into the previous permissive default
+  (`tls.VerifyClientCertIfGiven`) for relays that also serve direct
+  browser/WebTransport traffic. Only affects deployments that already set
+  `CA_FILE`; relays without it are unaffected.
+
+### Removed
+- **`ADVERTISE_ADDR`** — dropped from `internal/relay/cmd.go`, `Config`, and
+  `qumo playground`. It was set into `Config.AdvertiseAddr` and logged, but
+  never actually consumed by peer resolution or announcement handling; the
+  wildcard-bind guard that required it is gone too. Also removed from
+  `relay-config.example.env`, the Docker Compose files, and the Nomad job
+  spec.
+- **`INSECURE`** — removed from all Docker Compose files, the Nomad job spec,
+  and `relay-config.example.env`. No Go code ever read this variable; it was
+  leftover from an unimplemented "generate ephemeral self-signed cert" idea.
+  Setting it had no effect — the relay still required `CERT_FILE`/`KEY_FILE`
+  to exist. The compose files now carry a comment pointing to `mkcert` for
+  generating the cert they mount.
+
 ### Fixed
+- **Nomad/Compose demo topologies never actually applied `--role`.**
+  `docker-compose.static.yml` and `docker/nomad/qumo-cluster.nomad.hcl` set a
+  `ROLE` *environment variable*, but the relay's topology role is a CLI flag
+  (`qumo relay --role hub|edge`) with no env equivalent — so every node in
+  both demos was silently running as a flat/standalone relay. This mattered
+  most for the Nomad sim, whose entire purpose is exercising the
+  role-gated `LocalResolver` peer-discovery branch (edges connect to all
+  local hubs; hubs take no local action) — that branch never engaged. Fixed
+  by passing `--role` on the container command/args in both files.
+
+- **`qumo rtsp` panicked on a malformed broadcast path.** `moqt.NewAnnouncement`
+  panics if the path doesn't start with `/`, and `ingest.NewSession` called it
+  without validating first. Now `NewSession` rejects an invalid path with a
+  clean error before reaching gomoqt — protecting all three ingest entry points
+  (`rtmp`, `rtsp`, `rtsp-push`).
+
 - **`internal/playground` restricted pull-server CORS origins.** The on-demand
   RTSP pull ingest server (`:4543`) allowed any WebTransport origin (`"*"`),
   letting an arbitrary malicious page initiate a Cross-Site WebTransport
