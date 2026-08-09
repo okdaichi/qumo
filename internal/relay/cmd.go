@@ -26,6 +26,7 @@ import (
 	"github.com/quic-go/quic-go"
 	"github.com/qumo-dev/gomoqt/moqt"
 	"github.com/qumo-dev/qumo/internal/cors"
+	"github.com/qumo-dev/qumo/internal/envconfig"
 	"github.com/qumo-dev/qumo/internal/gctune"
 )
 
@@ -75,12 +76,12 @@ func Run(args []string) error {
 
 	gctune.Apply()
 
-	addr := envOr("RELAY_ADDR", ":4433")
-	certFile := envOr("CERT_FILE", "certs/server.crt")
-	keyFile := envOr("KEY_FILE", "certs/server.key")
+	addr := envconfig.String("RELAY_ADDR", ":4433")
+	certFile := envconfig.String("CERT_FILE", "certs/server.crt")
+	keyFile := envconfig.String("KEY_FILE", "certs/server.key")
 
 	hostname, _ := os.Hostname()
-	nodeID := envOr("RELAY_NAME", "relay-"+hostname)
+	nodeID := envconfig.String("RELAY_NAME", "relay-"+hostname)
 
 	groupCacheSize, err := envInt("GROUP_CACHE_SIZE", DefaultGroupCacheSize)
 	if err != nil {
@@ -391,13 +392,6 @@ func serveComponents(ctx context.Context, relaySrv server, httpSrv server, shutd
 	<-shutdownDone
 
 	return err
-}
-
-func envOr(key, defaultVal string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return defaultVal
 }
 
 func envInt(key string, defaultVal int) (int, error) {

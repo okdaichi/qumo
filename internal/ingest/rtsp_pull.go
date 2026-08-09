@@ -15,6 +15,7 @@ import (
 
 	"github.com/qumo-dev/gomoqt/moqt"
 	"github.com/qumo-dev/qumo/internal/cors"
+	"github.com/qumo-dev/qumo/internal/envconfig"
 	"github.com/qumo-dev/qumo/internal/rtsp"
 )
 
@@ -41,9 +42,9 @@ func RunRTSPPull(args []string) error {
 	if len(args) > 1 {
 		path = args[1]
 	}
-	serveAddr := envOr("RTSP_SERVE_ADDR", defaultRTMPServeAddr)
-	certFile := envOr("CERT_FILE", "certs/server.crt")
-	keyFile := envOr("KEY_FILE", "certs/server.key")
+	serveAddr := envconfig.String("RTSP_SERVE_ADDR", defaultRTMPServeAddr)
+	certFile := envconfig.String("CERT_FILE", "certs/server.crt")
+	keyFile := envconfig.String("KEY_FILE", "certs/server.key")
 	allowedOrigins := cors.LoadAllowed()
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

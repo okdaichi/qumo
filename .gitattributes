@@ -1,5 +1,6 @@
-# Normalize line endings for all text files
-* text=auto
+# Normalize line endings for all text files; force LF in the working tree too,
+# so a Windows checkout does not flag LF files as modified.
+* text=auto eol=lf
 
 # Shell scripts must always use LF (prevents CRLF issues on Windows)
 *.sh text eol=lf

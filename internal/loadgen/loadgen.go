@@ -5,7 +5,8 @@
 //	loadgen subscribe <N>  — launch N subscriber sessions and measure the hold
 //
 // Both are pure remote clients: they dial the relay you point them at (--relay
-// + --ca) and never spawn a relay or a cert of their own. Orchestration —
+// + --ca, or --insecure for a self-signed dev relay) and never spawn a relay or
+// a cert of their own. Orchestration —
 // sweeping a list of session counts, or climbing to find the ceiling — lives in
 // a separate driver (tools/capacity) that composes these primitives, keeping
 // the CLI itself small.
@@ -22,7 +23,6 @@ package loadgen
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -44,6 +44,7 @@ import (
 	"github.com/quic-go/quic-go"
 	"github.com/qumo-dev/gomoqt/moqt"
 	"github.com/qumo-dev/qumo/internal/relay"
+	"github.com/qumo-dev/qumo/internal/tlsclient"
 )
 
 // Run dispatches a loadgen subcommand. It is the package entrypoint wired into
@@ -72,7 +73,7 @@ func usage(w io.Writer) {
 	_, _ = io.WriteString(w, `Usage: qumo loadgen <subcommand> [flags]
 
 Out-of-process capacity primitives against a running qumo relay. Both are pure
-remote clients — they dial --relay (trusting --ca) and never spawn a relay.
+remote clients — they dial --relay (trusting --ca, or --insecure for a self-signed dev relay) and never spawn a relay.
 
 Subcommands:
   publish          Publish one trickle track to the relay (keep running during a run)
@@ -96,29 +97,36 @@ type dialTarget struct {
 	quic    *quic.Config
 }
 
-// newTarget builds a dialTarget that trusts pool. An empty metrics URL defaults
-// to http://<relay>/metrics.
-func newTarget(relay, metrics, path, track string, pool *x509.CertPool, idle, keepalive time.Duration) dialTarget {
+// newTarget builds a dialTarget. The relay's certificate is verified against a
+// PEM trust anchor (caFile) unless insecure is set, in which case verification
+// is skipped for a self-signed dev relay. An empty metrics URL defaults to
+// http://<relay>/metrics. The trust decision is shared across qumo's clients
+// via [tlsclient.Apply]; only the load generator's base config (MoQ ALPN, TLS
+// 1.3 floor) and the QUIC tuning are owned here.
+func newTarget(relay, metrics, path, track, caFile string, insecure bool, idle, keepalive time.Duration) (dialTarget, error) {
 	m := metrics
 	if m == "" {
 		m = "http://" + relay + "/metrics"
+	}
+	tc := &tls.Config{
+		NextProtos: []string{moqt.NextProtoMOQ},
+		MinVersion: tls.VersionTLS13,
+	}
+	if err := tlsclient.Apply(tc, caFile, insecure); err != nil {
+		return dialTarget{}, err
 	}
 	return dialTarget{
 		relay:   relay,
 		metrics: m,
 		path:    path,
 		track:   track,
-		tls: &tls.Config{
-			RootCAs:    pool,
-			NextProtos: []string{moqt.NextProtoMOQ},
-			MinVersion: tls.VersionTLS13,
-		},
+		tls:     tc,
 		quic: &quic.Config{
 			EnableDatagrams: true,
 			KeepAlivePeriod: keepalive,
 			MaxIdleTimeout:  idle,
 		},
-	}
+	}, nil
 }
 
 // bindCommon registers the flags common to publish/subscribe on fs and returns a
@@ -126,35 +134,18 @@ func newTarget(relay, metrics, path, track string, pool *x509.CertPool, idle, ke
 func bindCommon(fs *flag.FlagSet) func() (dialTarget, error) {
 	relay := fs.String("relay", "127.0.0.1:4433", "relay moqt address (host:port)")
 	metrics := fs.String("metrics", "", "relay /metrics URL (default http://<relay>/metrics)")
-	caFile := fs.String("ca", "", "PEM file of the relay's TLS cert/CA to trust (required)")
+	caFile := fs.String("ca", "", "PEM file of the relay's TLS cert/CA to trust (required unless --insecure)")
 	path := fs.String("path", "/bench/carry", "broadcast path")
 	track := fs.String("track", "data", "track name")
 	idle := fs.Duration("idle-timeout", 30*time.Second, "QUIC max idle timeout")
 	keepalive := fs.Duration("keepalive", 5*time.Second, "QUIC keep-alive period")
+	insecure := fs.Bool("insecure", false, "skip relay TLS verification (dev; self-signed relay)")
 	return func() (dialTarget, error) {
-		if *caFile == "" {
-			return dialTarget{}, errors.New("--ca is required (path to the relay's PEM cert to trust)")
+		if *caFile == "" && !*insecure {
+			return dialTarget{}, errors.New("--ca is required (or --insecure for a self-signed dev relay)")
 		}
-		pool, err := loadCAPool(*caFile)
-		if err != nil {
-			return dialTarget{}, err
-		}
-		return newTarget(*relay, *metrics, *path, *track, pool, *idle, *keepalive), nil
+		return newTarget(*relay, *metrics, *path, *track, *caFile, *insecure, *idle, *keepalive)
 	}
-}
-
-// loadCAPool reads a PEM cert file into a pool. The relay's self-signed cert is
-// its own issuer, so passing the cert itself is sufficient to trust it.
-func loadCAPool(caFile string) (*x509.CertPool, error) {
-	pem, err := os.ReadFile(caFile)
-	if err != nil {
-		return nil, fmt.Errorf("read --ca %q: %w", caFile, err)
-	}
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(pem) {
-		return nil, fmt.Errorf("no certificates found in --ca %q", caFile)
-	}
-	return pool, nil
 }
 
 func dialer(t dialTarget) *moqt.Dialer {

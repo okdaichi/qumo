@@ -3,6 +3,8 @@ module github.com/qumo-dev/qumo
 go 1.26.5
 
 require (
+	github.com/Eyevinn/mp4ff v0.55.0
+	github.com/okdaichi/qumo-ledger v0.1.0
 	github.com/prometheus/client_golang v1.24.1
 	github.com/prometheus/client_model v0.6.2
 	github.com/quic-go/quic-go v0.61.0

@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/qumo-dev/gomoqt/moqt"
+
+	"github.com/qumo-dev/qumo/internal/tlsclient"
 )
 
 const (
@@ -23,6 +25,8 @@ const (
 func main() {
 	pubURL := flag.String("pub", "", "publisher-side relay URL (e.g. moqt://localhost:9002)")
 	subURL := flag.String("sub", "", "subscriber-side relay URL (e.g. moqt://localhost:9006)")
+	caFile := flag.String("ca", "", "PEM file of the relays' TLS cert/CA to trust (required unless -insecure)")
+	insecure := flag.Bool("insecure", false, "skip TLS verification (dev; self-signed relays)")
 	timeout := flag.Duration("timeout", 30*time.Second, "overall test timeout")
 	numGroups := flag.Int("groups", 5, "number of groups to send")
 	numFrames := flag.Int("frames", 10, "number of frames per group")
@@ -32,26 +36,53 @@ func main() {
 
 	if *pubURL == "" || *subURL == "" {
 		fmt.Fprintln(os.Stderr, "both -pub and -sub flags are required")
-		fmt.Fprintln(os.Stderr)
-		fmt.Fprintln(os.Stderr, "Usage:")
-		fmt.Fprintln(os.Stderr, "  smoketest -pub <url> -sub <url>")
-		fmt.Fprintln(os.Stderr)
-		fmt.Fprintln(os.Stderr, "Example:")
-		fmt.Fprintln(os.Stderr, "  smoketest -pub moqt://localhost:9002 -sub moqt://localhost:9006")
+		printUsage()
+		os.Exit(1)
+	}
+	if *caFile == "" && !*insecure {
+		fmt.Fprintln(os.Stderr, "either -ca <cert.pem> or -insecure is required")
+		printUsage()
+		os.Exit(1)
+	}
+
+	tlsConf, err := smokeTLSConfig(*caFile, *insecure)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 
-	os.Exit(run(ctx, *pubURL, *subURL, *numGroups, *numFrames, *frameSize))
+	os.Exit(run(ctx, *pubURL, *subURL, *numGroups, *numFrames, *frameSize, tlsConf))
 }
 
-func run(ctx context.Context, pubURL, subURL string, numGroups, numFrames, frameSize int) int {
+// printUsage writes the usage block to stderr.
+func printUsage() {
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Usage:")
+	fmt.Fprintln(os.Stderr, "  smoketest -pub <url> -sub <url> [-ca <cert.pem> | -insecure]")
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintln(os.Stderr, "  smoketest -pub moqt://localhost:9002 -sub moqt://localhost:9006 -insecure")
+}
+
+// smokeTLSConfig builds the TLS config shared by both dialers: verify against
+// caFile's trust anchor, or skip verification when insecure (self-signed dev
+// relays). Mirrors qumo's client TLS convention — verification is the default,
+// -insecure is the explicit escape hatch. The trust decision is shared via
+// [tlsclient.Apply]; this harness owns no base-config policy of its own.
+func smokeTLSConfig(caFile string, insecure bool) (*tls.Config, error) {
+	tc := &tls.Config{}
+	if err := tlsclient.Apply(tc, caFile, insecure); err != nil {
+		return nil, err
+	}
+	return tc, nil
+}
+
+func run(ctx context.Context, pubURL, subURL string, numGroups, numFrames, frameSize int, tlsConf *tls.Config) int {
 	testData := generateTestData(numGroups, numFrames, frameSize)
 	sentHash := hashAllFlat(testData, numGroups, numFrames)
-
-	tlsConf := &tls.Config{InsecureSkipVerify: true} //nolint:gosec // self-signed certs in Docker topology
 
 	// --- Publisher ---
 	pubMux := moqt.NewTrackMux(0)

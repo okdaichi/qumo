@@ -1,5 +1,5 @@
 import { type Accessor, createSignal, onCleanup, onMount, Show } from "solid-js";
-import { type BroadcastPath, type GroupWriter, TrackMux } from "@qumo/moq";
+import { type BroadcastPath, type GroupWriter, TrackMux, type TrackWriter } from "@qumo/moq";
 import { Broadcast, type Track } from "@qumo/moq/msf";
 import {
 	AudioEncodeNode,
@@ -57,7 +57,9 @@ const SOURCES: { id: MediaSourceType; label: string; icon: Component<{ class?: s
 	{ id: "screen", label: "Screen", icon: Monitor },
 ];
 
-export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
+export function PublishBoard(
+	props: { mux: TrackMux; path: Accessor<string> },
+) {
 	const mux = props.mux;
 
 	const [sourceType, setSourceType] = createSignal<MediaSourceType>("camera");
@@ -81,6 +83,11 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 
 	let canvasEle: HTMLCanvasElement | undefined;
 	let lastKeyframeTime = 0;
+	// Identifies the current publish session. An encode node is reused across
+	// sessions and detaches a destination only when its output reports that
+	// destination is finished, so each session's encoder callback captures the
+	// token it started under and reports itself finished once this moves past it.
+	let publishSession = 0;
 	let videoContext: VideoContext | undefined;
 	let sourceNode: MediaStreamVideoSourceNode | null = null;
 	let videoEncodeNode: VideoEncodeNode | undefined;
@@ -128,6 +135,15 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 		// Creating on demand means no encode node exists until the user actually
 		// publishes, so teardown's context.close() has nothing unconfigured to
 		// flush. Create-on-first-use so retries reuse the same node rather than leak.
+		// Keyframe cadence is measured against this session's own clock. A new
+		// source starts its timestamps wherever it likes, and one that begins
+		// behind the previous session's last keyframe would never appear to have
+		// reached the next GOP — so no keyframe, and nothing to open a fragment.
+		lastKeyframeTime = 0;
+
+		// This session's identity, captured by its encoder callback below.
+		const session = ++publishSession;
+
 		if (!videoEncodeNode) {
 			videoEncodeNode = new VideoEncodeNode(videoContext, {
 				isKey: (timestamp, _) => {
@@ -140,9 +156,10 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 				},
 			});
 		}
-		if (audioContext && !audioEncodeNode) {
-			audioEncodeNode = new AudioEncodeNode(audioContext);
-		}
+		// Note: AudioEncodeNode is created later in the audio-setup block, NOT
+		// here. av-nodes starts its encode loop on construction (async worklet
+		// callback), so the node must be configured the instant it exists — see
+		// the comment there for why a gap between create and configure bricks it.
 
 		// Acquire media first — we need the actual track dimensions before configuring the encoder.
 		// Apply the chosen resolution/framerate as getUserMedia ideal constraints.
@@ -219,14 +236,24 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 		setCanvasWidth(actualWidth);
 		setCanvasHeight(actualHeight);
 
-		// Set up audio encoder (AudioContext.resume() works here as we're in a user-gesture handler).
-		if (audioContext && audioEncodeNode) {
+		// Set up the audio encoder. Create the node and configure() it on the
+		// SAME synchronous step: av-nodes starts its internal encode loop inside
+		// the worklet's async addModule() callback (not in the constructor), so a
+		// configure() called immediately after `new AudioEncodeNode` always beats
+		// the loop's first read — the encoder is configured before any frame is
+		// encoded. A gap between create and configure is fatal: if the context is
+		// running, the loop encodes on an unconfigured codec, throws
+		// InvalidStateError, and dies permanently (av-nodes can't recover the
+		// loop). That is why the node is created here, not earlier. resume()
+		// follows configure so the context only runs once the encoder is ready.
+		if (audioContext) {
 			try {
-				await audioContext.resume();
 				const audioCfg = await audioEncoderConfig({
 					sampleRate: audioContext.sampleRate,
 					channels: audioContext.destination.channelCount,
 				});
+				// Create on first Start; reuse and reconfigure on retry.
+				if (!audioEncodeNode) audioEncodeNode = new AudioEncodeNode(audioContext);
 				audioEncodeNode.configure(audioCfg);
 				audioTrackDef = {
 					name: "audio",
@@ -237,6 +264,9 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 					samplerate: audioCfg.sampleRate,
 					channelConfig: String(audioCfg.numberOfChannels),
 				};
+				// resume() is still in the Start click's user gesture, so Chrome
+				// honors it even after the config-probe await above.
+				await audioContext.resume();
 			} catch (err) {
 				log.warn("audio setup failed, continuing without audio", { err });
 			}
@@ -252,65 +282,178 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 			height: config.height,
 		};
 
+		// The catalog describes the track completely — codec, picture size, and
+		// for AVC its parameter sets — so a subscriber can configure a decoder,
+		// or package the frames into a container, without waiting for media.
+		// This board publishes encoded frames and nothing else; containers are
+		// a consumer's concern.
+
 		// Broadcast auto-serves the "catalog" track as MSF catalog JSON.
 		const initialTracks: Track[] = audioTrackDef
 			? [initialTrack, audioTrackDef]
 			: [initialTrack];
 		const broadcast = new Broadcast({ version: 1, tracks: initialTracks });
 
-		// Register video track handler — runs the encoder loop when subscribed.
+		// ---- Publish pipeline -------------------------------------------
+		//
+		// The encoder pipeline runs from Start, not from the first subscribe.
+		// Attaching the encoder output before the source is wired guarantees
+		// every chunk has a consumer — including the first keyframe, the only
+		// one WebCodecs attaches decoderConfig to. Driving the encoder from
+		// serveTrack instead meant that chunk was routinely produced while no
+		// handler was attached, losing the config the muxer needs to write a
+		// moov. serveTrack now only binds the sink.
+
+		// Every attached subscriber's track writer. One encoder feeds all of
+		// them: a single slot would mean a second subscriber silently displaces
+		// the first. Media produced while the set is empty is dropped — this is
+		// a live stream, so a late subscriber starts at the next fragment
+		// rather than replaying a backlog.
+		const writers = new Set<TrackWriter>();
+
+		// The LOC path writes a group per GOP, so each subscriber needs its own
+		// open group; keyed by writer and cleared when that writer detaches.
+		const currentGroups = new Map<TrackWriter, GroupWriter>();
+		let initDataPublished = false;
+
+		// catalogReady resolves once the catalog is complete enough for a
+		// subscriber (the egress) to describe the track on its first read — after
+		// the first keyframe, and for AVC/HEVC after that keyframe's
+		// decoderConfig has put initData (the parameter sets) into the catalog.
+		// VP9/AV1 carry config in the codec string, so for them it resolves on the
+		// first keyframe with no wait. The announce below awaits this so the
+		// egress's first connect sees a usable catalog instead of racing the
+		// initData and failing ~one GOP early.
+		let resolveCatalogReady: () => void = () => {};
+		const catalogReady = new Promise<void>((resolve) => {
+			resolveCatalogReady = resolve;
+		});
+		let firstKeyframeHandled = false;
+
+		// Update the catalog with a Base64 initData for the video track. Returns
+		// the setCatalog promise so the announce gate can wait for initData to
+		// land; the promise always settles fulfilled (errors are logged) so a
+		// .finally on it is safe.
+		const publishInitData = (initData: string): Promise<void> => {
+			const updatedTrack: Track = { ...initialTrack, initData };
+			const tracks: Track[] = audioTrackDef ? [updatedTrack, audioTrackDef] : [updatedTrack];
+			// setCatalog validates synchronously before it awaits, so a rejected
+			// catalog throws rather than returning a rejected promise — .catch()
+			// alone would miss it, and av-nodes swallows anything thrown from the
+			// encoder callback.
+			try {
+				return broadcast.setCatalog({ version: 1, tracks })
+					.then(() =>
+						log.info("publish: codec config in catalog", {
+							bytes: initData.length,
+						})
+					)
+					.catch((err: unknown) => log.error("setCatalog failed", { err }));
+			} catch (err) {
+				log.error("setCatalog threw", { err });
+				return Promise.resolve();
+			}
+		};
+
+		const { done: encodeDone } = videoEncodeNode.encodeTo({
+			output: async (
+				chunk: EncodedVideoChunk,
+				decoderConfig?: VideoDecoderConfig,
+			) => {
+				// Returning an error is how a destination tells the encode node
+				// it is finished, and the node then stops sending to it. A
+				// stopped session has to say so: otherwise it stays attached to
+				// a node built to be reused, and goes on consuming the chunks —
+				// the decoder config among them — that the next session needs.
+				if (session !== publishSession) {
+					return new Error("publish: session ended");
+				}
+
+				{
+					// Codecs that carry their configuration out of band — AVC
+					// and HEVC — state it once here, so both a WebCodecs
+					// decoder and the egress's packager can describe the track
+					// before the first frame. VP9 and AV1 carry theirs in the
+					// codec string and supply no description.
+					if (decoderConfig?.description && !initDataPublished) {
+						initDataPublished = true;
+						const settled = publishInitData(
+							encodeBase64(decoderConfig.description as ArrayBufferLike),
+						);
+						// The first keyframe carries the config, so the catalog
+						// isn't complete until its initData lands — hold the
+						// announce gate (catalogReady) until setCatalog settles.
+						if (!firstKeyframeHandled) {
+							firstKeyframeHandled = true;
+							void settled.finally(resolveCatalogReady);
+						}
+					} else if (chunk.type === "key" && !firstKeyframeHandled) {
+						// Config is in the codec string — the catalog was
+						// complete from the start, so the gate clears now.
+						firstKeyframeHandled = true;
+						resolveCatalogReady();
+					}
+
+					// No subscriber: nothing to write to.
+					if (writers.size === 0) return;
+
+					// Each subscriber carries its own open group, and one failing
+					// subscriber must not stop the others.
+					const written = await Promise.allSettled(
+						[...writers].map(async (writer) => {
+							let group = currentGroups.get(writer);
+							if (chunk.type === "key") {
+								if (group) void group.close();
+								const [opened, openErr] = await writer.openGroup();
+								if (openErr) throw openErr;
+								group = opened;
+								currentGroups.set(writer, opened);
+							} else if (!group) {
+								return; // drop delta frames until first keyframe
+							}
+							const writeErr = await group.writeFrame(new MediaFrame(chunk));
+							if (writeErr) throw writeErr;
+						}),
+					);
+					for (const result of written) {
+						if (result.status === "rejected") {
+							log.error("publish frame failed", { err: result.reason });
+						}
+					}
+				}
+
+				// Tally the published bytes for the live stats overlay…
+				videoStats.mark(chunk.byteLength);
+				// …and for the periodic diagnostic log line (fps + bitrate).
+				encFps.mark();
+				encBitrate.mark(chunk.byteLength);
+			},
+		});
+		// The encoder loop owns the pipeline for the session; surface a failure
+		// rather than let it vanish as an unhandled rejection. Its settle also
+		// unblocks the announce gate — if encoding ends before the first keyframe
+		// (camera died at Start, or the session was retired), startStreaming would
+		// otherwise await catalogReady forever.
+		encodeDone
+			.finally(resolveCatalogReady)
+			.catch((err: unknown) => log.error("video encode loop ended", { err }));
+
+		// Register the video track handler. It does not drive the encoder — it
+		// binds this subscriber as the sink and holds the subscription open
+		// until the publish context ends.
 		await broadcast.registerTrack(initialTrack, {
 			async serveTrack(trackWriter) {
-				if (!videoEncodeNode) throw new Error("Encode node not initialized");
-
-				let currentGroup: GroupWriter | undefined;
-				// Tracks whether we have published an initData-bearing catalog for the
-				// current encoder configuration. Reset when the encoder is reconfigured.
-				let initDataPublished = false;
-
-				const { done } = videoEncodeNode.encodeTo({
-					output: async (
-						chunk: EncodedVideoChunk,
-						decoderConfig?: VideoDecoderConfig,
-					) => {
-						// When the encoder emits a new decoder config (first keyframe or
-						// parameter change), push the SPS/PPS description into the catalog
-						// as a Base64-encoded initData field so subscribers can configure
-						// their VideoDecoder with the correct description.
-						if (decoderConfig?.description && !initDataPublished) {
-							initDataPublished = true;
-							const initData = encodeBase64(
-								decoderConfig.description as ArrayBufferLike,
-							);
-							const updatedTrack: Track = { ...initialTrack, initData };
-							const tracks: Track[] = audioTrackDef
-								? [updatedTrack, audioTrackDef]
-								: [updatedTrack];
-							broadcast.setCatalog({ version: 1, tracks }).catch((err: unknown) =>
-								log.error("setCatalog failed", { err })
-							);
-						}
-
-						if (chunk.type === "key") {
-							if (currentGroup) void currentGroup.close();
-							const [group, err] = await trackWriter.openGroup();
-							if (err) return err;
-							currentGroup = group;
-						} else if (!currentGroup) {
-							return; // drop delta frames until first keyframe
-						}
-
-						const err = await currentGroup!.writeFrame(new MediaFrame(chunk));
-						if (err) throw err;
-						// Tally the published frame for the live stats overlay…
-						videoStats.mark(chunk.byteLength);
-						// …and for the periodic diagnostic log line (fps + bitrate).
-						encFps.mark();
-						encBitrate.mark(chunk.byteLength);
-					},
+				writers.add(trackWriter);
+				log.info("publish: subscriber attached", {
+					track: trackWriter.trackName,
+					subscribers: writers.size,
 				});
-
-				await done;
+				try {
+					await publishCtx!.done();
+				} finally {
+					writers.delete(trackWriter);
+					currentGroups.delete(trackWriter);
+				}
 			},
 		});
 
@@ -345,18 +488,41 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 			return;
 		}
 
-		// Announce to relay — Broadcast routes "catalog" and "video" internally.
-		mux.publish(
-			publishCtx!.done(),
-			props.path() as BroadcastPath,
-			broadcast,
-		);
-
-		// Connect source nodes and start encoding.
+		// Connect source nodes and start encoding. This happens before the
+		// announce: the encoder output is already attached, so the pipeline
+		// produces the init segment without needing a subscriber to trigger it.
 		sourceNode = new MediaStreamVideoSourceNode(videoContext, { mediaStream: stream });
 		sourceNode.connect(videoContext.destination);
 		sourceNode.connect(videoEncodeNode);
 		sourceNode.start();
+
+		// Announce to relay — Broadcast routes "catalog" and "video" internally.
+		// publish() is async; surface a rejected announce (e.g. an invalid path)
+		// instead of letting it vanish as an unhandled rejection.
+		//
+		// Wait for the catalog to be complete first (see catalogReady). The egress
+		// reads the catalog on connect; for AVC/HEVC that read needs the parameter
+		// sets which arrive in the first keyframe's decoderConfig. Announcing
+		// earlier races that initData — the first catalog read lacks it, the
+		// egress's first connect fails, and it only self-heals ~one GOP later when
+		// initData lands. VP9/AV1 carry config in the codec string, so catalogReady
+		// for them resolves on the first keyframe with no real wait.
+		await catalogReady;
+		// teardown() or a session switch may have run while we waited.
+		if (disposed || session !== publishSession) {
+			stream.getTracks().forEach((t) => t.stop());
+			return;
+		}
+
+		log.info("publish: announcing broadcast", { path: props.path() });
+		mux.publish(
+			publishCtx!.done(),
+			props.path() as BroadcastPath,
+			broadcast,
+		).catch((err: unknown) => {
+			log.error("mux.publish failed — broadcast not announced to relay", { err });
+			setError(friendlyMessage(err));
+		});
 
 		// Route audio from the media stream into AudioEncodeNode. Only do this
 		// when the encoder was actually configured above — feeding an
@@ -388,6 +554,15 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 			sourceNode.dispose();
 			sourceNode = null;
 		}
+
+		// Retires this session's encoder destinations. An encode node holds each
+		// destination until its output reports one is finished, so a session that
+		// simply stops leaves its callback attached and still receiving chunks —
+		// including the one chunk carrying the decoder config, which the next
+		// session then waits for forever. Moving the token past what the running
+		// callbacks captured is how they learn to detach; see the encoder output.
+		publishSession++;
+
 		videoStats.stop();
 		setIsStreaming(false);
 	};
@@ -403,7 +578,8 @@ export function PublishBoard(props: { mux: TrackMux; path: Accessor<string> }) {
 		// post-await checkpoint (see the `disposed` check before mux.publish).
 		disposed = true;
 		stopStreaming();
-		// Fire-and-forget: dispose/close are async but we're unmounting.
+		// Fire-and-forget: dispose/close are async but we're unmounting. The
+		// nodes outlive a session by design and are only disposed here.
 		videoEncodeNode?.dispose().catch(() => {});
 		videoEncodeNode = undefined;
 		audioEncodeNode?.dispose().catch(() => {});

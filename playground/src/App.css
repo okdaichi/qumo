@@ -441,7 +441,8 @@ input[type="range"] {
 	position: relative;
 }
 
-.video-preview canvas {
+.video-preview canvas,
+.video-preview video {
 	display: block;
 	width: 100% !important;
 	max-width: 100% !important;
@@ -450,6 +451,13 @@ input[type="range"] {
 	border: 1px solid var(--border);
 	border-radius: 8px;
 	background: #000;
+}
+
+/* Placeholder for a player waiting on its stream. The video element stays
+   mounted so its ref is live; it just carries this surface until the first
+   frame arrives, keeping the panel's shape stable instead of collapsing. */
+.video-preview--waiting video {
+	background: var(--surface);
 }
 
 /* --- Live stats overlay (#139) --- */

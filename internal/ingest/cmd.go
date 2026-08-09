@@ -12,6 +12,7 @@ import (
 
 	"github.com/qumo-dev/gomoqt/moqt"
 	"github.com/qumo-dev/qumo/internal/cors"
+	"github.com/qumo-dev/qumo/internal/envconfig"
 )
 
 const (
@@ -32,10 +33,10 @@ const (
 //	KEY_FILE             - TLS key file (default: "certs/server.key")
 //	CORS_ALLOWED_ORIGINS - comma-separated WebTransport origins (default: same-origin only; "*" allows any)
 func RunRTMP(_ []string) error {
-	ingestAddr := envOr("RTMP_INGEST_ADDR", defaultRTMPIngestAddr)
-	serveAddr := envOr("RTMP_SERVE_ADDR", defaultRTMPServeAddr)
-	certFile := envOr("CERT_FILE", "certs/server.crt")
-	keyFile := envOr("KEY_FILE", "certs/server.key")
+	ingestAddr := envconfig.String("RTMP_INGEST_ADDR", defaultRTMPIngestAddr)
+	serveAddr := envconfig.String("RTMP_SERVE_ADDR", defaultRTMPServeAddr)
+	certFile := envconfig.String("CERT_FILE", "certs/server.crt")
+	keyFile := envconfig.String("KEY_FILE", "certs/server.key")
 	allowedOrigins := cors.LoadAllowed()
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -110,10 +111,10 @@ func RunRTMP(_ []string) error {
 //	KEY_FILE             - TLS key file (default: "certs/server.key")
 //	CORS_ALLOWED_ORIGINS - comma-separated WebTransport origins (default: same-origin only; "*" allows any)
 func RunRTSP(_ []string) error {
-	ingestAddr := envOr("RTSP_INGEST_ADDR", defaultRTSPIngestAddr)
-	serveAddr := envOr("RTSP_SERVE_ADDR", defaultRTMPServeAddr)
-	certFile := envOr("CERT_FILE", "certs/server.crt")
-	keyFile := envOr("KEY_FILE", "certs/server.key")
+	ingestAddr := envconfig.String("RTSP_INGEST_ADDR", defaultRTSPIngestAddr)
+	serveAddr := envconfig.String("RTSP_SERVE_ADDR", defaultRTMPServeAddr)
+	certFile := envconfig.String("CERT_FILE", "certs/server.crt")
+	keyFile := envconfig.String("KEY_FILE", "certs/server.key")
 	allowedOrigins := cors.LoadAllowed()
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -175,11 +176,4 @@ func RunRTSP(_ []string) error {
 	_ = moqtSrv.Shutdown(shutdownCtx)
 
 	return nil
-}
-
-func envOr(key, defaultVal string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return defaultVal
 }

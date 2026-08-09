@@ -1495,7 +1495,8 @@ func Smoke(pub *string, sub *string) error { // pub: publisher relay URL, sub: s
 
 	cmd := exec.Command("go", "run", "./internal/smoketest",
 		"-pub", pubURL,
-		"-sub", subURL)
+		"-sub", subURL,
+		"-insecure")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
