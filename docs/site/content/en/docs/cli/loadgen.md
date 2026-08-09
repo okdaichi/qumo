@@ -10,19 +10,18 @@ and never spawn a relay themselves. This matters: running load clients and
 the relay in one process makes client-side QUIC-handshake CPU, not the relay,
 the bottleneck.
 
-```
-Usage: qumo loadgen <subcommand> [flags]
-
-Subcommands:
-  publish          Publish one trickle track to the relay (keep running during a run)
-  subscribe <N>    Launch N subscriber sessions and measure the relay's hold + per-session cost
-```
-
-## publish
+## Usage
 
 ```
-Usage: qumo loadgen publish [flags]
+qumo loadgen <subcommand> [flags]
 ```
+
+| Subcommand | Description |
+|---|---|
+| `publish` | Publish one trickle track to the relay (keep running during a run). |
+| `subscribe <N>` | Launch N subscriber sessions and measure the relay's hold + per-session cost. |
+
+### publish
 
 | Flag | Default | Description |
 |---|---|---|
@@ -36,11 +35,7 @@ Usage: qumo loadgen publish [flags]
 | `--keepalive <dur>` | `5s` | QUIC keep-alive period. |
 | `--idle-timeout <dur>` | `30s` | QUIC max idle timeout. |
 
-## subscribe
-
-```
-Usage: qumo loadgen subscribe [flags] <N>
-```
+### subscribe
 
 | Flag | Default | Description |
 |---|---|---|
@@ -56,6 +51,9 @@ Usage: qumo loadgen subscribe [flags] <N>
 
 ## Example
 
+Run the publisher and the subscriber load against a relay running elsewhere —
+the publisher stays up for the duration of the run:
+
 ```bash
 qumo loadgen publish   --relay <host:4433> --ca <cert.pem>                    # trickle source
 qumo loadgen subscribe --relay <host:4433> --ca <cert.pem> --hold 15s 12000   # measure N=12000
@@ -64,5 +62,14 @@ qumo loadgen subscribe --relay <host:4433> --ca <cert.pem> --hold 15s 12000   # 
 `subscribe --results <dir>` appends a machine-readable capacity record to a
 JSONL file — useful input for your own sweep/reporting tooling if you're
 scripting a series of runs at increasing `N` to find a relay's session
-ceiling. See [Observability]({{< relref "../observability" >}}) for the
-metrics that back the numbers `loadgen` reports.
+ceiling.
+
+## Configuration
+
+No environment variables — the flags above are the entire surface. The
+relay it measures is configured separately.
+
+## See also
+
+- [Observability]({{< relref "../observability" >}}) — the metrics that back the numbers `loadgen` reports.
+- [relay]({{< relref "relay" >}}) — the server you point it at.

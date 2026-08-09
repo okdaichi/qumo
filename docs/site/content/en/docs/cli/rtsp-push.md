@@ -9,8 +9,21 @@ bridges published streams to MoQT. Like [rtmp]({{< relref "rtmp" >}}) and
 [rtsp]({{< relref "rtsp" >}}), this is a self-contained origin and does not
 join the relay peer mesh.
 
+## Usage
+
+```
+qumo rtsp-push
+```
+
+Takes no flags or arguments — configured entirely through environment
+variables.
+
+## Example
+
 ```bash
-qumo rtsp-push   # RTSP :8554 -> MoQT :4433
+qumo rtsp-push                          # RTSP :8554 -> MoQT :4433
+
+RTSP_INGEST_ADDR=:8555 qumo rtsp-push   # listen for RTSP on a different port
 ```
 
 ## Configuration
@@ -22,5 +35,9 @@ qumo rtsp-push   # RTSP :8554 -> MoQT :4433
 | `CERT_FILE` / `KEY_FILE` | `certs/server.crt` / `certs/server.key` | TLS certificate and key. |
 | `CORS_ALLOWED_ORIGINS` | (unset) | Comma-separated WebTransport origins (default: same-origin only; `*` allows any). |
 
-This is the **push** direction (a camera or encoder dials qumo). For the
-**pull** direction (qumo dials the camera), see [rtsp]({{< relref "rtsp" >}}).
+## See also
+
+- [rtsp]({{< relref "rtsp" >}}) — the **pull** direction, where qumo dials the camera instead.
+- [rtmp]({{< relref "rtmp" >}}) — the RTMP equivalent of this command.
+- [Deployment → Docker]({{< relref "../deployment/docker" >}}) — running it as a container.
+- [Deployment → TLS & mTLS]({{< relref "../deployment/tls" >}}) — generating the certificate it needs.

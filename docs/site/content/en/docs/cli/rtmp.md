@@ -9,8 +9,21 @@ MoQT. Like [rtsp]({{< relref "rtsp" >}}) and [rtsp-push]({{< relref "rtsp-push" 
 this is a self-contained origin and does not join the relay peer mesh (no
 peer connections, no announce relay).
 
+## Usage
+
+```
+qumo rtmp
+```
+
+Takes no flags or arguments — configured entirely through environment
+variables.
+
+## Example
+
 ```bash
-qumo rtmp   # RTMP :1935 -> MoQT :4433
+qumo rtmp                          # RTMP :1935 -> MoQT :4433
+
+RTMP_INGEST_ADDR=:1936 qumo rtmp   # listen for RTMP on a different port
 ```
 
 ## Configuration
@@ -22,5 +35,9 @@ qumo rtmp   # RTMP :1935 -> MoQT :4433
 | `CERT_FILE` / `KEY_FILE` | `certs/server.crt` / `certs/server.key` | TLS certificate and key. |
 | `CORS_ALLOWED_ORIGINS` | (unset) | Comma-separated WebTransport origins (default: same-origin only; `*` allows any). |
 
-See [Deployment → Docker]({{< relref "../deployment/docker" >}}) to run it as
-a container.
+## See also
+
+- [rtsp]({{< relref "rtsp" >}}) — pull an RTSP source into MoQT.
+- [rtsp-push]({{< relref "rtsp-push" >}}) — the RTSP equivalent of this command.
+- [Deployment → Docker]({{< relref "../deployment/docker" >}}) — running it as a container.
+- [Deployment → TLS & mTLS]({{< relref "../deployment/tls" >}}) — generating the certificate it needs.
