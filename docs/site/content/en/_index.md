@@ -48,12 +48,12 @@ peer-based content discovery, for distributed real-time streaming.
 	>}}
 	{{<hextra/feature-card
 		title="Env-var zero-config"
-		subtitle="Every setting is an environment variable. Prebuilt multi-arch images on GHCR, no config YAML needed."
+		subtitle="No config file — every setting is an environment variable. Prebuilt multi-arch images on GHCR."
 		icon="adjustments"
 	>}}
 	{{<hextra/feature-card
 		title="Built-in observability"
-		subtitle="Prometheus metrics, health probes, status APIs, and a qumo doctor command that explains effective runtime config."
+		subtitle="Prometheus metrics, a health probe, opt-in pprof, and a qumo doctor command that explains effective runtime config."
 		icon="chart-bar"
 	>}}
 	{{<hextra/feature-card
