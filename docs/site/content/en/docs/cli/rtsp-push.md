@@ -20,10 +20,20 @@ variables.
 
 ## Example
 
-```bash
-qumo rtsp-push                          # RTSP :8554 -> MoQT :4433
+```console
+$ qumo rtsp-push
+	Ingest  : :8554
+	Serve   : :4433
+```
 
-RTSP_INGEST_ADDR=:8555 qumo rtsp-push   # listen for RTSP on a different port
+Encoders then `ANNOUNCE`/`RECORD` to `rtsp://<host>:8554/<path>`, and
+subscribers consume the same path over MoQT on `:4433`. Override either
+address to taste:
+
+```console
+$ RTSP_INGEST_ADDR=:8555 RTSP_SERVE_ADDR=127.0.0.1:4457 qumo rtsp-push
+	Ingest  : :8555
+	Serve   : 127.0.0.1:4457
 ```
 
 ## Configuration

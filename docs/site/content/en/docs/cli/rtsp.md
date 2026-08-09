@@ -23,10 +23,19 @@ qumo rtsp <rtsp-url> [broadcast-path]
 
 ## Example
 
-```bash
-qumo rtsp rtsp://user:pass@192.168.1.50/stream1              # -> /live/camera
+```console
+$ qumo rtsp rtsp://user:pass@192.168.1.50/stream1 /live/camera
+INFO ingest session started broadcast_path=/live/camera
+INFO RTSP pull ingest starting source=rtsp://user:pass@192.168.1.50/stream1 broadcast_path=/live/camera serve=:4433
+```
 
-qumo rtsp rtsp://192.168.1.50/stream1 /live/front-door       # custom path
+Subscribers then consume `/live/camera` over MoQT on `:4433`. If the source
+is unreachable or drops, it logs the failure and retries with a doubling
+backoff rather than exiting:
+
+```console
+WARN RTSP pull disconnected, reconnecting error="dial: rtsp: dial 192.168.1.50:554: ..." backoff=2s
+WARN RTSP pull disconnected, reconnecting error="dial: rtsp: dial 192.168.1.50:554: ..." backoff=4s
 ```
 
 ## Configuration

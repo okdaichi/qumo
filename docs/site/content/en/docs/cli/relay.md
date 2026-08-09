@@ -19,18 +19,28 @@ qumo relay [flags]
 
 ## Example
 
-```bash
-qumo relay                # standalone / flat relay
-qumo relay --role hub     # hub node — discovers no local peers
-qumo relay --role edge    # edge node — discovers local hubs
-```
-
 It needs a TLS certificate to bind at all — `CERT_FILE`/`KEY_FILE`, default
 `certs/server.crt`/`certs/server.key` — or it fails immediately with a
-"failed to load X509 key pair" error. Once it's running:
+"failed to load X509 key pair" error.
 
-```bash
-curl http://localhost:4433/health
+```console
+$ RELAY_ADDR=127.0.0.1:4443 RELAY_NAME=relay-1 qumo relay
+INFO relay: UDP receive buffer size="default 262144 (256 KB)"
+	Host    : 127.0.0.1:4443
+	Advertise: 127.0.0.1:4443
+	Node ID : relay-1
+	/       : WebTransport endpoint
+	/health : health probe
+	/metrics: Prometheus metrics
+	Resolver: local (qumo-relay) (interval: 15s)
+```
+
+Add `--role hub` or `--role edge` to give the node a topology role instead of
+running flat. Once it's up:
+
+```console
+$ curl http://127.0.0.1:4443/health
+{"live":true,"ready":true,"timestamp":"2026-08-09T11:28:33.9277972+09:00","uptime":"3.1378795s"}
 ```
 
 ## Configuration

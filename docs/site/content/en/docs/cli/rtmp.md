@@ -20,10 +20,19 @@ variables.
 
 ## Example
 
-```bash
-qumo rtmp                          # RTMP :1935 -> MoQT :4433
+```console
+$ qumo rtmp
+	Ingest  : :1935
+	Serve   : :4433
+```
 
-RTMP_INGEST_ADDR=:1936 qumo rtmp   # listen for RTMP on a different port
+Publishers then push to `rtmp://<host>:1935/<path>`, and subscribers consume
+the same path over MoQT on `:4433`. Override either address to taste:
+
+```console
+$ RTMP_INGEST_ADDR=:1936 RTMP_SERVE_ADDR=127.0.0.1:4456 qumo rtmp
+	Ingest  : :1936
+	Serve   : 127.0.0.1:4456
 ```
 
 ## Configuration

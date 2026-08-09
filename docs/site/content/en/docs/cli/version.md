@@ -17,11 +17,8 @@ Takes no flags or arguments. `qumo --version` and `qumo -v` are equivalent.
 
 ## Example
 
-```bash
-qumo version
-```
-
-```
+```console
+$ qumo version
 qumo dev
   commit: none
   built:  unknown

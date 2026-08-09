@@ -18,14 +18,28 @@ Takes no flags or arguments.
 
 ## Example
 
-```bash
-qumo doctor                      # what the current environment resolves to
+```console
+$ qumo doctor
+qumo doctor — effective runtime configuration
 
-RELAY_GOGC=800 qumo doctor       # check a setting before applying it
+GC target (garbage collector)
+  Inputs:
+    GOGC        = (unset)
+    RELAY_GOGC  = (unset)
+    GOMEMLIMIT  = (unset)
+  Effective:    100%  (source: runtime default)
+  Why:          neither GOGC nor RELAY_GOGC is set; the relay leaves the runtime default (100) in place. Set RELAY_GOGC on high-fan-out hosts to lift the session ceiling.
 ```
 
-See [Observability → qumo doctor]({{< relref "../observability" >}}#qumo-doctor)
-for full example output.
+Because it only reads the environment, you can check what a setting would
+resolve to before committing it anywhere:
+
+```console
+$ RELAY_GOGC=800 qumo doctor
+...
+  Effective:    800%  (source: RELAY_GOGC)
+  Why:          RELAY_GOGC selected; the relay raises the GC target to cut GC-scan CPU for its large stable live set.
+```
 
 ## Configuration
 

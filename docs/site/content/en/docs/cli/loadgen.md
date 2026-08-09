@@ -54,10 +54,29 @@ qumo loadgen <subcommand> [flags]
 Run the publisher and the subscriber load against a relay running elsewhere —
 the publisher stays up for the duration of the run:
 
-```bash
-qumo loadgen publish   --relay <host:4433> --ca <cert.pem>                    # trickle source
-qumo loadgen subscribe --relay <host:4433> --ca <cert.pem> --hold 15s 12000   # measure N=12000
+```console
+$ qumo loadgen publish --relay 127.0.0.1:4443 --ca certs/server.crt
+INFO loadgen publishing relay=127.0.0.1:4443 path=/bench/carry gps=0.5 size=64
 ```
+
+Then, in another shell, launch the subscriber load. It reports the relay's
+own per-session cost, scraped from its `/metrics` before and after:
+
+```console
+$ qumo loadgen subscribe --relay 127.0.0.1:4443 --ca certs/server.crt --hold 5s 50
+loadgen subscribe → relay 127.0.0.1:4443 (path /bench/carry)
+  offered sessions : 50
+  connected        : 50
+  receiving        : 50
+  relay Δgoroutines: 384 (7.7/session)
+  relay ΔRSS       : 13.1 MB (267.8 KB/session)
+  relay sessions   : 51 active (relay-reported)
+  e2e latency      : p50 1.1ms  p95 2.3ms  p99 2.6ms  (100 samples)
+  verdict          : HOLDS
+```
+
+`verdict: HOLDS` means the relay carried every offered session for the full
+hold; raise `N` until it stops holding to find the ceiling.
 
 `subscribe --results <dir>` appends a machine-readable capacity record to a
 JSONL file — useful input for your own sweep/reporting tooling if you're

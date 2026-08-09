@@ -24,9 +24,21 @@ the UI at, so there's no `--host` flag.
 
 ## Example
 
-```bash
-qumo playground   # relay + web UI at http://127.0.0.1:8080
+```console
+$ qumo playground
+INFO dev certificate ready cert=...\qumo\playground\server.crt hash=fc3f2696d19e8be0...
+INFO playground ready url=http://127.0.0.1:8080 relay_addr=127.0.0.1:4433 note="relayUrl is derived per-request from the browser's Host"
+http://127.0.0.1:8080
+INFO relay: UDP receive buffer size="default 262144 (256 KB)"
+	Host    : 127.0.0.1:4433
+	Node ID : playground
+	/       : WebTransport endpoint
+	/health : health probe
+	/metrics: Prometheus metrics
 ```
+
+The bare URL on its own line is deliberate — it's the one thing you need, so
+it's easy to click or copy out of the log.
 
 Behind your own TLS-terminating reverse proxy, bind the relay publicly and
 proxy the UI:
