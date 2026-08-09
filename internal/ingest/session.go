@@ -49,6 +49,9 @@ type Session struct {
 //
 // Call [Session.Close] when the publisher disconnects.
 func NewSession(trackMux *moqt.TrackMux, path moqt.BroadcastPath) (*Session, error) {
+	if !path.HasPrefix("/") {
+		return nil, fmt.Errorf("ingest session: invalid broadcast path %q (must start with '/')", path)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	ann, endAnn := moqt.NewAnnouncement(ctx, path)
 
