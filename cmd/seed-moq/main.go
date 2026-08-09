@@ -36,12 +36,14 @@ import (
 
 	"github.com/qumo-dev/gomoqt/moqt"
 	"github.com/qumo-dev/gomoqt/msf"
+
+	"github.com/qumo-dev/qumo/internal/envconfig"
 )
 
 func main() {
-	addr := envOr("SEED_ADDR", ":4433")
-	path := envOr("SEED_TRACK_PATH", "/live/cam1")
-	trackName := envOr("SEED_TRACK_NAME", "video")
+	addr := envconfig.String("SEED_ADDR", ":4433")
+	path := envconfig.String("SEED_TRACK_PATH", "/live/cam1")
+	trackName := envconfig.String("SEED_TRACK_NAME", "video")
 	interval := envDuration("SEED_GROUP_INTERVAL", 2*time.Second)
 	timescale := envIntOr("SEED_TIMESCALE", 90000)
 
@@ -240,13 +242,6 @@ func selfSignedTLS() (*tls.Config, error) {
 
 func ptrInt64(v int64) *int64 { return &v }
 func ptrBool(v bool) *bool    { return &v }
-
-func envOr(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
-}
 
 func envIntOr(key string, def int) int {
 	if v := os.Getenv(key); v == "" {

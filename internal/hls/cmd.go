@@ -15,6 +15,7 @@ import (
 	"github.com/qumo-dev/gomoqt/moqt"
 
 	"github.com/qumo-dev/qumo/internal/cors"
+	"github.com/qumo-dev/qumo/internal/envconfig"
 
 	"github.com/okdaichi/qumo-ledger/ledger"
 	"github.com/okdaichi/qumo-ledger/ledger/store/fsstore"
@@ -56,9 +57,9 @@ import (
 //	                     Required when the player is served from another origin,
 //	                     e.g. "http://localhost:5173" for the playground.
 func Run(_ []string) error {
-	addr := envOr("HLS_ADDR", ":8080")
-	root := envOr("LEDGER_ROOT", "./ledger")
-	ledgerTrack := ledger.TrackPath(envOr("LEDGER_TRACK", "live/cam1/video"))
+	addr := envconfig.String("HLS_ADDR", ":8080")
+	root := envconfig.String("LEDGER_ROOT", "./ledger")
+	ledgerTrack := ledger.TrackPath(envconfig.String("LEDGER_TRACK", "live/cam1/video"))
 
 	window, err := envUint("HLS_WINDOW", 12)
 	if err != nil {
@@ -71,11 +72,11 @@ func Run(_ []string) error {
 	liveTimeout := time.Duration(liveTimeoutSec) * time.Second
 
 	cfg := feedConfig{
-		relayURL:  envOr("RELAY_URL", "https://localhost:4433"),
-		trackPath: envOr("RELAY_TRACK_PATH", "/hls/live"),
-		trackName: envOr("RELAY_TRACK_NAME", "video"),
-		caFile:    envOr("RELAY_CA_FILE", ""),
-		insecure:  envOr("RELAY_TLS_INSECURE", "false") == "true",
+		relayURL:  envconfig.String("RELAY_URL", "https://localhost:4433"),
+		trackPath: envconfig.String("RELAY_TRACK_PATH", "/hls/live"),
+		trackName: envconfig.String("RELAY_TRACK_NAME", "video"),
+		caFile:    envconfig.String("RELAY_CA_FILE", ""),
+		insecure:  envconfig.String("RELAY_TLS_INSECURE", "false") == "true",
 
 		liveTimeout: liveTimeout,
 	}
@@ -200,13 +201,6 @@ func openTrack(ctx context.Context, store *fsstore.Store, path ledger.TrackPath,
 		return nil, false, fmt.Errorf("hls: open track: %w", err)
 	}
 	return track, true, nil
-}
-
-func envOr(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
 }
 
 func envUint(key string, def uint64) (uint64, error) {
