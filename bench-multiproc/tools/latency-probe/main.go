@@ -25,7 +25,6 @@ package main
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -41,6 +40,8 @@ import (
 
 	"github.com/quic-go/quic-go"
 	"github.com/qumo-dev/gomoqt/moqt"
+
+	"github.com/qumo-dev/qumo/internal/tlsclient"
 )
 
 const (
@@ -307,22 +308,12 @@ func emitJSONL(dir string, cfg config, r result) error {
 // probeTLSConfig builds the relay TLS config: verify against caFile's trust
 // anchor, or skip verification when insecure (a self-signed dev relay). Mirrors
 // qumo's client TLS convention — verification is the default, --insecure is the
-// explicit escape hatch.
+// explicit escape hatch. The trust decision is shared via [tlsclient.Apply];
+// only the probe's base config (MoQ ALPN, TLS 1.3 floor) is owned here.
 func probeTLSConfig(caFile string, insecure bool) (*tls.Config, error) {
 	tc := &tls.Config{NextProtos: []string{moqt.NextProtoMOQ}, MinVersion: tls.VersionTLS13}
-	switch {
-	case insecure:
-		tc.InsecureSkipVerify = true
-	case caFile != "":
-		pemCert, err := os.ReadFile(caFile)
-		if err != nil {
-			return nil, fmt.Errorf("read --ca %q: %w", caFile, err)
-		}
-		pool := x509.NewCertPool()
-		if !pool.AppendCertsFromPEM(pemCert) {
-			return nil, fmt.Errorf("no certificates found in --ca %q", caFile)
-		}
-		tc.RootCAs = pool
+	if err := tlsclient.Apply(tc, caFile, insecure); err != nil {
+		return nil, err
 	}
 	return tc, nil
 }

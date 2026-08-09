@@ -4,13 +4,11 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
 	"time"
 
 	"github.com/qumo-dev/gomoqt/moqt"
@@ -19,6 +17,7 @@ import (
 	"github.com/okdaichi/qumo-ledger/ledger"
 
 	"github.com/qumo-dev/qumo/internal/cmaf"
+	"github.com/qumo-dev/qumo/internal/tlsclient"
 )
 
 // feedConfig carries the relay subscription parameters, resolved from
@@ -89,35 +88,15 @@ func connectWithRetry(ctx context.Context, cfg feedConfig) (*moqt.Session, media
 // relayTLSConfig builds the client TLS config for dialing the relay. The egress
 // verifies the relay's certificate by default: against the system root store
 // when caFile is empty, or against a single relay cert when caFile names a PEM.
-// insecure opts out of verification entirely for a self-signed dev relay.
+// insecure opts out of verification entirely for a self-signed dev relay. The
+// trust decision itself is shared across qumo's clients via [tlsclient.Apply];
+// only the egress-specific base config (TLS 1.3 floor) is owned here.
 func relayTLSConfig(caFile string, insecure bool) (*tls.Config, error) {
 	tc := &tls.Config{MinVersion: tls.VersionTLS13}
-	switch {
-	case insecure:
-		tc.InsecureSkipVerify = true
-	case caFile != "":
-		pool, err := loadCAPool(caFile)
-		if err != nil {
-			return nil, err
-		}
-		tc.RootCAs = pool
+	if err := tlsclient.Apply(tc, caFile, insecure); err != nil {
+		return nil, err
 	}
 	return tc, nil
-}
-
-// loadCAPool reads a PEM cert file into a fresh pool. The relay's self-signed
-// cert is its own issuer, so trusting the cert itself is sufficient — mirrors
-// internal/loadgen.loadCAPool.
-func loadCAPool(caFile string) (*x509.CertPool, error) {
-	pemCert, err := os.ReadFile(caFile)
-	if err != nil {
-		return nil, fmt.Errorf("read relay cert %q: %w", caFile, err)
-	}
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(pemCert) {
-		return nil, fmt.Errorf("no certificates found in relay cert %q", caFile)
-	}
-	return pool, nil
 }
 
 // connect dials the relay, reads the MSF catalog, and returns the selected

@@ -42,6 +42,11 @@ linters:
       - linters: [gosec]
         path: "internal/smoketest/"
         text: "G304"
+      # False positive: the shared client TLS helper reads a relay cert path that
+      # every qumo client (--ca / RELAY_CA_FILE) supplies, not external input.
+      - linters: [gosec]
+        path: "internal/tlsclient/"
+        text: "G304"
       # False positive: the capacity driver launches `qumo relay` / `qumo loadgen`
       # (the --qumo path) optionally under taskset, and reads results.jsonl from
       # the --results dir — all operator-supplied CLI paths, not external input.

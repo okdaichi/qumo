@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/tls"
-	"crypto/x509"
 	"flag"
 	"fmt"
 	"log"
@@ -14,6 +13,8 @@ import (
 	"time"
 
 	"github.com/qumo-dev/gomoqt/moqt"
+
+	"github.com/qumo-dev/qumo/internal/tlsclient"
 )
 
 const (
@@ -69,20 +70,14 @@ func printUsage() {
 // smokeTLSConfig builds the TLS config shared by both dialers: verify against
 // caFile's trust anchor, or skip verification when insecure (self-signed dev
 // relays). Mirrors qumo's client TLS convention — verification is the default,
-// -insecure is the explicit escape hatch.
+// -insecure is the explicit escape hatch. The trust decision is shared via
+// [tlsclient.Apply]; this harness owns no base-config policy of its own.
 func smokeTLSConfig(caFile string, insecure bool) (*tls.Config, error) {
-	if insecure {
-		return &tls.Config{InsecureSkipVerify: true}, nil
+	tc := &tls.Config{}
+	if err := tlsclient.Apply(tc, caFile, insecure); err != nil {
+		return nil, err
 	}
-	pemCert, err := os.ReadFile(caFile)
-	if err != nil {
-		return nil, fmt.Errorf("read -ca %q: %w", caFile, err)
-	}
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(pemCert) {
-		return nil, fmt.Errorf("no certificates found in -ca %q", caFile)
-	}
-	return &tls.Config{RootCAs: pool}, nil
+	return tc, nil
 }
 
 func run(ctx context.Context, pubURL, subURL string, numGroups, numFrames, frameSize int, tlsConf *tls.Config) int {
