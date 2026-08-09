@@ -11,6 +11,8 @@
 //	    --ca bench-multiproc/cert.pem \
 //	    --hold 10s
 //
+// --ca is required unless --insecure is set (for a self-signed dev relay).
+//
 // The tool exits after printing the latency summary to stdout. It also appends a
 // JSONL record to the --results directory if provided.
 //
@@ -55,13 +57,14 @@ func main() {
 }
 
 type config struct {
-	relay   string
-	caFile  string
-	path    string
-	track   string
-	hold    time.Duration
-	settle  time.Duration // ramp-up exclusion window
-	results string        // optional JSONL output dir
+	relay    string
+	caFile   string
+	insecure bool
+	path     string
+	track    string
+	hold     time.Duration
+	settle   time.Duration // ramp-up exclusion window
+	results  string        // optional JSONL output dir
 }
 
 type result struct {
@@ -80,7 +83,8 @@ type result struct {
 func run(args []string) error {
 	fs := flag.NewFlagSet("latency-probe", flag.ContinueOnError)
 	relay := fs.String("relay", "127.0.0.1:4433", "relay moqt address (host:port)")
-	caFile := fs.String("ca", "", "PEM file of the relay's TLS cert/CA (required)")
+	caFile := fs.String("ca", "", "PEM file of the relay's TLS cert/CA to trust (required unless --insecure)")
+	insecure := fs.Bool("insecure", false, "skip relay TLS verification (dev; self-signed relay)")
 	path := fs.String("path", defaultPath, "broadcast path")
 	track := fs.String("track", defaultTrack, "track name")
 	hold := fs.Duration("hold", 10*time.Second, "total measurement window")
@@ -91,21 +95,22 @@ func run(args []string) error {
 		return err
 	}
 
-	if *caFile == "" {
-		return errors.New("--ca is required (path to relay's PEM cert)")
+	if *caFile == "" && !*insecure {
+		return errors.New("--ca is required (or --insecure for a self-signed dev relay)")
 	}
 	if *hold <= 0 {
 		return errors.New("--hold must be positive")
 	}
 
 	cfg := config{
-		relay:   *relay,
-		caFile:  *caFile,
-		path:    *path,
-		track:   *track,
-		hold:    *hold,
-		settle:  *settle,
-		results: *results,
+		relay:    *relay,
+		caFile:   *caFile,
+		insecure: *insecure,
+		path:     *path,
+		track:    *track,
+		hold:     *hold,
+		settle:   *settle,
+		results:  *results,
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -127,12 +132,11 @@ func run(args []string) error {
 
 // measure subscribes, reads frames for hold duration, returns latency percentiles.
 func measure(ctx context.Context, cfg config) (result, error) {
-	pool, err := loadCA(cfg.caFile)
+	tlsCfg, err := probeTLSConfig(cfg.caFile, cfg.insecure)
 	if err != nil {
-		return result{}, fmt.Errorf("load CA: %w", err)
+		return result{}, err
 	}
 
-	tlsCfg := &tls.Config{RootCAs: pool, NextProtos: []string{moqt.NextProtoMOQ}, MinVersion: tls.VersionTLS13}
 	quicCfg := &quic.Config{EnableDatagrams: true, MaxIncomingUniStreams: 1 << 20, MaxIncomingStreams: 1 << 20}
 
 	// Dial
@@ -300,15 +304,25 @@ func emitJSONL(dir string, cfg config, r result) error {
 	return json.NewEncoder(f).Encode(rec)
 }
 
-// loadCA reads a PEM cert into a cert pool for server verification.
-func loadCA(caFile string) (*x509.CertPool, error) {
-	pem, err := os.ReadFile(caFile)
-	if err != nil {
-		return nil, err
+// probeTLSConfig builds the relay TLS config: verify against caFile's trust
+// anchor, or skip verification when insecure (a self-signed dev relay). Mirrors
+// qumo's client TLS convention — verification is the default, --insecure is the
+// explicit escape hatch.
+func probeTLSConfig(caFile string, insecure bool) (*tls.Config, error) {
+	tc := &tls.Config{NextProtos: []string{moqt.NextProtoMOQ}, MinVersion: tls.VersionTLS13}
+	switch {
+	case insecure:
+		tc.InsecureSkipVerify = true
+	case caFile != "":
+		pemCert, err := os.ReadFile(caFile)
+		if err != nil {
+			return nil, fmt.Errorf("read --ca %q: %w", caFile, err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(pemCert) {
+			return nil, fmt.Errorf("no certificates found in --ca %q", caFile)
+		}
+		tc.RootCAs = pool
 	}
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(pem) {
-		return nil, fmt.Errorf("no certificates found in %q", caFile)
-	}
-	return pool, nil
+	return tc, nil
 }

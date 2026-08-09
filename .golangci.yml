@@ -37,6 +37,11 @@ linters:
       - linters: [gosec]
         path: "internal/hls/"
         text: "G304"
+      # False positive: the smoke test's -ca cert path comes from a CLI flag
+      # run by an operator/developer, not external user input.
+      - linters: [gosec]
+        path: "internal/smoketest/"
+        text: "G304"
       # False positive: the capacity driver launches `qumo relay` / `qumo loadgen`
       # (the --qumo path) optionally under taskset, and reads results.jsonl from
       # the --results dir — all operator-supplied CLI paths, not external input.
@@ -62,6 +67,12 @@ linters:
       - linters: [gosec]
         path: "bench-multiproc/"
         text: "G404"
+      # InsecureSkipVerify is intentional: the latency probe's --insecure flag
+      # is an explicit dev escape hatch for a self-signed relay, mirroring the
+      # internal/.* G402 exclusion for the other client tools.
+      - linters: [gosec]
+        path: "bench-multiproc/tools/latency-probe/"
+        text: "G402"
       # False positive: slice bounds are guaranteed by the RTMP/QUIC encoding protocol logic
       - linters: [gosec]
         text: "G602"
