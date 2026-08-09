@@ -32,6 +32,11 @@ linters:
       - linters: [gosec]
         path: "internal/loadgen/"
         text: "G304"
+      # False positive: the egress's RELAY_CA_FILE cert path comes from an
+      # operator-supplied env var, not external user input.
+      - linters: [gosec]
+        path: "internal/hls/"
+        text: "G304"
       # False positive: the capacity driver launches `qumo relay` / `qumo loadgen`
       # (the --qumo path) optionally under taskset, and reads results.jsonl from
       # the --results dir — all operator-supplied CLI paths, not external input.
