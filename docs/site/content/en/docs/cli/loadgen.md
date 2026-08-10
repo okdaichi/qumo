@@ -1,7 +1,7 @@
 ---
 title: loadgen
 description: Drive an out-of-process capacity load against a running relay.
-weight: 7
+weight: 8
 ---
 
 Out-of-process capacity primitives against a running qumo relay. Both

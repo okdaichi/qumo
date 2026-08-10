@@ -1,7 +1,7 @@
 ---
 title: version
 description: Print build-time version information.
-weight: 8
+weight: 9
 ---
 
 Prints build-time version info. It doesn't run a server or connect to a

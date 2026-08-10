@@ -1,7 +1,7 @@
 ---
 title: doctor
 description: Explain the relay's effective runtime configuration — read-only.
-weight: 6
+weight: 7
 ---
 
 Explains the relay's *effective* runtime configuration and why — read-only,
