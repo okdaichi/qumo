@@ -5,7 +5,7 @@ weight: 8
 ---
 
 Out-of-process capacity primitives against a running qumo relay. Both
-subcommands are pure remote clients — they dial `--relay` (trusting `--ca`)
+subcommands are pure remote clients — they dial `--relay`, trusting `--ca` (or `--insecure` for a self-signed dev relay)
 and never spawn a relay themselves. This matters: running load clients and
 the relay in one process makes client-side QUIC-handshake CPU, not the relay,
 the bottleneck.
@@ -25,7 +25,8 @@ qumo loadgen <subcommand> [flags]
 
 | Flag | Default | Description |
 |---|---|---|
-| `--ca <file>` | (required) | PEM file of the relay's TLS cert/CA to trust. |
+| `--ca <file>` | (required unless `--insecure`) | PEM file of the relay's TLS cert/CA to trust. |
+| `--insecure` | `false` | Skip relay TLS verification (dev; self-signed relay). |
 | `--relay <host:port>` | `127.0.0.1:4433` | Relay MoQT address to dial. |
 | `--path <path>` | `/bench/carry` | Broadcast path. |
 | `--track <name>` | `data` | Track name. |
@@ -39,7 +40,8 @@ qumo loadgen <subcommand> [flags]
 
 | Flag | Default | Description |
 |---|---|---|
-| `--ca <file>` | (required) | PEM file of the relay's TLS cert/CA to trust. |
+| `--ca <file>` | (required unless `--insecure`) | PEM file of the relay's TLS cert/CA to trust. |
+| `--insecure` | `false` | Skip relay TLS verification (dev; self-signed relay). |
 | `--relay <host:port>` | `127.0.0.1:4433` | Relay MoQT address to dial. |
 | `--path <path>` | `/bench/carry` | Broadcast path. |
 | `--track <name>` | `data` | Track name. |

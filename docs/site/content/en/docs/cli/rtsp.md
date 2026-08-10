@@ -26,7 +26,7 @@ qumo rtsp <rtsp-url> [broadcast-path]
 ```console
 $ qumo rtsp rtsp://user:pass@192.168.1.50/stream1 /live/camera
 INFO ingest session started broadcast_path=/live/camera
-INFO RTSP pull ingest starting source=rtsp://user:pass@192.168.1.50/stream1 broadcast_path=/live/camera serve=:4433
+INFO RTSP pull ingest starting source=rtsp://192.168.1.50/stream1 broadcast_path=/live/camera serve=:4433
 ```
 
 Subscribers then consume `/live/camera` over MoQT on `:4433`. If the source

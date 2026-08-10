@@ -37,9 +37,10 @@ implementations:
    resolver API (e.g. qumo-enterprise) for cross-cluster hub discovery. Hubs
    discover remote hubs; edges never query the remote resolver.
 
-Each connection dials QUIC with ALPN `moqt`, exchanges `ANNOUNCE_PLEASE` /
+Each connection dials QUIC with ALPN `moq-lite-04`, exchanges `ANNOUNCE_PLEASE` /
 `ANNOUNCE`, and registers the peer's tracks on the local `TrackMux`. On
-disconnect the connection is retried after 5s.
+disconnect the connection is retried with exponential backoff (1s base, 30s
+cap, ±25% jitter).
 
 ```mermaid
 graph TD
@@ -55,7 +56,7 @@ graph TD
     Announce --> TrackMux["Register tracks on local TrackMux"]
     TrackMux --> Serve["Serve subscribers"]
 
-    ALPN -->|"failed"| Retry["Wait 5s → retry"]
+    ALPN -->|"failed"| Retry["Backoff → retry"]
     Serve -->|"disconnected"| Retry
     Retry --> ALPN
 ```
