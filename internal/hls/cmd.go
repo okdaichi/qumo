@@ -23,8 +23,9 @@ import (
 )
 
 // Run starts the HLS/DASH egress server: it subscribes to a MoQ track's catalog
-// to learn its schema and fMP4 init, writes each received CMAF group into a
-// qumo-ledger track, and serves the ledger's HLS/DASH renderings over HTTP.
+// to learn its schema and fMP4 init, packages each received group of LOC frames
+// into a CMAF (fMP4) fragment, writes those fragments into a qumo-ledger track,
+// and serves the ledger's HLS/DASH renderings over HTTP.
 //
 // Configuration is read from environment variables (qumo convention):
 //

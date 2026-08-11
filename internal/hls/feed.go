@@ -370,10 +370,11 @@ var (
 // the ledger as a sealed group. It blocks until ctx is cancelled or the
 // subscription fails.
 //
-// Each group's payload is treated as one CMAF (fMP4) fragment — the bytes the
-// publisher packaged — so the ledger segment is what the player fetches.
-// MediaTime/Duration are still derived (gomoqt v0.15.0 carries no per-frame
-// timestamp); the Timescale now comes from the catalog.
+// Each group is a run of LOC frames the publisher sent; drainGroup decodes
+// them and the packager turns them into one CMAF (fMP4) fragment, so the
+// ledger segment is what the player fetches. MediaTime/Duration are still
+// derived (gomoqt v0.15.0 carries no per-frame timestamp); the Timescale now
+// comes from the catalog.
 func feedMedia(ctx context.Context, sub mediaSubscriber, m mediaInfo, w groupAppender, live *liveness, cfg feedConfig) error {
 	src, err := sub.SubscribeMedia(ctx, m)
 	if err != nil {
