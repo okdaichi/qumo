@@ -76,8 +76,8 @@ func main() {
 		Packaging: msf.PackagingCMAF,
 		Timescale: new(int64(timescale)),
 		Codec:     "vp09.00.10.08",
-		Width:     ptrInt64(1280),
-		Height:    ptrInt64(720),
+		Width:     new(int64(1280)),
+		Height:    new(int64(720)),
 		Role:      msf.RoleVideo,
 		IsLive:    new(true),
 	}, moqt.TrackHandlerFunc(func(tw *moqt.TrackWriter) {
@@ -220,12 +220,6 @@ func selfSignedTLS() (*tls.Config, error) {
 		MinVersion:   tls.VersionTLS13,
 	}, nil
 }
-
-//go:fix inline
-func ptrInt64(v int64) *int64 { return new(v) }
-
-//go:fix inline
-func ptrBool(v bool) *bool { return new(v) }
 
 func envIntOr(key string, def int) int {
 	if v := os.Getenv(key); v == "" {
