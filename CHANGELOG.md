@@ -61,6 +61,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   browser/WebTransport traffic. Only affects deployments that already set
   `CA_FILE`; relays without it are unaffected.
 
+- **Go toolchain bump: 1.26 → 1.27** (Go 1.27.0, released 2026-08-19). Updates
+  the `go` directive in all modules (`go.mod`, `magefiles/go.mod`,
+  `tools/paramexp/go.mod`, `docs/site/go.mod`), the builder image
+  (`golang:1.27-alpine`), the Pages workflow Go pin, and the documented Go
+  requirement (README, CONTRIBUTING, install docs, bench-multiproc
+  instructions). CI resolves Go via `go-version-file: go.mod`, so it picks the
+  bump up automatically. No source changes required.
+
 ### Removed
 - **`ADVERTISE_ADDR`** — dropped from `internal/relay/cmd.go`, `Config`, and
   `qumo playground`. It was set into `Config.AdvertiseAddr` and logged, but

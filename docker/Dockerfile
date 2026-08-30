@@ -27,7 +27,7 @@ COPY playground/ ./
 RUN deno install && deno task build
 
 # Stage 2: build the Go binary.
-FROM golang:1.26-alpine AS builder
+FROM golang:1.27-alpine AS builder
 
 ARG VERSION=dev
 ARG COMMIT=none

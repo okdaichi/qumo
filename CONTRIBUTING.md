@@ -10,7 +10,7 @@ This project adheres to a Code of Conduct that all contributors are expected to 
 
 ### Prerequisites
 
-- Go 1.21 or higher
+- Go 1.27 or higher
 - Git
 - Basic understanding of QUIC protocol and media streaming
 

@@ -22,7 +22,7 @@ $ qumo version
 qumo dev
   commit: none
   built:  unknown
-  go:     go1.26.5
+  go:     go1.27.0
 ```
 
 The `dev`/`none`/`unknown` values above are what an unstamped local build
