@@ -17,7 +17,7 @@ func boObs(t *testing.T, enc *experiment.Encoder, n int) []experiment.Observatio
 	t.Helper()
 	levels := []string{"1", "2", "4", "8"}
 	var obs []experiment.Observation
-	for i := 0; i < n; i++ {
+	for i := range n {
 		a := levels[i%len(levels)]
 		b := []string{"x", "y", "z"}[i%3]
 		c := []string{"p", "q"}[i%2]

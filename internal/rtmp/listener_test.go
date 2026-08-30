@@ -266,7 +266,7 @@ func TestListener_Accept_RepeatedStallsDoNotBlock(t *testing.T) {
 	// A burst of clients that each connect, send malformed handshake bytes,
 	// and close — every one must fail the handshake and be skipped.
 	const badBurst = 5
-	for i := 0; i < badBurst; i++ {
+	for i := range badBurst {
 		c, derr := net.Dial("tcp", l.Addr().String())
 		if derr != nil {
 			t.Fatalf("dial bad client %d failed: %v", i, derr)

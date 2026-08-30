@@ -201,7 +201,7 @@ func waitPeerConnected(ctx context.Context, ps *ProcessState, timeout time.Durat
 	for {
 		body, err := fetchMetricsBody(ctx, ps.Node.Port)
 		if err == nil {
-			for _, line := range strings.Split(string(body), "\n") {
+			for line := range strings.SplitSeq(string(body), "\n") {
 				if strings.HasPrefix(line, "qumo_relay_peers_connected") {
 					parts := strings.Fields(line)
 					if len(parts) == 2 {
@@ -233,7 +233,7 @@ func waitBroadcastActive(ctx context.Context, ps *ProcessState, timeout time.Dur
 	for {
 		body, err := fetchMetricsBody(ctx, ps.Node.Port)
 		if err == nil {
-			for _, line := range strings.Split(string(body), "\n") {
+			for line := range strings.SplitSeq(string(body), "\n") {
 				if strings.HasPrefix(line, "qumo_relay_broadcasts_active") {
 					parts := strings.Fields(line)
 					if len(parts) == 2 {

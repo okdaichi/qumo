@@ -15,7 +15,7 @@ func TestGP_Recovers1DSurface(t *testing.T) {
 	n := 24
 	X := make([][]float64, n)
 	y := make([]float64, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		x := float64(i) / float64(n-1)
 		X[i] = []float64{x}
 		y[i] = math.Sin(2 * math.Pi * x)
@@ -26,8 +26,8 @@ func TestGP_Recovers1DSurface(t *testing.T) {
 	var sumAbs float64
 	var covered int
 	gridN := 40
-	for i := 0; i < gridN; i++ {
-		x := float64(i) / float64(gridN - 1)
+	for i := range gridN {
+		x := float64(i) / float64(gridN-1)
 		m, s, err := gp.Predict([]float64{x})
 		require.NoError(t, err)
 		truth := math.Sin(2 * math.Pi * x)
@@ -48,7 +48,7 @@ func TestGP_SensitivityOrdering(t *testing.T) {
 	n := 40
 	X := make([][]float64, n)
 	y := make([]float64, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		x1 := float64(i%10) / 9
 		x2 := float64(i%7) / 6 // noise-like, uncorrelated with y
 		x3 := float64(i%5) / 4
@@ -72,8 +72,8 @@ func TestGP_2DAnisotropic(t *testing.T) {
 	X := make([][]float64, n)
 	y := make([]float64, n)
 	idx := 0
-	for i := 0; i < 6; i++ {
-		for j := 0; j < 6; j++ {
+	for i := range 6 {
+		for j := range 6 {
 			x1 := float64(i) / 5
 			x2 := float64(j) / 5
 			X[idx] = []float64{x1, x2}
@@ -119,7 +119,7 @@ func TestGP_Calibration(t *testing.T) {
 	// Cluster training data in [0, 0.3]; x=0.9 is far from all of it.
 	X := [][]float64{}
 	y := []float64{}
-	for i := 0; i < 12; i++ {
+	for i := range 12 {
 		x := float64(i) / 11 * 0.3
 		X = append(X, []float64{x})
 		y = append(y, math.Sin(2*math.Pi*x))
@@ -163,7 +163,7 @@ func TestGP_FitReplicated_DownweightsHighVariance(t *testing.T) {
 	yVarLo := make([]float64, n)
 	yVarHi := make([]float64, n)
 	mid := n / 2
-	for i := 0; i < n; i++ {
+	for i := range n {
 		X[i] = []float64{float64(i) / float64(n-1)}
 		yMean[i] = 0
 		yVarLo[i] = 1e-6
@@ -194,7 +194,7 @@ func TestGP_FitReplicated_EqualsFitWhenNoiseFree(t *testing.T) {
 	X := make([][]float64, n)
 	y := make([]float64, n)
 	yVar := make([]float64, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		x := float64(i) / float64(n-1)
 		X[i] = []float64{x}
 		y[i] = math.Sin(2 * math.Pi * x)
@@ -204,7 +204,7 @@ func TestGP_FitReplicated_EqualsFitWhenNoiseFree(t *testing.T) {
 	require.NoError(t, gp.FitReplicated(X, y, yVar))
 	// Should recover sin(2πx) at held-out points.
 	var mae float64
-	for i := 0; i < n; i++ {
+	for i := range n {
 		m, _, err := gp.Predict(X[i])
 		require.NoError(t, err)
 		mae += math.Abs(m - y[i])
@@ -212,7 +212,6 @@ func TestGP_FitReplicated_EqualsFitWhenNoiseFree(t *testing.T) {
 	mae /= float64(n)
 	assert.Less(t, mae, 0.2, "noise-free FitReplicated should track the means")
 }
-
 
 func gpsensitivityWeights(lens []float64) []float64 {
 	w := make([]float64, len(lens))

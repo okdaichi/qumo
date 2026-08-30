@@ -69,6 +69,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instructions). CI resolves Go via `go-version-file: go.mod`, so it picks the
   bump up automatically. No source changes required.
 
+- **`go fix` modernization pass (Go 1.27 toolchain).** Runs `go fix ./...`
+  across the root module and `tools/paramexp` (37 files; `magefiles` matched
+  no packages). Mechanical rewrites only: `strings.Cut`/`CutPrefix` replace
+  index arithmetic, `strings.SplitSeq`/`bytes.SplitSeq` replace
+  range-over-split slice allocations, 3-clause counted loops become
+  `for range n`, clamping `if` statements become `min`/`max`, map-copy loops
+  become `maps.Copy`, pointer-helper functions become `new(expr)`, and
+  `sync.WaitGroup` Add/Done pairs become `WaitGroup.Go`. Two `omitzero`
+  suggestions in `tools/paramexp` were skipped by the tool as behavior
+  changes and are intentionally not applied.
+
 ### Removed
 - **`ADVERTISE_ADDR`** — dropped from `internal/relay/cmd.go`, `Config`, and
   `qumo playground`. It was set into `Config.AdvertiseAddr` and logged, but

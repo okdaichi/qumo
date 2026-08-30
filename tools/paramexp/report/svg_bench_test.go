@@ -11,7 +11,7 @@ import (
 // per-level mean/σ groups.
 func benchObservations(nObs int, levels []string, objective string) []experiment.Observation {
 	obs := make([]experiment.Observation, 0, nObs)
-	for i := 0; i < nObs; i++ {
+	for i := range nObs {
 		obs = append(obs, experiment.Observation{
 			Vector:  experiment.ParamVector{"p": levels[i%len(levels)]},
 			Metrics: experiment.MetricSet{objective: float64(i%100) + 1},

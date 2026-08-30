@@ -303,8 +303,8 @@ func TestIngest_ConcurrentGroups_FasterThanSerial(t *testing.T) {
 					frames[j] = []byte("x")
 				}
 				src := &slowFrameSource{
-					fakeFrameSource: fakeFrameSource{frames: frames},
-					delay:           delay,
+					frames: frames,
+					delay:  delay,
 				}
 				ring.fill(src, caches[idx], nil)
 			}(i)
@@ -344,8 +344,8 @@ func TestIngest_WaitGroup_BlocksDoneUntilFillComplete(t *testing.T) {
 
 		frames := [][]byte{[]byte("a"), []byte("b"), []byte("c")}
 		src := &slowFrameSource{
-			fakeFrameSource: fakeFrameSource{frames: frames},
-			delay:           10 * time.Millisecond,
+			frames: frames,
+			delay:  10 * time.Millisecond,
 		}
 
 		var wg sync.WaitGroup
@@ -479,8 +479,8 @@ func TestTrackDistributor_ProcessGroup_SemaphoreLimitsConcurrency(t *testing.T) 
 		// its backpressure slot occupied so we can observe the full-pool block.
 		slowSrc := func() frameSource {
 			return &slowFrameSource{
-				fakeFrameSource: fakeFrameSource{frames: [][]byte{[]byte("x")}},
-				delay:           1 * time.Hour,
+				frames: [][]byte{[]byte("x")},
+				delay:  1 * time.Hour,
 			}
 		}
 
@@ -548,8 +548,8 @@ func TestTrackDistributor_ProcessGroup_CtxCancelUnblocks(t *testing.T) {
 
 		// Fill the single worker slot with a job that blocks.
 		holdSrc := &slowFrameSource{
-			fakeFrameSource: fakeFrameSource{frames: [][]byte{[]byte("x")}},
-			delay:           1 * time.Hour,
+			frames: [][]byte{[]byte("x")},
+			delay:  1 * time.Hour,
 		}
 		ok := dist.processGroup(ctx, moqt.GroupSequence(1), holdSrc)
 		require.True(t, ok)

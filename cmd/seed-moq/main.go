@@ -74,12 +74,12 @@ func main() {
 	if err := broadcast.RegisterTrack(msf.Track{
 		Name:      trackName,
 		Packaging: msf.PackagingCMAF,
-		Timescale: ptrInt64(int64(timescale)),
+		Timescale: new(int64(timescale)),
 		Codec:     "vp09.00.10.08",
 		Width:     ptrInt64(1280),
 		Height:    ptrInt64(720),
 		Role:      msf.RoleVideo,
-		IsLive:    ptrBool(true),
+		IsLive:    new(true),
 	}, moqt.TrackHandlerFunc(func(tw *moqt.TrackWriter) {
 		publish(ctx, tw, interval)
 	})); err != nil {
@@ -221,8 +221,11 @@ func selfSignedTLS() (*tls.Config, error) {
 	}, nil
 }
 
-func ptrInt64(v int64) *int64 { return &v }
-func ptrBool(v bool) *bool    { return &v }
+//go:fix inline
+func ptrInt64(v int64) *int64 { return new(v) }
+
+//go:fix inline
+func ptrBool(v bool) *bool { return new(v) }
 
 func envIntOr(key string, def int) int {
 	if v := os.Getenv(key); v == "" {

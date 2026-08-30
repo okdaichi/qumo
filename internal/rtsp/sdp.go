@@ -23,8 +23,8 @@ func ParseSDP(data string) *SDP {
 	sdp := &SDP{}
 	var currentMedia *SDPMedia
 
-	lines := strings.Split(data, "\n")
-	for _, line := range lines {
+	lines := strings.SplitSeq(data, "\n")
+	for line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue

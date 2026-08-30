@@ -556,7 +556,7 @@ func TestSession_PushAudioFrames(t *testing.T) {
 	require.NotNil(t, g)
 	assert.True(t, g.isComplete())
 	require.Len(t, g.frames, 3)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		assert.NotNil(t, g.next(i), "frame %d present", i)
 	}
 

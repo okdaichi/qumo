@@ -354,7 +354,7 @@ type capRecord struct {
 func parseLastRecord(data []byte) (capRecord, error) {
 	var last capRecord
 	found := false
-	for _, line := range bytes.Split(data, []byte("\n")) {
+	for line := range bytes.SplitSeq(data, []byte("\n")) {
 		line = bytes.TrimSpace(line)
 		if len(line) == 0 {
 			continue

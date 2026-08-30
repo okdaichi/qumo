@@ -10,15 +10,15 @@ import (
 // RelaySnapshot holds the metrics scraped from a relay's /metrics endpoint.
 type RelaySnapshot struct {
 	// Process metrics.
-	Goroutines    float64
-	RSSBytes      float64
-	CPUSeconds    float64 // process_cpu_seconds_total
+	Goroutines float64
+	RSSBytes   float64
+	CPUSeconds float64 // process_cpu_seconds_total
 
 	// Go runtime metrics.
-	HeapAllocBytes    float64
-	GCDurationSecSum  float64 // go_gc_duration_seconds_sum
-	GCDurationCount   float64 // go_gc_duration_seconds_count
-	GCDurationMax     float64 // go_gc_duration_seconds{quantile="1"}
+	HeapAllocBytes   float64
+	GCDurationSecSum float64 // go_gc_duration_seconds_sum
+	GCDurationCount  float64 // go_gc_duration_seconds_count
+	GCDurationMax    float64 // go_gc_duration_seconds{quantile="1"}
 
 	// Relay-specific metrics.
 	SessionsActive    float64 // qumo_relay_sessions_active
@@ -44,7 +44,7 @@ func parseRelayMetrics(text string) (*RelaySnapshot, error) {
 	var snap RelaySnapshot
 	found := 0
 
-	for _, line := range strings.Split(text, "\n") {
+	for line := range strings.SplitSeq(text, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || line[0] == '#' {
 			continue

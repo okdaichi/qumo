@@ -207,11 +207,11 @@ func (c *Client) roundtrip(req *Request) (*Response, error) {
 // header (the SETUP response side).
 func parseInterleaved(transport string) (rtp, rtcp uint8, ok bool) {
 	const token = "interleaved="
-	idx := strings.Index(transport, token)
-	if idx < 0 {
+	_, after, ok := strings.Cut(transport, token)
+	if !ok {
 		return 0, 0, false
 	}
-	rest := transport[idx+len(token):]
+	rest := after
 	var a, b int
 	if n, err := fmt.Sscanf(rest, "%d-%d", &a, &b); err == nil && n == 2 {
 		return uint8(a), uint8(b), true

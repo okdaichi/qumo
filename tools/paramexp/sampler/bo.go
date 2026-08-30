@@ -47,10 +47,7 @@ func (s *BayesianScheduler) Next(ctx context.Context, st SchedulerState) ([]expe
 	// Round 0: broad LHS seed.
 	if s.round == 0 {
 		s.round++
-		n := s.LHSn
-		if n < 1 {
-			n = 1
-		}
+		n := max(s.LHSn, 1)
 		vectors, err := LHS{Seed: s.Seed}.Sample(st.Enc, n)
 		if err != nil {
 			return nil, "", fmt.Errorf("bo lhs seed: %w", err)
@@ -75,10 +72,7 @@ func (s *BayesianScheduler) Next(ctx context.Context, st SchedulerState) ([]expe
 	best := bestObjective(st.Observations, st.Objective)
 	acq := model.AcquisitionFor(s.Acquisition, best, s.Xi, s.Kappa)
 
-	batch := s.Batch
-	if batch < 1 {
-		batch = 1
-	}
+	batch := max(s.Batch, 1)
 
 	// Exclude already-measured vectors; SelectByAcquisition enumerates the
 	// discrete space (or random-searches continuous) and returns novel picks.

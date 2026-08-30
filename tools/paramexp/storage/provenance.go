@@ -21,7 +21,7 @@ import (
 type Run struct {
 	ID               int64     `json:"-"`
 	StartedAt        time.Time `json:"started_at"`
-	FinishedAt       time.Time `json:"finished_at,omitempty"`
+	FinishedAt       time.Time `json:"finished_at"`
 	FrameworkVersion string    `json:"framework_version"`
 	GitRevision      string    `json:"git_revision"`
 	GitDirty         bool      `json:"git_dirty"`
@@ -208,16 +208,16 @@ func readMachineDetails() (string, int) {
 }
 
 func parseProcField(cpuinfo, key string) string {
-	for _, line := range strings.Split(cpuinfo, "\n") {
-		if strings.HasPrefix(line, key+":") {
-			return strings.TrimSpace(strings.TrimPrefix(line, key+":"))
+	for line := range strings.SplitSeq(cpuinfo, "\n") {
+		if after, ok := strings.CutPrefix(line, key+":"); ok {
+			return strings.TrimSpace(after)
 		}
 	}
 	return "unknown"
 }
 
 func parseMemTotal(meminfo string) int {
-	for _, line := range strings.Split(meminfo, "\n") {
+	for line := range strings.SplitSeq(meminfo, "\n") {
 		if strings.HasPrefix(line, "MemTotal:") {
 			fields := strings.Fields(line)
 			if len(fields) >= 2 {

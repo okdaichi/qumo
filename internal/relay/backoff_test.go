@@ -24,7 +24,7 @@ func TestDialBackoff_ExponentialGrowth(t *testing.T) {
 	b := DialBackoff{Base: 100 * time.Millisecond, Max: 10 * time.Second}
 	ctx := context.Background()
 
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		before := b.attempt
 
 		// Compute the expected delay using the same formula as wait().
@@ -62,7 +62,7 @@ func TestDialBackoff_MaxCap(t *testing.T) {
 	// Verify the formula directly: with attempt=5, exp=32, delay=320ms,
 	// but cap clamps to 50ms. Then jitter adds ±25%: max possible is 62.5ms.
 	// Allow ~2× buffer for CI scheduler jitter.
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		b.attempt = 5 + i // Force a high attempt count so formula exceeds cap
 		start := time.Now()
 		ok := b.Wait(ctx)
@@ -117,7 +117,7 @@ func TestDialBackoff_JitterUniformRange(t *testing.T) {
 
 	// With attempt=0, exp=1, delay=10ms, jitter range = [7.5ms, 12.5ms].
 	// Allow 2× tolerance for CI scheduler jitter.
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		b.attempt = 0
 		start := time.Now()
 		ok := b.Wait(ctx)
@@ -154,7 +154,7 @@ func TestDialBackoff_AttemptCounter(t *testing.T) {
 	b := DialBackoff{Base: 1 * time.Millisecond, Max: 5 * time.Millisecond}
 	ctx := context.Background()
 
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		assert.Equal(t, i, b.attempt, "attempt count should be %d before wait %d", i, i)
 		b.Wait(ctx)
 	}

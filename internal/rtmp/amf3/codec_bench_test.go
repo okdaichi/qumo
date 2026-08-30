@@ -24,7 +24,7 @@ func BenchmarkReadByte(b *testing.B) {
 // associative amf3 arrays and dynamic/sealed objects.
 func BenchmarkSortedKeys(b *testing.B) {
 	m := make(map[string]int, 32)
-	for i := 0; i < 32; i++ {
+	for i := range 32 {
 		m[fmt.Sprintf("key-%02d", i)] = i
 	}
 	b.ResetTimer()

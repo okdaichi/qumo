@@ -56,7 +56,7 @@ func TestAACDepacketizer_NoPops(t *testing.T) {
 	}
 
 	var allAus []aacAccessUnit
-	for i := 0; i < frames; i++ {
+	for i := range frames {
 		payload := buildMpeg4Generic([][]byte{auFor(i)}, 13, 3)
 		// RTP timestamp advances by exactly one AAC frame (1024 samples): the
 		// stream is gap-free in clock-tick space.
@@ -193,7 +193,7 @@ func buildMpeg4Generic(aus [][]byte, sizeLength, indexLength int) []byte {
 
 // writeBits writes v's n bits, MSB-first, into data starting at bitOff.
 func writeBits(data []byte, bitOff, n int, v uint) {
-	for i := 0; i < n; i++ {
+	for i := range n {
 		bitIdx := bitOff + i
 		byteIdx := bitIdx >> 3
 		bitInByte := 7 - (bitIdx & 7)

@@ -49,8 +49,8 @@ type aacDepacketizer struct {
 // [AACConfig]. If no usable config is present it falls back to a stereo
 // 44.1 kHz AAC-LC default so the audio track is still announced.
 func parseAACConfigFromFmtp(fmtp string) *AACConfig {
-	if idx := strings.Index(fmtp, "config="); idx != -1 {
-		configHex := strings.Split(fmtp[idx+7:], ";")[0]
+	if _, after, ok := strings.Cut(fmtp, "config="); ok {
+		configHex, _, _ := strings.Cut(after, ";")
 		if asc, err := hex.DecodeString(configHex); err == nil {
 			if cfg, err := parseAudioSpecificConfig(asc); err == nil {
 				return cfg
@@ -115,7 +115,7 @@ func (d *aacDepacketizer) depacketize(payload []byte, ts uint32) ([]aacAccessUni
 	sizeBitOff := make([]int, numAUs)
 	{
 		off := 16 // bits, after the AU-headers-length field
-		for i := 0; i < numAUs; i++ {
+		for i := range numAUs {
 			sizeBitOff[i] = off
 			off += d.sizeLength
 			if i == 0 {
@@ -136,7 +136,7 @@ func (d *aacDepacketizer) depacketize(payload []byte, ts uint32) ([]aacAccessUni
 	aus := make([]aacAccessUnit, 0, numAUs)
 	basePTS := d.toMicros(ts)
 	frameDelta := aacFrameDurationMicros(d.clockRate)
-	for i := 0; i < numAUs; i++ {
+	for i := range numAUs {
 		size := int(readBits(payload, sizeBitOff[i], d.sizeLength))
 		if dataOff+size > len(payload) {
 			return nil, errShortRTPPayload
@@ -170,7 +170,7 @@ func aacFrameDurationMicros(clockRate int) int64 {
 // readBits reads n bits from data starting at the given MSB-first bit offset.
 func readBits(data []byte, bitOff, n int) uint {
 	var v uint
-	for i := 0; i < n; i++ {
+	for i := range n {
 		bitIdx := bitOff + i
 		byteIdx := bitIdx >> 3
 		if byteIdx >= len(data) {
@@ -185,7 +185,7 @@ func readBits(data []byte, bitOff, n int) uint {
 // parseMpeg4GenericFmtp splits an SDP fmtp value into a lower-cased key map.
 func parseMpeg4GenericFmtp(fmtp string) map[string]string {
 	params := make(map[string]string)
-	for _, p := range strings.Split(fmtp, ";") {
+	for p := range strings.SplitSeq(fmtp, ";") {
 		k, v, ok := strings.Cut(strings.TrimSpace(p), "=")
 		if !ok {
 			continue

@@ -208,10 +208,7 @@ func (s *Storage) AppendAttempt(a Attempt) error {
 // SaveResult stores one replicate's result rollup. r.Replicate (1-based; 0 → 1)
 // keys the row alongside experiment_id so a vector run N times yields N rows.
 func (s *Storage) SaveResult(r *experiment.Result) error {
-	replicate := r.Replicate
-	if replicate < 1 {
-		replicate = 1
-	}
+	replicate := max(r.Replicate, 1)
 	metricsJSON, _ := json.Marshal(r.Metrics)
 	_, err := s.db.Exec(
 		`INSERT OR REPLACE INTO results (experiment_id, replicate, attempt_count, metrics, duration_sec, exit_code, error, stdout, stderr, timestamp)

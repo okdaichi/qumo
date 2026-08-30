@@ -30,7 +30,7 @@ func NewExpectedImprovement(best, xi float64) Acquisition {
 		}
 		z := improvement / std
 		phi := math.Exp(-0.5*z*z) / math.Sqrt(2*math.Pi) // normal PDF
-		Phi := 0.5 * (1 + math.Erf(z/math.Sqrt2))         // normal CDF
+		Phi := 0.5 * (1 + math.Erf(z/math.Sqrt2))        // normal CDF
 		ei := improvement*Phi + std*phi
 		if ei < 0 {
 			return 0
@@ -73,7 +73,7 @@ func NewPredictiveVariance() Acquisition {
 func MaximizeAcquisition(gp *GaussianProcess, acq Acquisition, dim, n int, rng *LCG, exclude [][]float64) ([]float64, float64) {
 	var bestX []float64
 	bestVal := math.Inf(-1)
-	for i := 0; i < n; i++ {
+	for range n {
 		x := make([]float64, dim)
 		for d := range x {
 			x[d] = rng.Float64()

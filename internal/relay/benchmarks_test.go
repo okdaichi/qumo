@@ -272,9 +272,7 @@ func BenchmarkBroadcastNotify_Listen_Parallel(b *testing.B) {
 
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for {
 			select {
 			case <-stop:
@@ -283,7 +281,7 @@ func BenchmarkBroadcastNotify_Listen_Parallel(b *testing.B) {
 				n.notify()
 			}
 		}
-	}()
+	})
 
 	b.ResetTimer()
 	b.ReportAllocs()

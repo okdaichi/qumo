@@ -90,11 +90,11 @@ func SubscribeGroupSubprocess(ctx context.Context, qumoBin, relayAddr, caFile, p
 	scanner := bufio.NewScanner(strings.NewReader(output))
 	for scanner.Scan() {
 		line := scanner.Text()
-		if strings.HasPrefix(line, "  connected        : ") {
-			val := strings.TrimPrefix(line, "  connected        : ")
+		if after, ok := strings.CutPrefix(line, "  connected        : "); ok {
+			val := after
 			res.Connected, _ = strconv.Atoi(strings.TrimSpace(val)) // not actionable: default 0 on parse failure
-		} else if strings.HasPrefix(line, "  receiving        : ") {
-			val := strings.TrimPrefix(line, "  receiving        : ")
+		} else if after, ok := strings.CutPrefix(line, "  receiving        : "); ok {
+			val := after
 			res.Receiving, _ = strconv.Atoi(strings.TrimSpace(val)) // not actionable: default 0 on parse failure
 		}
 	}
@@ -111,7 +111,7 @@ func SubscribeGroupSubprocess(ctx context.Context, qumoBin, relayAddr, caFile, p
 // output and returns a SubResult with connected, receiving, and (optionally)
 // latency percentiles.
 func parseResultLine(output string) *SubResult {
-	for _, line := range strings.Split(output, "\n") {
+	for line := range strings.SplitSeq(output, "\n") {
 		line = strings.TrimSpace(line)
 		if !strings.HasPrefix(line, "RESULT ") {
 			continue
