@@ -74,8 +74,10 @@ LABEL org.opencontainers.image.title="qumo" \
       org.opencontainers.image.revision="${COMMIT}" \
       org.opencontainers.image.licenses="MIT"
 
-# Install runtime dependencies
-RUN apk --no-cache add ca-certificates tzdata wget
+# Install runtime dependencies. apk upgrade pulls patched releases of base
+# packages (e.g. OpenSSL CVE fixes) even when the floating alpine:latest base
+# digest predates the fix.
+RUN apk --no-cache upgrade && apk --no-cache add ca-certificates tzdata wget
 
 WORKDIR /app
 

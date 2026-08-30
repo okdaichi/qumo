@@ -67,7 +67,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`golang:1.27-alpine`), the Pages workflow Go pin, and the documented Go
   requirement (README, CONTRIBUTING, install docs, bench-multiproc
   instructions). CI resolves Go via `go-version-file: go.mod`, so it picks the
-  bump up automatically. No source changes required.
+  bump up automatically. No source changes required. CI's golangci-lint is
+  bumped v2.11.4 → v2.13.2 in step — v2.11.4 was built with go1.26 and refuses
+  to load a module targeting go 1.27.0.
+
+- **Docker runtime image now upgrades base packages (`docker/Dockerfile`).**
+  The runtime stage runs `apk --no-cache upgrade` before installing its
+  packages, so patched releases shipped after the floating `alpine:latest`
+  digest was cut are pulled in. Currently that picks up OpenSSL 3.5.8-r0,
+  fixing CVE-2026-14456 (QUIC server unbounded-memory DoS) that the Build
+  Image workflow's Trivy scan flags on every PR built since the CVE was
+  published.
 
 - **`go fix` modernization pass (Go 1.27 toolchain).** Runs `go fix ./...`
   across the root module and `tools/paramexp` (37 files; `magefiles` matched
