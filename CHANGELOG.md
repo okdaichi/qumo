@@ -61,6 +61,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   browser/WebTransport traffic. Only affects deployments that already set
   `CA_FILE`; relays without it are unaffected.
 
+- **Go toolchain bump: 1.26 → 1.27** (Go 1.27.0, released 2026-08-19). Updates
+  the `go` directive in all modules (`go.mod`, `magefiles/go.mod`,
+  `tools/paramexp/go.mod`, `docs/site/go.mod`), the builder image
+  (`golang:1.27-alpine`), the Pages workflow Go pin, and the documented Go
+  requirement (README, CONTRIBUTING, install docs, bench-multiproc
+  instructions). CI resolves Go via `go-version-file: go.mod`, so it picks the
+  bump up automatically. No source changes required. CI's golangci-lint is
+  bumped v2.11.4 → v2.13.2 in step — v2.11.4 was built with go1.26 and refuses
+  to load a module targeting go 1.27.0.
+
+- **Docker runtime image now upgrades base packages (`docker/Dockerfile`).**
+  The runtime stage runs `apk --no-cache upgrade` before installing its
+  packages, so patched releases shipped after the floating `alpine:latest`
+  digest was cut are pulled in. Currently that picks up OpenSSL 3.5.8-r0,
+  fixing CVE-2026-14456 (QUIC server unbounded-memory DoS) that the Build
+  Image workflow's Trivy scan flags on every PR built since the CVE was
+  published.
+
 ### Removed
 - **`ADVERTISE_ADDR`** — dropped from `internal/relay/cmd.go`, `Config`, and
   `qumo playground`. It was set into `Config.AdvertiseAddr` and logged, but

@@ -137,7 +137,7 @@ graph TD
 
 ### Requirements
 
-- **Go 1.26+** — [Download](https://golang.org/dl/) or use your package manager
+- **Go 1.27+** — [Download](https://golang.org/dl/) or use your package manager
 - **Deno** (required for `mage build`; the Go binary embeds the web UI built by Deno + Vite) — [Download](https://deno.land/)
 - **Mage** — Build automation tool
   ```bash

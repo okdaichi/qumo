@@ -43,7 +43,7 @@ mage build        # builds bin/qumo with version info
 
 Requirements for building from source:
 
-- **Go 1.26+**
+- **Go 1.27+**
 - **Deno** — the binary embeds a web UI built by Deno + Vite (`mage build`)
 - **Mage** — build automation: `go install github.com/magefile/mage@latest`
 {{< /tab >}}

@@ -70,7 +70,7 @@ ScalingEfficiency = Connected / (P × Max(P=1))
 ## Prerequisites
 
 - **Native Linux** (Ubuntu 22.04+, Debian 12+, or equivalent; x86_64)
-- **Go 1.26+** (the project Go version; check `go.mod`)
+- **Go 1.27+** (the project Go version; check `go.mod`)
 - **~/go2/go** installed (see [Install Go](#install-go) if needed)
 - Enough **process slots** for: 1 controller + 1 hub + P edges + 1 publisher
   + (P × subscriber-subprocess‑per‑edge) = 2P + ~3 concurrent OS processes
@@ -79,13 +79,13 @@ ScalingEfficiency = Connected / (P × Max(P=1))
 
 ### Install Go
 
-If Go 1.26+ is not installed at `~/go2/go`:
+If Go 1.27+ is not installed at `~/go2/go`:
 
 ```bash
-# Download Go 1.26+ for linux/amd64
-wget https://go.dev/dl/go1.26.4.linux-amd64.tar.gz
+# Download Go 1.27+ for linux/amd64
+wget https://go.dev/dl/go1.27.0.linux-amd64.tar.gz
 rm -rf ~/go2 && mkdir -p ~/go2
-tar -C ~/go2 -xzf go1.26.4.linux-amd64.tar.gz
+tar -C ~/go2 -xzf go1.27.0.linux-amd64.tar.gz
 # The binary is now at ~/go2/go/bin/go
 export PATH="$HOME/go2/go/bin:$PATH"
 ```
@@ -94,7 +94,7 @@ Verify:
 
 ```bash
 ~/go2/go/bin/go version
-# go version go1.26.4 linux/amd64
+# go version go1.27.0 linux/amd64
 ```
 
 ---
