@@ -172,12 +172,12 @@ func runSweep(args []string) int {
 		} else if args[i] == "--ref-max-p1" && i+1 < len(args) {
 			refMaxP1, _ = strconv.Atoi(args[i+1])
 			i++
-		} else if strings.HasPrefix(args[i], "--plist=") {
-			plist = parseIntList(strings.TrimPrefix(args[i], "--plist="))
-		} else if strings.HasPrefix(args[i], "--xlist=") {
-			xlist = parseIntList(strings.TrimPrefix(args[i], "--xlist="))
-		} else if strings.HasPrefix(args[i], "--ref-max-p1=") {
-			refMaxP1, _ = strconv.Atoi(strings.TrimPrefix(args[i], "--ref-max-p1="))
+		} else if after, ok := strings.CutPrefix(args[i], "--plist="); ok {
+			plist = parseIntList(after)
+		} else if after, ok := strings.CutPrefix(args[i], "--xlist="); ok {
+			xlist = parseIntList(after)
+		} else if after, ok := strings.CutPrefix(args[i], "--ref-max-p1="); ok {
+			refMaxP1, _ = strconv.Atoi(after)
 		} else {
 			filtered = append(filtered, args[i])
 		}
@@ -255,8 +255,8 @@ func runCalibrate(args []string) int {
 		if args[i] == "--xlist" && i+1 < len(args) {
 			xlist = parseIntList(args[i+1])
 			i++
-		} else if strings.HasPrefix(args[i], "--xlist=") {
-			xlist = parseIntList(strings.TrimPrefix(args[i], "--xlist="))
+		} else if after, ok := strings.CutPrefix(args[i], "--xlist="); ok {
+			xlist = parseIntList(after)
 		} else {
 			filtered = append(filtered, args[i])
 		}

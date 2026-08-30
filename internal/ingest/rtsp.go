@@ -69,11 +69,9 @@ func (s *RTSPServer) ListenAndServe(ctx context.Context) error {
 			}
 			return err
 		}
-		s.connWg.Add(1)
-		go func() {
+		s.connWg.Go(func() {
 			s.handleConn(connCtx, conn)
-			s.connWg.Done()
-		}()
+		})
 	}
 }
 
@@ -530,12 +528,12 @@ func newRTSPTrackFromMedia(sess *Session, media *rtsp.SDPMedia) *rtspTrack {
 }
 
 func extractParameterSets(fmtp string) (sps, pps [][]byte) {
-	idx := strings.Index(fmtp, "sprop-parameter-sets=")
-	if idx == -1 {
+	_, after, ok := strings.Cut(fmtp, "sprop-parameter-sets=")
+	if !ok {
 		return nil, nil
 	}
-	sets := strings.Split(strings.Split(fmtp[idx+21:], ";")[0], ",")
-	for _, s := range sets {
+	sets := strings.SplitSeq(strings.Split(after, ";")[0], ",")
+	for s := range sets {
 		b, err := base64.StdEncoding.DecodeString(s)
 		if err != nil || len(b) == 0 {
 			continue
@@ -557,11 +555,11 @@ func extractParameterSets(fmtp string) (sps, pps [][]byte) {
 // channel form "interleaved=N" maps both RTP and RTCP to N.
 func parseInterleavedChannels(transport string) (rtp, rtcp uint8, ok bool) {
 	const token = "interleaved="
-	idx := strings.Index(transport, token)
-	if idx < 0 {
+	_, after, ok := strings.Cut(transport, token)
+	if !ok {
 		return 0, 0, false
 	}
-	rest := transport[idx+len(token):]
+	rest := after
 	var a, b int
 	if n, err := fmt.Sscanf(rest, "%d-%d", &a, &b); err == nil && n == 2 {
 		if !validChannel(a) || !validChannel(b) {

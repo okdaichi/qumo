@@ -8,6 +8,7 @@ package experiment
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"sort"
 	"strconv"
@@ -60,11 +61,11 @@ func ParseParamType(s string) (ParamType, error) {
 
 // ParamDef defines one parameter dimension.
 type ParamDef struct {
-	Name   string   `yaml:"name" json:"name"`
+	Name   string    `yaml:"name" json:"name"`
 	Type   ParamType `yaml:"type" json:"type"`
-	Values []string `yaml:"values" json:"values"` // discrete/categorical levels
-	Min    float64  `yaml:"min" json:"min,omitempty"` // continuous lower bound
-	Max    float64  `yaml:"max" json:"max,omitempty"` // continuous upper bound
+	Values []string  `yaml:"values" json:"values"`     // discrete/categorical levels
+	Min    float64   `yaml:"min" json:"min,omitempty"` // continuous lower bound
+	Max    float64   `yaml:"max" json:"max,omitempty"` // continuous upper bound
 }
 
 // ParamSpace is the full parameter space.
@@ -170,9 +171,7 @@ type ParamVector map[string]string
 // Copy returns a shallow copy of the vector.
 func (v ParamVector) Copy() ParamVector {
 	out := make(ParamVector, len(v))
-	for k, val := range v {
-		out[k] = val
-	}
+	maps.Copy(out, v)
 	return out
 }
 
@@ -211,12 +210,12 @@ type MetricSet map[string]float64
 // used downstream for statistical bottleneck attribution. All fields are
 // best-effort; missing ones stay zero.
 type Telemetry struct {
-	CPUpct      float64 `json:"cpu_pct,omitempty"`
-	GCPauseMs   float64 `json:"gc_pause_ms,omitempty"`
-	Syscalls    float64 `json:"syscalls,omitempty"`
-	Retransmits float64 `json:"retransmits,omitempty"`
-	RSSmb       float64 `json:"rss_mb,omitempty"`
-	Goroutines  float64 `json:"goroutines,omitempty"`
+	CPUpct      float64        `json:"cpu_pct,omitempty"`
+	GCPauseMs   float64        `json:"gc_pause_ms,omitempty"`
+	Syscalls    float64        `json:"syscalls,omitempty"`
+	Retransmits float64        `json:"retransmits,omitempty"`
+	RSSmb       float64        `json:"rss_mb,omitempty"`
+	Goroutines  float64        `json:"goroutines,omitempty"`
 	Raw         map[string]any `json:"raw,omitempty"`
 }
 
@@ -233,17 +232,17 @@ type Experiment struct {
 
 // Result is the outcome of running one experiment (possibly after retries).
 type Result struct {
-	ExperimentID int64       `json:"experiment_id"`
-	Metrics      MetricSet   `json:"metrics"`
-	Telemetry    *Telemetry  `json:"telemetry,omitempty"`
-	Duration     float64     `json:"duration_sec"`
-	ExitCode     int         `json:"exit_code"`
-	Attempts     int         `json:"attempts"`
-	Replicate    int         `json:"replicate,omitempty"` // 1-based index when a vector is run N times
-	Error        string      `json:"error,omitempty"`
-	Stdout       string      `json:"stdout,omitempty"`
-	Stderr       string      `json:"stderr,omitempty"`
-	Timestamp    time.Time   `json:"timestamp"`
+	ExperimentID int64      `json:"experiment_id"`
+	Metrics      MetricSet  `json:"metrics"`
+	Telemetry    *Telemetry `json:"telemetry,omitempty"`
+	Duration     float64    `json:"duration_sec"`
+	ExitCode     int        `json:"exit_code"`
+	Attempts     int        `json:"attempts"`
+	Replicate    int        `json:"replicate,omitempty"` // 1-based index when a vector is run N times
+	Error        string     `json:"error,omitempty"`
+	Stdout       string     `json:"stdout,omitempty"`
+	Stderr       string     `json:"stderr,omitempty"`
+	Timestamp    time.Time  `json:"timestamp"`
 }
 
 // Observation is the analysis-oriented join of an Experiment with its Results.
@@ -251,32 +250,32 @@ type Result struct {
 // MEANS across replicates, Variances the per-metric population variance, and N
 // the replicate count; the GP fits on the means with per-point noise = Var/N.
 type Observation struct {
-	ExperimentID int64        `json:"experiment_id"`
-	Vector       ParamVector  `json:"vector"`
-	EncodedX     []float64    `json:"encoded_x"`
-	Metrics      MetricSet    `json:"metrics"`     // per-metric means across replicates
-	Variances    MetricSet    `json:"variances,omitempty"`
-	N            int          `json:"n,omitempty"`
-	Telemetry    *Telemetry   `json:"telemetry,omitempty"`
-	Duration     float64      `json:"duration_sec"`
-	ExitCode     int          `json:"exit_code"`
-	Phase        string       `json:"phase"`
-	Timestamp    time.Time    `json:"timestamp"`
+	ExperimentID int64       `json:"experiment_id"`
+	Vector       ParamVector `json:"vector"`
+	EncodedX     []float64   `json:"encoded_x"`
+	Metrics      MetricSet   `json:"metrics"` // per-metric means across replicates
+	Variances    MetricSet   `json:"variances,omitempty"`
+	N            int         `json:"n,omitempty"`
+	Telemetry    *Telemetry  `json:"telemetry,omitempty"`
+	Duration     float64     `json:"duration_sec"`
+	ExitCode     int         `json:"exit_code"`
+	Phase        string      `json:"phase"`
+	Timestamp    time.Time   `json:"timestamp"`
 }
 
 // Config is the paramexp configuration parsed from YAML.
 type Config struct {
-	Space       ParamSpace   `yaml:"space"`
-	Runner      string       `yaml:"runner"`       // benchmark command template
-	DBPath      string       `yaml:"db"`           // SQLite path (default paramexp.db)
-	Samples     int          `yaml:"samples"`      // initial sample count (default 20)
-	Adaptive    int          `yaml:"adaptive"`     // adaptive rounds (default 3)
-	Output      string       `yaml:"output"`       // report dir (default report)
-	Objective   string       `yaml:"objective"`    // metric to maximize (default throughput_fps)
-	Timeout     time.Duration `yaml:"timeout"`     // per-run timeout (default 10m)
-	MaxAttempts int          `yaml:"max_attempts"` // retry count (default 1)
-	Replicates  int          `yaml:"replicates"`   // runs per parameter vector (default 1)
-	Scheduler   string       `yaml:"scheduler"`    // "static" (default) | "bo"
+	Space       ParamSpace    `yaml:"space"`
+	Runner      string        `yaml:"runner"`       // benchmark command template
+	DBPath      string        `yaml:"db"`           // SQLite path (default paramexp.db)
+	Samples     int           `yaml:"samples"`      // initial sample count (default 20)
+	Adaptive    int           `yaml:"adaptive"`     // adaptive rounds (default 3)
+	Output      string        `yaml:"output"`       // report dir (default report)
+	Objective   string        `yaml:"objective"`    // metric to maximize (default throughput_fps)
+	Timeout     time.Duration `yaml:"timeout"`      // per-run timeout (default 10m)
+	MaxAttempts int           `yaml:"max_attempts"` // retry count (default 1)
+	Replicates  int           `yaml:"replicates"`   // runs per parameter vector (default 1)
+	Scheduler   string        `yaml:"scheduler"`    // "static" (default) | "bo"
 	// Bayesian-optimization knobs (flat keys; the line-oriented YAML parser has
 	// no nesting). Applied when Scheduler == "bo".
 	BORounds      int     `yaml:"bo_rounds"`
@@ -331,7 +330,7 @@ func ParseConfig(path string) (*Config, error) {
 func parseYAML(src string, cfg *Config) error {
 	var inParams bool
 	lastType := TypeUnspecified
-	for _, raw := range strings.Split(src, "\n") {
+	for raw := range strings.SplitSeq(src, "\n") {
 		line := strings.TrimSpace(stripComment(raw))
 		if line == "" {
 			continue

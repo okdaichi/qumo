@@ -476,8 +476,8 @@ func TestGroupRing_Fill_ConcurrentFasterThanSerial(t *testing.T) {
 					frames[j] = []byte("x")
 				}
 				src := &slowFrameSource{
-					fakeFrameSource: fakeFrameSource{frames: frames},
-					delay:           delay,
+					frames: frames,
+					delay:  delay,
 				}
 				ring.fill(src, caches[idx], nil)
 			}(i)
@@ -518,8 +518,8 @@ func TestGroupRing_Fill_WaitGroupBlocksDone(t *testing.T) {
 
 		frames := [][]byte{[]byte("a"), []byte("b"), []byte("c")}
 		src := &slowFrameSource{
-			fakeFrameSource: fakeFrameSource{frames: frames},
-			delay:           10 * time.Millisecond,
+			frames: frames,
+			delay:  10 * time.Millisecond,
 		}
 
 		done := make(chan struct{})

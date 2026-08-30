@@ -102,10 +102,7 @@ func (a *Adaptive) SampleNear(enc *experiment.Encoder, obs []experiment.Observat
 		}
 	}
 
-	topK := n
-	if topK > len(sorted) {
-		topK = len(sorted)
-	}
+	topK := min(n, len(sorted))
 	neighbors := make([]experiment.ParamVector, 0, n)
 	for i := 0; i < topK && len(neighbors) < n; i++ {
 		base := sorted[i].Vector

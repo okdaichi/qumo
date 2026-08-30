@@ -29,7 +29,6 @@ import (
 // is what the delta isolates.
 func BenchmarkTrackBufferNotify(b *testing.B) {
 	for _, n := range []int{1, 10, 100, 1000} {
-		n := n
 		b.Run(fmt.Sprintf("empty/subs=%d", n), func(b *testing.B) {
 			buf := newTestTrackBuffer()
 			chs := make([]chan struct{}, 0, n)

@@ -119,10 +119,7 @@ func (s *encSpec) decode(u float64) string {
 		if len(s.values) == 1 {
 			return s.values[0]
 		}
-		idx := int(math.Round(u * float64(len(s.values)-1)))
-		if idx < 0 {
-			idx = 0
-		}
+		idx := max(int(math.Round(u*float64(len(s.values)-1))), 0)
 		if idx >= len(s.values) {
 			idx = len(s.values) - 1
 		}

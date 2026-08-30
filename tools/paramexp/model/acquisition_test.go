@@ -14,7 +14,7 @@ func fit1D(t *testing.T) (*GaussianProcess, []float64) {
 	n := 16
 	X := make([][]float64, n)
 	y := make([]float64, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		x := float64(i) / float64(n-1) * 0.6 // cluster in [0,0.6]; 0.9 is far
 		X[i] = []float64{x}
 		y[i] = math.Sin(2 * math.Pi * x)

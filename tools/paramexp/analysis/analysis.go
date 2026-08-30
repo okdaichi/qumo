@@ -199,7 +199,7 @@ func DetectInteractions(obs []experiment.Observation, space experiment.ParamSpac
 	if totalVar == 0 {
 		return nil
 	}
-	for i := 0; i < len(params); i++ {
+	for i := range params {
 		for j := i + 1; j < len(params); j++ {
 			etaA := etaSquared(obs, params[i].Name, objective, totalMean, totalVar)
 			etaB := etaSquared(obs, params[j].Name, objective, totalMean, totalVar)
@@ -471,10 +471,7 @@ func IndistinguishableFromBest(obs []experiment.Observation, objective string) (
 		if !ok {
 			continue
 		}
-		n := o.N
-		if n < 1 {
-			n = 1
-		}
+		n := max(o.N, 1)
 		cis = append(cis, ConfigCI{
 			ExperimentID: o.ExperimentID, Vector: o.Vector,
 			Mean: mean, SE: math.Sqrt(o.Variances[objective] / float64(n)), N: n,

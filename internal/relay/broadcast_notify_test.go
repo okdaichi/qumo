@@ -98,7 +98,7 @@ func TestBroadcastNotify_MultipleNotify(t *testing.T) {
 	n.init()
 
 	const iterations = 1000
-	for i := 0; i < iterations; i++ {
+	for range iterations {
 		n.notify()
 	}
 

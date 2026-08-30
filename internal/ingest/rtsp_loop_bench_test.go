@@ -32,7 +32,7 @@ func benchStartServer(tb testing.TB) (*RTSPServer, net.Addr) {
 		<-errCh
 	})
 	var addr net.Addr
-	for i := 0; i < 200; i++ {
+	for range 200 {
 		if addr = server.Addr(); addr != nil {
 			break
 		}
@@ -84,7 +84,7 @@ func BenchmarkRTSPAnnounceLoop(b *testing.B) {
 			b.Fatal(err)
 		}
 		rc := rtsp.NewConn(c)
-		for j := 0; j < announcesPerConn; j++ {
+		for j := range announcesPerConn {
 			req := benchAnnounce(b, addr, fmt.Sprintf("/bench%d", j), j+1)
 			if err := rc.WriteRequest(req); err != nil {
 				b.Fatal(err)

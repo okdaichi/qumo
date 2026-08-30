@@ -35,8 +35,8 @@ type Hyperparameters struct {
 type Options struct {
 	Kernel       Kernel // nil → RBF{}
 	NoiseFloor   float64
-	Starts       int    // multistart random-search points; 0 → 40+8*D
-	OptBudget    int    // reserved for polish iterations
+	Starts       int // multistart random-search points; 0 → 40+8*D
+	OptBudget    int // reserved for polish iterations
 	Seed         uint64
 	LengthBounds [2]float64
 }
@@ -47,12 +47,12 @@ type GaussianProcess struct {
 	opt    Options
 	kernel Kernel
 
-	X      [][]float64
-	yMean  float64
-	yStd   float64
-	lens   []float64
-	sigF2  float64
-	noise  float64
+	X     [][]float64
+	yMean float64
+	yStd  float64
+	lens  []float64
+	sigF2 float64
+	noise float64
 
 	// measuredNoise[i] is the per-point observation variance (in standardized-y
 	// units) when the GP is fit on replicate means; nil/empty ⇒ homoscedastic.
@@ -60,7 +60,7 @@ type GaussianProcess struct {
 	measuredNoise []float64
 
 	// Cached factorization K = L Lᵀ over the training set (fit on standardized y).
-	chol *mat.Cholesky
+	chol  *mat.Cholesky
 	alpha *mat.VecDense // K⁻¹ y'
 	dim   int
 
@@ -194,10 +194,7 @@ func (g *GaussianProcess) optimizeAndFactorize(Xd [][]float64, yd []float64) err
 	D := g.dim
 	starts := g.opt.Starts
 	if starts == 0 {
-		starts = 40 + 8*D
-		if starts > 200 {
-			starts = 200
-		}
+		starts = min(40+8*D, 200)
 		if len(Xd) > 500 {
 			starts /= 2
 		}
@@ -263,7 +260,7 @@ func (g *GaussianProcess) negLogMarginalLikelihood(X [][]float64, y []float64, t
 	jitter := 1e-6 * (trace/float64(len(X)) + 1e-12)
 
 	var chol mat.Cholesky
-	for attempt := 0; attempt < 4; attempt++ {
+	for range 4 {
 		Kj := mat.NewSymDense(len(X), nil)
 		for i := range X {
 			for j := i; j < len(X); j++ {
@@ -324,7 +321,7 @@ func (g *GaussianProcess) factorize(X [][]float64, y []float64) error {
 	}
 	var chol mat.Cholesky
 	jitter := 1e-6
-	for attempt := 0; attempt < 5; attempt++ {
+	for range 5 {
 		Kj := mat.NewSymDense(n, nil)
 		for i := range X {
 			for j := i; j < n; j++ {
@@ -425,7 +422,7 @@ func medianHeuristicTheta(D int, _ []float64) []float64 {
 	for d := range D {
 		theta[d] = 0.0 // log(1)
 	}
-	theta[D] = 0.0       // σ_f²=1
+	theta[D] = 0.0 // σ_f²=1
 	theta[D+1] = math.Log(1e-3)
 	return theta
 }

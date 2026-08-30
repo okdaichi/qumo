@@ -70,7 +70,7 @@ func findCoreCount() int {
 	data, err := os.ReadFile("/proc/cpuinfo")
 	if err == nil {
 		count := 0
-		for _, line := range strings.Split(string(data), "\n") {
+		for line := range strings.SplitSeq(string(data), "\n") {
 			// Linux /proc/cpuinfo uses "processor\t: N"
 			if strings.HasPrefix(line, "processor\t") || strings.HasPrefix(line, "processor ") {
 				count++
@@ -94,10 +94,7 @@ func (top *Topology) CoreRange(n *RelayNode) string {
 	totalCores := findCoreCount()
 	relayCores := int(math.Max(float64(totalCores*6/10), float64(top.Cfg.TotalRelays())))
 	total := top.Cfg.TotalRelays()
-	cpr := relayCores / total
-	if cpr < 1 {
-		cpr = 1
-	}
+	cpr := max(relayCores/total, 1)
 	idx := n.Index + 1 // hub is 0, edges are 1..P
 	if n.IsHub {
 		idx = 0

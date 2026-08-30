@@ -94,18 +94,18 @@ func Generate(in Inputs) error {
 
 	// 6. JSON summary.
 	summary := struct {
-		Objective    string                   `json:"objective"`
-		N            int                      `json:"n_experiments"`
-		Best         []configSummary          `json:"best"`
-		Worst        []configSummary          `json:"worst"`
-		Knees        []analysis.KneePoint     `json:"knees"`
+		Objective    string                    `json:"objective"`
+		N            int                       `json:"n_experiments"`
+		Best         []configSummary           `json:"best"`
+		Worst        []configSummary           `json:"worst"`
+		Knees        []analysis.KneePoint      `json:"knees"`
 		Importance   []analysis.ImportanceRank `json:"importance"`
-		Interactions []analysis.Interaction   `json:"interactions"`
-		Sensitivity  []analysis.Sensitivity   `json:"sensitivity,omitempty"`
-		Stability    []analysis.Stability     `json:"stability,omitempty"`
-		BestConfig   analysis.ConfigCI        `json:"best_config,omitempty"`
-		Peers        []analysis.ConfigCI      `json:"indistinguishable_peers,omitempty"`
-		Suggestions  []analysis.Suggestion    `json:"suggested_next,omitempty"`
+		Interactions []analysis.Interaction    `json:"interactions"`
+		Sensitivity  []analysis.Sensitivity    `json:"sensitivity,omitempty"`
+		Stability    []analysis.Stability      `json:"stability,omitempty"`
+		BestConfig   analysis.ConfigCI         `json:"best_config"`
+		Peers        []analysis.ConfigCI       `json:"indistinguishable_peers,omitempty"`
+		Suggestions  []analysis.Suggestion     `json:"suggested_next,omitempty"`
 	}{
 		Objective:    in.Objective,
 		N:            len(in.Observations),
@@ -218,7 +218,7 @@ func levelLabels(p experiment.ParamDef, n int) []string {
 		return []string{labelAt(p, 0), labelAt(p, 0.5), labelAt(p, 1)}
 	}
 	out := make([]string, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		out[i] = labelAt(p, float64(i)/float64(n-1))
 	}
 	return out
@@ -233,10 +233,7 @@ func labelAt(p experiment.ParamDef, u float64) string {
 		if len(p.Values) == 0 {
 			return ""
 		}
-		idx := int(math.Round(u * float64(len(p.Values)-1)))
-		if idx < 0 {
-			idx = 0
-		}
+		idx := max(int(math.Round(u*float64(len(p.Values)-1))), 0)
 		if idx >= len(p.Values) {
 			idx = len(p.Values) - 1
 		}
@@ -272,7 +269,7 @@ func sensitivityToRanks(s []analysis.Sensitivity) []analysis.ImportanceRank {
 
 type configSummary struct {
 	Vector  experiment.ParamVector `json:"vector"`
-	Metrics experiment.MetricSet    `json:"metrics"`
+	Metrics experiment.MetricSet   `json:"metrics"`
 	N       int                    `json:"n,omitempty"`
 	CI      float64                `json:"ci,omitempty"` // half-width z·sqrt(var/N) of the objective mean
 }
@@ -292,10 +289,7 @@ func topConfigs(obs []experiment.Observation, objective string, n int, best bool
 	out := make([]configSummary, n)
 	for i := range n {
 		o := cp[i]
-		nr := o.N
-		if nr < 1 {
-			nr = 1
-		}
+		nr := max(o.N, 1)
 		out[i] = configSummary{
 			Vector: o.Vector, Metrics: o.Metrics, N: o.N,
 			CI: analysis.TCritical(o.N-1) * math.Sqrt(o.Variances[objective]/float64(nr)),

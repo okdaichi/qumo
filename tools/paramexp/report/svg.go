@@ -7,6 +7,7 @@ package report
 import (
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 
 	"github.com/qumo-dev/qumo/tools/paramexp/analysis"
@@ -95,8 +96,8 @@ func sweepSVG(obs []experiment.Observation, p experiment.ParamDef, objective str
 	for i, x := range xs {
 		poly = append(poly, fmt.Sprintf("%.1f,%.1f", xScale(x), yScale(means[i]-stds[i])))
 	}
-	for i := len(xs) - 1; i >= 0; i-- {
-		poly = append(poly, fmt.Sprintf("%.1f,%.1f", xScale(xs[i]), yScale(means[i]+stds[i])))
+	for i, x := range slices.Backward(xs) {
+		poly = append(poly, fmt.Sprintf("%.1f,%.1f", xScale(x), yScale(means[i]+stds[i])))
 	}
 	sb.WriteString(fmt.Sprintf(`<polygon points="%s" fill="%s" fill-opacity="0.15" stroke="none"/>`, strings.Join(poly, " "), palette[0]))
 	var d strings.Builder
@@ -221,8 +222,8 @@ func responseSurfaceSVG(xs, means, stds []float64, paramName, objective string) 
 	for i := range xs {
 		poly = append(poly, fmt.Sprintf("%.1f,%.1f", xScale(xs[i]), yScale(means[i]-2*stds[i])))
 	}
-	for i := len(xs) - 1; i >= 0; i-- {
-		poly = append(poly, fmt.Sprintf("%.1f,%.1f", xScale(xs[i]), yScale(means[i]+2*stds[i])))
+	for i, x := range slices.Backward(xs) {
+		poly = append(poly, fmt.Sprintf("%.1f,%.1f", xScale(x), yScale(means[i]+2*stds[i])))
 	}
 	sb.WriteString(fmt.Sprintf(`<polygon points="%s" fill="%s" fill-opacity="0.15"/>`, strings.Join(poly, " "), palette[0]))
 	var d strings.Builder
@@ -271,8 +272,8 @@ func contourSVG(grid [][]float64, xName, yName string, xLabels, yLabels []string
 	sb.WriteString(fmt.Sprintf(`<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d" font-family="sans-serif" font-size="10">`, totalW, totalH))
 	sb.WriteString(`<rect width="100%" height="100%" fill="white"/>`)
 	sb.WriteString(fmt.Sprintf(`<text x="%d" y="18" text-anchor="middle" font-size="14" font-weight="bold">Contour: %s × %s</text>`, totalW/2, escape(xName), escape(yName)))
-	for i := 0; i < rows; i++ {
-		for j := 0; j < cols; j++ {
+	for i := range rows {
+		for j := range cols {
 			v := grid[i][j]
 			t := (v - mn) / (mx - mn)
 			rr := int(t * 255) // red rises with value
