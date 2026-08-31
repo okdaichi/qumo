@@ -27,8 +27,8 @@ func TestMetrics_Initialization(t *testing.T) {
 	assert.Equal(t, 3.0, testutil.ToFloat64(metricGroupFillsInflight))
 
 	// Verify that counters can be incremented and read
-	metricRouteReplacements.Inc()
-	assert.Equal(t, 1.0, testutil.ToFloat64(metricRouteReplacements))
+	metricRouteReplacements.WithLabelValues("alive").Inc()
+	assert.Equal(t, 1.0, testutil.ToFloat64(metricRouteReplacements.WithLabelValues("alive")))
 
 	metricSubscriberSkipsTotal.Add(5)
 	assert.Equal(t, 5.0, testutil.ToFloat64(metricSubscriberSkipsTotal))

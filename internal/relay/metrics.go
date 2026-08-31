@@ -121,17 +121,21 @@ var (
 	)
 
 	// metricRouteReplacements counts how many times an existing broadcast route
-	// was replaced by a strictly better candidate.
-	metricRouteReplacements = promauto.NewCounter(prometheus.CounterOpts{
-		Namespace: "qumo",
-		Subsystem: "relay",
-		Name:      "route_replacements_total",
-		Help:      "Total number of relay broadcast routes replaced by a better route.",
-	})
+	// was replaced by a strictly better candidate. The reason label carries the
+	// winning dimension from compareRoutes (alive, hops, bitrate, rtt).
+	metricRouteReplacements = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "qumo",
+			Subsystem: "relay",
+			Name:      "route_replacements_total",
+			Help:      "Total number of relay broadcast routes replaced by a better route, by winning dimension.",
+		},
+		[]string{"reason"},
+	)
 
 	// metricRouteRejections counts route candidates that were rejected because
 	// they were not better than the existing route. The reason label carries the
-	// specific rejection cause from isBetterRoute.
+	// specific rejection cause from compareRoutes.
 	metricRouteRejections = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "qumo",

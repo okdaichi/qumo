@@ -34,8 +34,7 @@ func electAndInstall(s *Server, h *relayHandler) {
 	defer s.routeMu.Unlock()
 	if _, existing := s.TrackMux.TrackHandler(h.announcement.BroadcastPath()); existing != nil {
 		if rr, ok := existing.(RouteReporter); ok {
-			better, _ := isBetterRoute(h.RouteStats(), rr.RouteStats())
-			if !better {
+			if !compareRoutes(h.RouteStats(), rr.RouteStats()).accepted() {
 				s.retainRouteLocked(h)
 				return
 			}
@@ -131,8 +130,7 @@ func electAndInstallFanout(s *Server, h *relayHandler, subs []chan struct{}) {
 	defer s.routeMu.Unlock()
 	if _, existing := s.TrackMux.TrackHandler(h.announcement.BroadcastPath()); existing != nil {
 		if rr, ok := existing.(RouteReporter); ok {
-			better, _ := isBetterRoute(h.RouteStats(), rr.RouteStats())
-			if !better {
+			if !compareRoutes(h.RouteStats(), rr.RouteStats()).accepted() {
 				s.retainRouteLocked(h)
 				return
 			}

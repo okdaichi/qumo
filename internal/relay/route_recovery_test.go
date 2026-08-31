@@ -80,13 +80,13 @@ func TestRouteRecovery_PromotesRetainedAlternate(t *testing.T) {
 }
 
 // TestRouteRecovery_RetainsBestAlternate verifies that retention keeps the
-// BEST alternate per path (by isBetterRoute), not merely the latest rejected
+// BEST alternate per path (by compareRoutes), not merely the latest rejected
 // candidate — so promotion can never install a strictly worse route than one
 // the relay had already accepted and then discarded.
 func TestRouteRecovery_RetainsBestAlternate(t *testing.T) {
 	t.Run("tie keeps the previous alternate", func(t *testing.T) {
 		// Two handlers with identical RouteStats (same Hops/bitrate/RTT) —
-		// isBetterRoute returns false on a tie, so the previous is kept.
+		// compareRoutes returns false on a tie, so the previous is kept.
 		s := newRecoveryServer()
 		ctx := context.Background()
 		path := "/live/recovery-tie"
@@ -105,7 +105,7 @@ func TestRouteRecovery_RetainsBestAlternate(t *testing.T) {
 	})
 
 	t.Run("a live alternate replaces a dead one", func(t *testing.T) {
-		// isBetterRoute(live, dead) is true, so a live alternate displaces a
+		// compareRoutes(live, dead) is true, so a live alternate displaces a
 		// dead retained one.
 		s := newRecoveryServer()
 		ctx := context.Background()

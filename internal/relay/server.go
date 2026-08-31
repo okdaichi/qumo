@@ -508,9 +508,22 @@ func (s *Server) serveSession(sess *moqt.Session, requireAuth bool) {
 		rejected := false
 		if _, existing := s.TrackMux.TrackHandler(ann.BroadcastPath()); existing != nil {
 			if rr, ok := existing.(RouteReporter); ok {
-				better, reason := isBetterRoute(handler.RouteStats(), rr.RouteStats())
-				if !better {
-					metricRouteRejections.WithLabelValues(string(reason)).Inc()
+				candidateStats := handler.RouteStats()
+				currentStats := rr.RouteStats()
+				decision := compareRoutes(candidateStats, currentStats)
+				if !decision.accepted() {
+					metricRouteRejections.WithLabelValues(decision.String()).Inc()
+					slog.Debug("relay: route rejected",
+						"node", s.Config.NodeID,
+						"broadcast_path", ann.BroadcastPath(),
+						"reason", decision.String(),
+						"current_hops", currentStats.Hops,
+						"current_rtt_ms", currentStats.RTT.Milliseconds(),
+						"current_bitrate_bps", currentStats.EstimatedBitrate,
+						"candidate_hops", candidateStats.Hops,
+						"candidate_rtt_ms", candidateStats.RTT.Milliseconds(),
+						"candidate_bitrate_bps", candidateStats.EstimatedBitrate,
+					)
 					// Retain as an alternate instead of discarding: if the active
 					// route's announcement later ends (e.g. the publisher moved and
 					// the incumbent publication is retracted shortly after this one
@@ -519,7 +532,18 @@ func (s *Server) serveSession(sess *moqt.Session, requireAuth bool) {
 					s.retainRouteLocked(handler)
 					rejected = true
 				} else {
-					metricRouteReplacements.Inc()
+					metricRouteReplacements.WithLabelValues(decision.String()).Inc()
+					slog.Info("relay: route replaced",
+						"node", s.Config.NodeID,
+						"broadcast_path", ann.BroadcastPath(),
+						"reason", decision.String(),
+						"displaced_hops", currentStats.Hops,
+						"displaced_rtt_ms", currentStats.RTT.Milliseconds(),
+						"displaced_bitrate_bps", currentStats.EstimatedBitrate,
+						"candidate_hops", candidateStats.Hops,
+						"candidate_rtt_ms", candidateStats.RTT.Milliseconds(),
+						"candidate_bitrate_bps", candidateStats.EstimatedBitrate,
+					)
 					// Gracefully drain the displaced handler.
 					if dr, ok := existing.(Drainable); ok {
 						dr.Drain(DrainTimeout)
@@ -528,6 +552,13 @@ func (s *Server) serveSession(sess *moqt.Session, requireAuth bool) {
 			}
 		}
 		if !rejected {
+			slog.Info("relay: route accepted (new broadcast)",
+				"node", s.Config.NodeID,
+				"broadcast_path", ann.BroadcastPath(),
+				"hops", handler.RouteStats().Hops,
+				"rtt_ms", handler.RouteStats().RTT.Milliseconds(),
+				"bitrate_bps", handler.RouteStats().EstimatedBitrate,
+			)
 			s.installRoute(handler)
 		}
 		s.routeMu.Unlock()
@@ -589,7 +620,7 @@ type alternate struct {
 
 // retainRoute keeps a route-election loser alive as the alternate for its
 // broadcast path instead of cancelling it. At most one alternate per path is
-// retained, and it is the BEST seen (by isBetterRoute), not merely the latest.
+// retained, and it is the BEST seen (by compareRoutes), not merely the latest.
 // Promotion only ever fires on a definitive announcement-end, so this
 // introduces no route oscillation. Public wrapper; callers already holding
 // routeMu (serveSession's election) use retainRouteLocked.
@@ -617,7 +648,7 @@ func (s *Server) retainRouteLocked(h *relayHandler) {
 	// one replaces the old — so promotion can never install a strictly worse
 	// route than one the relay had already accepted and discarded.
 	if prev := s.alternates[path]; prev != nil {
-		if better, _ := isBetterRoute(h.RouteStats(), prev.handler.RouteStats()); !better {
+		if !compareRoutes(h.RouteStats(), prev.handler.RouteStats()).accepted() {
 			h.cancel()
 			return
 		}

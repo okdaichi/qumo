@@ -582,10 +582,10 @@ func TestTrackDistributor_ProcessGroup_CtxCancelUnblocks(t *testing.T) {
 }
 
 // ============================================================================
-// isBetterRoute Tests
+// compareRoutes Tests
 // ============================================================================
 
-func TestIsBetterRoute(t *testing.T) {
+func TestCompareRoutes(t *testing.T) {
 	type testCase struct {
 		candidate RouteStats
 		current   RouteStats
@@ -608,20 +608,39 @@ func TestIsBetterRoute(t *testing.T) {
 			want:      true,
 		},
 		"equal hops and bitrate: lower RTT wins": {
-			candidate: RouteStats{Alive: true, Hops: 2, EstimatedBitrate: 5_000_000, RTT: 20},
-			current:   RouteStats{Alive: true, Hops: 2, EstimatedBitrate: 5_000_000, RTT: 50},
+			candidate: RouteStats{Alive: true, Hops: 2, EstimatedBitrate: 5_000_000, RTT: 20 * time.Millisecond},
+			current:   RouteStats{Alive: true, Hops: 2, EstimatedBitrate: 5_000_000, RTT: 50 * time.Millisecond},
 			want:      true,
 		},
 		"equal hops: higher RTT loses": {
-			candidate: RouteStats{Alive: true, Hops: 2, RTT: 80},
-			current:   RouteStats{Alive: true, Hops: 2, RTT: 50},
+			candidate: RouteStats{Alive: true, Hops: 2, RTT: 80 * time.Millisecond},
+			current:   RouteStats{Alive: true, Hops: 2, RTT: 50 * time.Millisecond},
 			want:      false,
 		},
 		"equal hops: zero bitrate/RTT keeps existing route": {
 			candidate: RouteStats{Alive: true, Hops: 2},
-			current:   RouteStats{Alive: true, Hops: 2, EstimatedBitrate: 5_000_000, RTT: 50},
+			current:   RouteStats{Alive: true, Hops: 2, EstimatedBitrate: 5_000_000, RTT: 50 * time.Millisecond},
 			want:      false,
 		},
+			// Hysteresis: 5.5Mbps vs 5Mbps = 10% improvement, below 20% margin.
+			"equal hops: small bitrate improvement keeps current (hysteresis)": {
+				candidate: RouteStats{Alive: true, Hops: 2, EstimatedBitrate: 5_500_000},
+				current:   RouteStats{Alive: true, Hops: 2, EstimatedBitrate: 5_000_000},
+				want:      false,
+			},
+			// Hysteresis: 2ms RTT improvement is below 5ms absolute threshold.
+			"equal hops: tiny RTT improvement keeps current (hysteresis)": {
+				candidate: RouteStats{Alive: true, Hops: 2, RTT: 48 * time.Millisecond},
+				current:   RouteStats{Alive: true, Hops: 2, RTT: 50 * time.Millisecond},
+				want:      false,
+			},
+			// Hysteresis: 6ms RTT improvement clears absolute threshold but 44/50=0.88 > 0.8.
+			"equal hops: small relative RTT improvement keeps current (hysteresis)": {
+				candidate: RouteStats{Alive: true, Hops: 2, RTT: 44 * time.Millisecond},
+				current:   RouteStats{Alive: true, Hops: 2, RTT: 50 * time.Millisecond},
+				want:      false,
+			},
+
 		// Alive dominates all quality metrics.
 		"alive candidate beats dead current regardless of hops": {
 			candidate: RouteStats{Alive: true, Hops: 5},
@@ -647,7 +666,7 @@ func TestIsBetterRoute(t *testing.T) {
 
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
-			got, _ := isBetterRoute(tt.candidate, tt.current)
+			got := compareRoutes(tt.candidate, tt.current).accepted()
 			assert.Equal(t, tt.want, got)
 		})
 	}
