@@ -107,7 +107,7 @@ func (l *rcvbufListener) Accept(ctx context.Context) (transport.StreamConn, erro
 	return &rcvbufConn{Conn: conn}, nil
 }
 
-func (l *rcvbufListener) Close() error  { return l.ln.Close() }
+func (l *rcvbufListener) Close() error   { return l.ln.Close() }
 func (l *rcvbufListener) Addr() net.Addr { return l.ln.Addr() }
 
 // ---- connection wrapper ----

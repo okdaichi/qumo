@@ -38,7 +38,7 @@ import (
 
 const (
 	stressFrameSize = 1200
-	stressDuration  = 2 * time.Second // short enough to fit CI's 5m integration budget
+	stressDuration  = 2 * time.Second      // short enough to fit CI's 5m integration budget
 	sustainableGap  = 2 * time.Millisecond // lowest rate; asserted ~loss-free
 
 	// stressLossTolerancePct is the frame-loss fraction the availability gates
@@ -104,7 +104,7 @@ func TestRelayChain_Stress(t *testing.T) {
 			nominalFps := int(1 / gap.Seconds())
 			recordBench(t, benchResult{
 				Bench: "Stress", Group: "stress", Rate: fmt.Sprintf("%dfps", nominalFps),
-				Config: fmt.Sprintf("gap=%s", gap),
+				Config:   fmt.Sprintf("gap=%s", gap),
 				MedianMs: med.Seconds() * 1000, P99Ms: p99.Seconds() * 1000,
 				LossPct: lossPct, Fps: fps, Mbps: mbps, HeapMB: float64(heapGrowth) / (1024 * 1024),
 			})
@@ -344,7 +344,10 @@ func stressFanoutRun(tb testing.TB, parent context.Context, pool *x509.CertPool,
 	runtime.ReadMemStats(&memBefore)
 
 	// K subscribers, one per leaf, reading concurrently.
-	type leafResult struct{ recv int; lats []time.Duration }
+	type leafResult struct {
+		recv int
+		lats []time.Duration
+	}
 	k := len(leaves)
 	results := make([]leafResult, k)
 	var wg sync.WaitGroup

@@ -25,8 +25,8 @@ type CellResult struct {
 	StopReasons    string  `json:"stop_reasons"`
 	WallDuration   string  `json:"wall_s"`
 
-	Hub    *RelayMetrics   `json:"hub"`
-	Edges  []*RelayMetrics `json:"edges"`
+	Hub   *RelayMetrics   `json:"hub"`
+	Edges []*RelayMetrics `json:"edges"`
 
 	// E2E latency percentiles (publisher→subscriber, milliseconds), populated
 	// when --latency-probe is enabled during the run. Measured from the

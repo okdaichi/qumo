@@ -41,7 +41,7 @@ func TestRoundTrip(t *testing.T) {
 	}))
 	res := &experiment.Result{
 		ExperimentID: exp.ID, Metrics: experiment.MetricSet{"throughput_fps": 100},
-		Duration:     0.5, ExitCode: 0, Attempts: 1, Timestamp: time.Now(),
+		Duration: 0.5, ExitCode: 0, Attempts: 1, Timestamp: time.Now(),
 	}
 	require.NoError(t, s.SaveResult(res))
 	require.NoError(t, s.SaveTelemetry(exp.ID, &experiment.Telemetry{CPUpct: 50, RSSmb: 128}))
