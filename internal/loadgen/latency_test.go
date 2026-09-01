@@ -28,7 +28,7 @@ func TestLatencyHist_Percentile(t *testing.T) {
 			want: 50 * time.Millisecond,
 		},
 		"overflow caps at 1s": {observe: []time.Duration{5 * time.Second}, p: 99, want: 1000 * time.Millisecond},
-		"negative dropped":       {observe: []time.Duration{-1 * time.Second}, p: 50, want: 0},
+		"negative dropped":    {observe: []time.Duration{-1 * time.Second}, p: 50, want: 0},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {

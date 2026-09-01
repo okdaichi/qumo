@@ -55,14 +55,14 @@ type StageReport struct {
 	// is busy per group). BroadcastDur is broadcast() wall time; FillSemWait is
 	// the time processGroup blocks acquiring a fill-worker slot (ingest
 	// backpressure). MaxConcurrentGroups/Deliveries are peak overlap gauges.
-	RingFill      StageSnapshot
-	RingWake      StageSnapshot
-	RingBehind    StageSnapshot
-	RingWoken     StageSnapshot
-	DeliverSpan   StageSnapshot
-	BroadcastDur  StageSnapshot
-	FillSemWait   StageSnapshot
-	BroadcastN    int64
+	RingFill                StageSnapshot
+	RingWake                StageSnapshot
+	RingBehind              StageSnapshot
+	RingWoken               StageSnapshot
+	DeliverSpan             StageSnapshot
+	BroadcastDur            StageSnapshot
+	FillSemWait             StageSnapshot
+	BroadcastN              int64
 	MaxConcurrentGroups     int64
 	MaxConcurrentDeliveries int64
 	// GroupInterArrival is the spacing between consecutive group reserves

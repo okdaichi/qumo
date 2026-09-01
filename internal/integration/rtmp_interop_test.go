@@ -21,9 +21,9 @@ import (
 	"time"
 
 	"github.com/qumo-dev/gomoqt/moqt"
-	"github.com/stretchr/testify/require"
 	"github.com/qumo-dev/qumo/internal/ffpub"
 	"github.com/qumo-dev/qumo/internal/ingest"
+	"github.com/stretchr/testify/require"
 )
 
 // TestRTMPInterop_Matrix drives ffmpeg as an RTMP publisher through a matrix of
@@ -167,7 +167,7 @@ func setupRTMPPipeline(t *testing.T, mux *moqt.TrackMux) (rtmpAddr, serveURL str
 	// from the shared TrackMux. Mirrors ingest.RunRTMP exactly.
 	certFile, keyFile := createTempCert(t)
 	wtHandler := &moqt.WebTransportHandler{
-		TrackMux: mux,
+		TrackMux:    mux,
 		CheckOrigin: func(*http.Request) bool { return true }, // test-only permissive
 		Handler: moqt.HandleFunc(func(sess *moqt.Session) {
 			defer sess.CloseWithError(moqt.NoError, moqt.NoError.String())

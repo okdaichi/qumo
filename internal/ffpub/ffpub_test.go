@@ -14,10 +14,10 @@ import (
 
 func baseCfg(url string) Config {
 	return Config{
-		URL:      url,
-		GOP:      30,
-		Width:    1280,
-		Height:   720,
+		URL:       url,
+		GOP:       30,
+		Width:     1280,
+		Height:    720,
 		Framerate: 30,
 	}
 }

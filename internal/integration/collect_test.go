@@ -17,8 +17,8 @@ const defaultGroupTimeout = 5 * time.Second
 // to be well-behaved. A malformed/buggy relay could otherwise grow memory
 // without bound (a giant catalog) or loop forever (a stream of tiny frames).
 const (
-	maxCatalogBytes    = 1 << 20 // 1 MiB; a real MSF catalog is a few KiB.
-	maxFramesPerTrack  = 1_000_000
+	maxCatalogBytes   = 1 << 20 // 1 MiB; a real MSF catalog is a few KiB.
+	maxFramesPerTrack = 1_000_000
 )
 
 // Collector subscribes to a broadcast over MoQT, drains its catalog and media
