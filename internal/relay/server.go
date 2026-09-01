@@ -552,12 +552,13 @@ func (s *Server) serveSession(sess *moqt.Session, requireAuth bool) {
 			}
 		}
 		if !rejected {
+			acceptStats := handler.RouteStats()
 			slog.Info("relay: route accepted (new broadcast)",
 				"node", s.Config.NodeID,
 				"broadcast_path", ann.BroadcastPath(),
-				"hops", handler.RouteStats().Hops,
-				"rtt_ms", handler.RouteStats().RTT.Milliseconds(),
-				"bitrate_bps", handler.RouteStats().EstimatedBitrate,
+				"hops", acceptStats.Hops,
+				"rtt_ms", acceptStats.RTT.Milliseconds(),
+				"bitrate_bps", acceptStats.EstimatedBitrate,
 			)
 			s.installRoute(handler)
 		}

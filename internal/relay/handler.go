@@ -125,6 +125,9 @@ type routeDecision int
 
 const (
 	// Accept decisions: candidate is better.
+	// WARNING: accepted() (line 143) relies on all accept values preceding all
+	// reject values in this iota block. Insert new values above the divider,
+	// never between accept and reject.
 	decisionAcceptAlive   routeDecision = iota // candidate is alive while current is dead
 	decisionAcceptHops                         // candidate has fewer hops
 	decisionAcceptBitrate                      // candidate has significantly higher bitrate
@@ -136,7 +139,9 @@ const (
 	decisionRejectInferiorBitrate    // candidate has lower bitrate
 	decisionRejectInferiorRTT        // candidate has higher or equal RTT
 	decisionRejectEqualOrUnknown     // RTT unknown (0) for one or both routes
-	decisionRejectInsufficientMargin // candidate is better but not by enough margin (hysteresis)
+
+	decisionRejectInsufficientBitrateMargin // candidate has higher bitrate but not by enough margin
+	decisionRejectInsufficientRTTMargin     // candidate has lower RTT but not by enough margin
 )
 
 // accepted reports whether this decision means the candidate route is better.
@@ -163,8 +168,10 @@ func (d routeDecision) String() string {
 		return "inferior_rtt"
 	case decisionRejectEqualOrUnknown:
 		return "equal_or_unknown"
-	case decisionRejectInsufficientMargin:
-		return "insufficient_margin"
+	case decisionRejectInsufficientBitrateMargin:
+		return "insufficient_bitrate_margin"
+	case decisionRejectInsufficientRTTMargin:
+		return "insufficient_rtt_margin"
 	default:
 		return "unknown"
 	}
@@ -226,7 +233,7 @@ func compareRoutes(candidate, current RouteStats) routeDecision {
 			return decisionAcceptBitrate
 		}
 		if candidate.EstimatedBitrate > current.EstimatedBitrate {
-			return decisionRejectInsufficientMargin
+			return decisionRejectInsufficientBitrateMargin
 		}
 		return decisionRejectInferiorBitrate
 	}
@@ -239,11 +246,11 @@ func compareRoutes(candidate, current RouteStats) routeDecision {
 	absImprovement := current.RTT - candidate.RTT
 	relImprovement := float64(candidate.RTT) / float64(current.RTT)
 
-	if candidateBetter && absImprovement >= routeRTTMarginAbsolute && relImprovement <= routeRTTMarginRelative {
+	if candidateBetter && (absImprovement >= routeRTTMarginAbsolute || relImprovement <= routeRTTMarginRelative) {
 		return decisionAcceptRTT
 	}
 	if candidateBetter {
-		return decisionRejectInsufficientMargin
+		return decisionRejectInsufficientRTTMargin
 	}
 	return decisionRejectInferiorRTT
 }

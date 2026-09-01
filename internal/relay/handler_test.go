@@ -634,11 +634,19 @@ func TestCompareRoutes(t *testing.T) {
 				current:   RouteStats{Alive: true, Hops: 2, RTT: 50 * time.Millisecond},
 				want:      false,
 			},
-			// Hysteresis: 6ms RTT improvement clears absolute threshold but 44/50=0.88 > 0.8.
-			"equal hops: small relative RTT improvement keeps current (hysteresis)": {
+			// Hysteresis: 6ms RTT improvement clears absolute threshold (OR gate) even
+			// though 44/50=0.88 does not clear the 0.8 relative threshold.
+			"equal hops: absolute RTT improvement wins with OR gate": {
 				candidate: RouteStats{Alive: true, Hops: 2, RTT: 44 * time.Millisecond},
 				current:   RouteStats{Alive: true, Hops: 2, RTT: 50 * time.Millisecond},
-				want:      false,
+				want:      true,
+			},
+			// Hysteresis: 105ms→100ms clears absolute (5ms) but not relative (4.8%).
+			// OR gate still accepts because the absolute threshold is met.
+			"equal hops: high-RTT route with small absolute improvement wins via OR gate": {
+				candidate: RouteStats{Alive: true, Hops: 2, RTT: 100 * time.Millisecond},
+				current:   RouteStats{Alive: true, Hops: 2, RTT: 105 * time.Millisecond},
+				want:      true,
 			},
 
 		// Alive dominates all quality metrics.
