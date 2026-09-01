@@ -506,9 +506,9 @@ func (s *Server) serveSession(sess *moqt.Session, requireAuth bool) {
 		// never clobber a freshly-elected route, nor vice versa.
 		s.routeMu.Lock()
 		rejected := false
+		candidateStats := handler.RouteStats()
 		if _, existing := s.TrackMux.TrackHandler(ann.BroadcastPath()); existing != nil {
 			if rr, ok := existing.(RouteReporter); ok {
-				candidateStats := handler.RouteStats()
 				currentStats := rr.RouteStats()
 				decision := compareRoutes(candidateStats, currentStats)
 				if !decision.accepted() {
@@ -552,13 +552,12 @@ func (s *Server) serveSession(sess *moqt.Session, requireAuth bool) {
 			}
 		}
 		if !rejected {
-			acceptStats := handler.RouteStats()
 			slog.Info("relay: route accepted (new broadcast)",
-				"node", s.Config.NodeID,
-				"broadcast_path", ann.BroadcastPath(),
-				"hops", acceptStats.Hops,
-				"rtt_ms", acceptStats.RTT.Milliseconds(),
-				"bitrate_bps", acceptStats.EstimatedBitrate,
+			"node", s.Config.NodeID,
+			"broadcast_path", ann.BroadcastPath(),
+			"hops", candidateStats.Hops,
+			"rtt_ms", candidateStats.RTT.Milliseconds(),
+			"bitrate_bps", candidateStats.EstimatedBitrate,
 			)
 			s.installRoute(handler)
 		}
