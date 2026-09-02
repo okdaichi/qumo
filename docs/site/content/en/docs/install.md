@@ -19,11 +19,11 @@ go install github.com/qumo-dev/qumo@latest
 Download the latest archive from [GitHub Releases](https://github.com/qumo-dev/qumo/releases):
 
 ```bash
-# Linux/macOS
-curl -L https://github.com/qumo-dev/qumo/releases/latest/download/qumo_0.4.0_linux_amd64.tar.gz | tar xz
+# Linux/macOS (replace 0.5.0 with the latest version from the releases page)
+curl -L https://github.com/qumo-dev/qumo/releases/download/v0.5.0/qumo_0.5.0_linux_amd64.tar.gz | tar xz
 ./qumo playground      # one-command demo: relay + web UI at http://127.0.0.1:8080
 
-# Windows: download qumo_0.4.0_windows_amd64.zip from the releases page
+# Windows: download qumo_0.5.0_windows_amd64.zip from the releases page
 ```
 {{< /tab >}}
 

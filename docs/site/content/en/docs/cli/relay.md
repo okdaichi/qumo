@@ -20,8 +20,8 @@ qumo relay [flags]
 ## Example
 
 It needs a TLS certificate to bind at all — `CERT_FILE`/`KEY_FILE`, default
-`certs/server.crt`/`certs/server.key` — or it fails immediately with a
-"failed to load X509 key pair" error.
+`certs/server.crt`/`certs/server.key` — or it fails at startup with a
+"failed to setup TLS" error.
 
 ```console
 $ RELAY_ADDR=127.0.0.1:4443 RELAY_NAME=relay-1 qumo relay

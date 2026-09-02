@@ -29,6 +29,11 @@ GC target (garbage collector)
     GOMEMLIMIT  = (unset)
   Effective:    100%  (source: runtime default)
   Why:          neither GOGC nor RELAY_GOGC is set; the relay leaves the runtime default (100) in place. Set RELAY_GOGC on high-fan-out hosts to lift the session ceiling.
+  Guidance:     A fan-out relay's goroutine stacks dominate RSS, so GC-scan CPU
+                grows with session count and becomes the ceiling. On big-memory
+                hosts pushing >15K sessions, set RELAY_GOGC (600–1600 reached
+                ~18–20K on an 8-core host). GOGC always overrides. Do not set
+                GOMEMLIMIT for this workload.
 ```
 
 Because it only reads the environment, you can check what a setting would
@@ -43,9 +48,11 @@ $ RELAY_GOGC=800 qumo doctor
 
 ## Configuration
 
-Takes no configuration of its own — it *inspects* the relay's, currently the
-effective GC target (which of `GOGC`, `RELAY_GOGC`, and `GOMEMLIMIT` won, and
-why), with guidance for high-fan-out deployments.
+Takes no configuration of its own — it *inspects* the relay's: the effective GC
+target (which of `GOGC` and `RELAY_GOGC` won, or the runtime default, and why),
+plus guidance for high-fan-out deployments. `GOMEMLIMIT` is shown as an input
+and warned about when set, but is deliberately not a candidate — capping memory
+forces constant GC and collapses the relay's throughput.
 
 ## See also
 

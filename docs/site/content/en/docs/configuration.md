@@ -34,7 +34,7 @@ qumo relay --role hub    # or "edge"; omit for a standalone / flat relay
 
 | Variable | Default | Description |
 |---|---|---|
-| `RELAY_NAME` | hostname | Human-readable node identifier. |
+| `RELAY_NAME` | `relay-<hostname>` | Human-readable node identifier. |
 
 ## Static peers
 
