@@ -8,6 +8,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`qumo update` self-update command (`internal/update`)** — downloads and
+  replaces the running binary with the latest release from GitHub (`qumo-dev/qumo`),
+  verifying SHA-256 checksums against GoReleaser's `checksums.txt`.
+  - Supports `--check` for dry-run checks without modifying the binary.
+  - Automatically identifies system architecture and OS (`tar.gz` for Linux/macOS,
+    `.zip` for Windows).
+  - Handles version comparison supporting SemVer and SemCalVer (`v[major].[minor].[YYMMDD]`).
+  - Gracefully skips development builds (`version="dev"`).
+  - Uses only Go standard library with zero new dependencies.
+
+  **Usage Examples:**
+  ```bash
+  # Check if a new release is available (dry-run)
+  $ qumo update --check
+  qumo v1.0.260903 is available (current: v1.0.260902)
+
+  # Check when already on the latest version
+  $ qumo update --check
+  qumo v1.0.260903 is already up to date
+
+  # Apply update to the latest release
+  $ qumo update
+  qumo: updating v1.0.260902 → v1.0.260903 ...
+  qumo: updated to v1.0.260903
+
+  # Running in local development builds
+  $ qumo update
+  qumo: dev build — skipping update check
+  ```
+
 - **`qumo hls` HLS/DASH egress subcommand (`internal/hls`)** — feeds a MoQ track
   from a relay into qumo-ledger and serves the ledger's HLS playlist and DASH
   MPD over HTTP. Packaging happens at the subscriber (`internal/cmaf`): each MoQ
