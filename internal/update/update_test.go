@@ -131,6 +131,8 @@ func TestParseSemver(t *testing.T) {
 		wantErr bool
 	}{
 		{"v1.2.3", semver{1, 2, 3, ""}, false},
+		{"v1.0.260903", semver{1, 0, 260903, ""}, false},
+		{"v1.0.260903-rc.1", semver{1, 0, 260903, "rc.1"}, false},
 		{"v0.5.0-rc.1", semver{0, 5, 0, "rc.1"}, false},
 		{"0.1.0", semver{0, 1, 0, ""}, false},
 		{"bad", semver{}, true},
@@ -160,6 +162,9 @@ func TestSemverGreaterThan(t *testing.T) {
 		{"v1.0.0", "v1.0.0-rc.1", true},   // release > pre-release
 		{"v1.0.0-rc.1", "v1.0.0", false},   // pre-release < release
 		{"v1.0.0-rc.2", "v1.0.0-rc.1", true},
+		{"v1.0.260903", "v1.0.260902", true},
+		{"v1.0.260902", "v1.0.260903", false},
+		{"v1.0.260903", "v1.0.260903-rc.1", true},
 		{"v2.0.0", "v1.99.99", true},
 	}
 	for _, tt := range tests {

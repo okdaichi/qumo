@@ -6,8 +6,9 @@ import (
 	"strings"
 )
 
-// semver is a minimal semver representation sufficient for comparing
-// release versions produced by GoReleaser (e.g. "v1.2.3", "v0.5.0-rc.1").
+// semver is a minimal semver/SemCalVer representation sufficient for comparing
+// release versions produced by GoReleaser (e.g. "v1.2.3", "v0.5.0-rc.1",
+// or SemCalVer "v1.0.260903").
 type semver struct {
 	major, minor, patch int
 	pre                 string // pre-release suffix (empty for stable)
