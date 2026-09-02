@@ -7,7 +7,9 @@ import "embed"
 // paths are relative to the .go file and cannot traverse with ".."; the
 // playground/dist tree is only reachable from the repo root. The dist directory
 // is populated by `mage webbuild` (Vite); a placeholder index.html is committed
-// so the embed always matches even on a fresh clone.
+// so the embed always matches even on a fresh clone. `qumo playground` detects
+// that placeholder at runtime (see internal/playground verifyAssets) and warns +
+// serves an explanatory page instead of the broken UI.
 //
 //go:embed all:playground/dist
 var playgroundAssets embed.FS

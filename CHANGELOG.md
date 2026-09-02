@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`qumo playground` placeholder-dist detection (`internal/playground`)** —
+  binaries built via `go install` embed the committed placeholder
+  `playground/dist` (no Vite bundles), which previously white-screened the
+  browser with an opaque module MIME-type error (#376). The playground command
+  now detects the missing bundles at startup, logs a warning with rebuild
+  instructions (`mage webbuild`), and serves an explanatory error page in place
+  of the broken UI. The relay and `/config` continue to work.
+
 ## [v0.6.260903] - 2026-09-03
 
 ### Added

@@ -58,6 +58,16 @@ func Run(ctx context.Context, o Options) error {
 		o.RelayAddr = defaultRelayAddr
 	}
 
+	// Binaries built without `mage webbuild` embed the committed placeholder
+	// dist (no Vite bundles), which white-screens the browser tab with an
+	// opaque MIME error (#376). The relay still works, so continue in degraded
+	// mode but say so up front — the server additionally serves an explanatory
+	// error page in place of the UI.
+	if err := verifyAssets(o.Assets); err != nil {
+		slog.Warn("playground web UI is not bundled; the browser will show an error page",
+			"err", err)
+	}
+
 	// 1. Ensure a dev cert whose hash the browser will pin and whose files the
 	//    relay will load. The cert is minted for localhost/loopback; that's fine
 	//    for a public host too, because WebTransport's serverCertificateHashes
