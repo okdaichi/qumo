@@ -13,11 +13,11 @@ func TestChunkBasicHeader_EncodeDecode(t *testing.T) {
 		fmt  uint8
 		csid chunkStreamID
 	}{
-		"1 byte: csid 2":    {fmt: 0, csid: 2},
-		"1 byte: csid 63":   {fmt: 1, csid: 63},
-		"2 bytes: csid 64":  {fmt: 2, csid: 64},
-		"2 bytes: csid 319": {fmt: 3, csid: 319},
-		"3 bytes: csid 320": {fmt: 0, csid: 320},
+		"1 byte: csid 2":      {fmt: 0, csid: 2},
+		"1 byte: csid 63":     {fmt: 1, csid: 63},
+		"2 bytes: csid 64":    {fmt: 2, csid: 64},
+		"2 bytes: csid 319":   {fmt: 3, csid: 319},
+		"3 bytes: csid 320":   {fmt: 0, csid: 320},
 		"3 bytes: csid 65599": {fmt: 1, csid: 65599},
 	}
 
@@ -67,8 +67,8 @@ func TestExtendedTimestamp_EncodeDecode(t *testing.T) {
 	tests := map[string]struct {
 		ts uint32
 	}{
-		"zero": {ts: 0},
-		"typical": {ts: 123456789},
+		"zero":       {ts: 0},
+		"typical":    {ts: 123456789},
 		"max uint32": {ts: 0xFFFFFFFF},
 	}
 
@@ -88,8 +88,8 @@ func TestExtendedTimestamp_Decode_Error(t *testing.T) {
 	tests := map[string]struct {
 		input []byte
 	}{
-		"empty": {input: []byte{}},
-		"1 byte": {input: []byte{0x01}},
+		"empty":   {input: []byte{}},
+		"1 byte":  {input: []byte{0x01}},
 		"3 bytes": {input: []byte{0x01, 0x02, 0x03}},
 	}
 

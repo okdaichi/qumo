@@ -98,6 +98,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   route decision and splits `metricRouteReplacements` into a CounterVec with
   a `reason` label for observability.
 
+- **gofmt cleanup.** Reformats 16 files that had drifted from gofmt:
+  stale struct-field/const-block alignment from edits committed without
+  running gofmt, mis-sorted imports in two integration tests, and one
+  compressed multi-field struct literal. Formatting only; no semantic
+  changes.
+
 ### Removed
 - **`ADVERTISE_ADDR`** — dropped from `internal/relay/cmd.go`, `Config`, and
   `qumo playground`. It was set into `Config.AdvertiseAddr` and logged, but

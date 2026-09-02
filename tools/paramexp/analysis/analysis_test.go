@@ -116,9 +116,9 @@ func TestDetectRegressions_RecordsVector(t *testing.T) {
 
 func TestStabilityReport_FlagsHighCV(t *testing.T) {
 	obs := []experiment.Observation{
-		{ExperimentID: 1, Vector: experiment.ParamVector{"w": "1"}, Metrics: experiment.MetricSet{"m": 100}, Variances: experiment.MetricSet{"m": 1}, N: 5},     // cv=0.01 stable
-		{ExperimentID: 2, Vector: experiment.ParamVector{"w": "2"}, Metrics: experiment.MetricSet{"m": 100}, Variances: experiment.MetricSet{"m": 900}, N: 5},   // cv=0.3 unstable
-		{ExperimentID: 3, Vector: experiment.ParamVector{"w": "4"}, Metrics: experiment.MetricSet{"m": 100}, Variances: experiment.MetricSet{"m": 0}, N: 1},     // single-replicate → stable
+		{ExperimentID: 1, Vector: experiment.ParamVector{"w": "1"}, Metrics: experiment.MetricSet{"m": 100}, Variances: experiment.MetricSet{"m": 1}, N: 5},   // cv=0.01 stable
+		{ExperimentID: 2, Vector: experiment.ParamVector{"w": "2"}, Metrics: experiment.MetricSet{"m": 100}, Variances: experiment.MetricSet{"m": 900}, N: 5}, // cv=0.3 unstable
+		{ExperimentID: 3, Vector: experiment.ParamVector{"w": "4"}, Metrics: experiment.MetricSet{"m": 100}, Variances: experiment.MetricSet{"m": 0}, N: 1},   // single-replicate → stable
 	}
 	stab := StabilityReport(obs, "m")
 	byID := map[int64]bool{}
