@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.6.260903] - 2026-09-03
+
 ### Added
 - **`qumo update` self-update command (`internal/update`)** — downloads and
   replaces the running binary with the latest release from GitHub (`qumo-dev/qumo`),
