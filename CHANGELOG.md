@@ -98,6 +98,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   route decision and splits `metricRouteReplacements` into a CounterVec with
   a `reason` label for observability.
 
+- **Dependency bump: golang.org/x/crypto v0.54.0 → v0.55.0** (indirect, via
+  quic-go/gomoqt; pulls x/text v0.41.0). Fixes CVE-2026-56854 (CRITICAL,
+  x/crypto/ssh) that the Build Image workflow's Trivy scan flags on every PR.
+
 - **gofmt cleanup.** Reformats 16 files that had drifted from gofmt:
   stale struct-field/const-block alignment from edits committed without
   running gofmt, mis-sorted imports in two integration tests, and one
