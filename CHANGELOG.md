@@ -90,6 +90,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   suggestions in `tools/paramexp` were skipped by the tool as behavior
   changes and are intentionally not applied.
 
+- **Relay route selection with hysteresis (`internal/relay`).** Replaces
+  `isBetterRoute(…) (bool, reason)` with `compareRoutes(…) routeDecision`,
+  adding bitrate (≥20%) and RTT (5 ms absolute OR 20% relative) hysteresis
+  thresholds so edges don't all converge on the same hub from transient
+  metric noise. Adds structured logging (`slog.Info`/`slog.Debug`) at each
+  route decision and splits `metricRouteReplacements` into a CounterVec with
+  a `reason` label for observability.
+
 ### Removed
 - **`ADVERTISE_ADDR`** — dropped from `internal/relay/cmd.go`, `Config`, and
   `qumo playground`. It was set into `Config.AdvertiseAddr` and logged, but
