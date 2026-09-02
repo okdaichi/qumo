@@ -31,6 +31,13 @@ There are two ways to run the demo:
   expiry; set `QUMO_PLAYGROUND_CERT_DIR` to override its location (e.g. to share
   a cert with `mage cert`'s `./certs`).
 
+  The built UI (`playground/dist`) is **committed** so that `go install` and a
+  plain `go build` embed the real UI — Go module archives contain only
+  git-tracked files. If you change anything under `playground/src` (or the
+  locked deps), run `mage webbuild` and commit the regenerated `dist/`; CI's
+  "Web UI dist freshness" job fails a PR whose committed dist doesn't match a
+  fresh build.
+
   Flags (`qumo playground -h`):
 
   | Flag            | Default          | Purpose                                              |

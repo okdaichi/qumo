@@ -35,6 +35,27 @@ jobs:
         with:
           deno-version: 2.8.1
 
+      # The release binary gets a fresh UI from the goreleaser before-hooks,
+      # but `go install` embeds whatever dist is COMMITTED at this tag (module
+      # zips contain only git-tracked files, #376). Fail fast before publishing
+      # if the committed dist doesn't match a fresh build, so both install
+      # paths ship the same UI.
+      - name: Verify committed playground/dist is fresh
+        run: |
+          cd playground
+          deno install
+          deno task build
+          cd ..
+          if ! git diff --exit-code -- playground/dist; then
+            echo "::error::committed playground/dist does not match a fresh build — rebuild and commit it before tagging (go install embeds the committed dist, see #376)"
+            exit 1
+          fi
+          if [ -n "$(git status --porcelain playground/dist)" ]; then
+            git status --porcelain playground/dist
+            echo "::error::playground/dist has uncommitted build output — commit the rebuilt dist before tagging (see #376)"
+            exit 1
+          fi
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:
