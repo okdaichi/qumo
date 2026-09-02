@@ -648,6 +648,38 @@ func TestCompareRoutes(t *testing.T) {
 				current:   RouteStats{Alive: true, Hops: 2, RTT: 105 * time.Millisecond},
 				want:      true,
 			},
+			// Hysteresis: 4ms vs 8ms clears relative (0.5 <= 0.8) but not absolute (4ms < 5ms).
+			// OR gate still accepts because the relative threshold is met.
+			"equal hops: relative RTT improvement wins via OR gate": {
+				candidate: RouteStats{Alive: true, Hops: 2, RTT: 4 * time.Millisecond},
+				current:   RouteStats{Alive: true, Hops: 2, RTT: 8 * time.Millisecond},
+				want:      true,
+			},
+			// Bitrate at exactly 1.2x margin: 6Mbps / 5Mbps = 1.2, should win.
+			"equal hops: bitrate at margin boundary wins": {
+				candidate: RouteStats{Alive: true, Hops: 2, EstimatedBitrate: 6_000_000},
+				current:   RouteStats{Alive: true, Hops: 2, EstimatedBitrate: 5_000_000},
+				want:      true,
+			},
+			// Bitrate just below 1.2x margin: 5.99Mbps / 5Mbps ~ 1.198, should lose.
+			"equal hops: bitrate just below margin loses": {
+				candidate: RouteStats{Alive: true, Hops: 2, EstimatedBitrate: 5_990_000},
+				current:   RouteStats{Alive: true, Hops: 2, EstimatedBitrate: 5_000_000},
+				want:      false,
+			},
+			// Candidate has lower bitrate: decisionInferiorBitrate path.
+			"equal hops: lower bitrate loses": {
+				candidate: RouteStats{Alive: true, Hops: 2, EstimatedBitrate: 3_000_000},
+				current:   RouteStats{Alive: true, Hops: 2, EstimatedBitrate: 5_000_000},
+				want:      false,
+			},
+			// Both routes have zero RTT: decisionEqualOrUnknown.
+			"equal hops: both RTT zero keeps existing": {
+				candidate: RouteStats{Alive: true, Hops: 2},
+				current:   RouteStats{Alive: true, Hops: 2},
+				want:      false,
+			},
+
 
 		// Alive dominates all quality metrics.
 		"alive candidate beats dead current regardless of hops": {
