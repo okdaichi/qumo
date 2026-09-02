@@ -116,67 +116,143 @@ type relayHandler struct {
 	drainOnce sync.Once
 }
 
-// rejectionReason is the cause returned by isBetterRoute when a route
-// candidate is not better than the existing route. Values map directly to
-// the "reason" label on the qumo_relay_route_rejections_total metric.
-type rejectionReason string
+// routeDecision is the result of compareRoutes, encoding both the better/worse
+// verdict and the specific dimension that decided it. Values up to
+// decisionRTT are accept decisions (candidate is better); values from
+// decisionDeadCandidate onward are reject decisions.
+// String returns the metric label value for both cases.
+type routeDecision int
 
 const (
-	// rejectionDeadCandidate: candidate is not alive (session ended or announcement retracted).
-	rejectionDeadCandidate rejectionReason = "dead_candidate"
-	// rejectionInferiorHops: candidate has more hops than the current route.
-	rejectionInferiorHops rejectionReason = "inferior_hops"
-	// rejectionInferiorBitrate: candidate has lower measured bitrate.
-	rejectionInferiorBitrate rejectionReason = "inferior_bitrate"
-	// rejectionInferiorRTT: candidate has higher or equal RTT.
-	rejectionInferiorRTT rejectionReason = "inferior_rtt"
-	// rejectionEqualOrUnknown: RTT is unknown (0) for one or both routes, so
-	// no improvement can be confirmed.
-	rejectionEqualOrUnknown rejectionReason = "equal_or_unknown"
+	// Accept decisions: candidate is better.
+	// WARNING: accepted() (line 143) relies on all accept values preceding all
+	// reject values in this iota block. Insert new values above the divider,
+	// never between accept and reject.
+	decisionAlive   routeDecision = iota // candidate is alive while current is dead
+	decisionHops                         // candidate has fewer hops
+	decisionBitrate                      // candidate has significantly higher bitrate
+	decisionRTT                          // candidate has significantly lower RTT
+
+	// Reject decisions: candidate is not better.
+	decisionDeadCandidate      // candidate is not alive
+	decisionInferiorHops       // candidate has more hops
+	decisionInferiorBitrate    // candidate has lower bitrate
+	decisionInferiorRTT        // candidate has higher or equal RTT
+	decisionEqualOrUnknown     // RTT unknown (0) for one or both routes
+
+	decisionLowBitrateMargin // candidate has higher bitrate but not by enough margin
+	decisionLowRTTMargin     // candidate has lower RTT but not by enough margin
 )
 
-// isBetterRoute reports whether candidate is a strictly better route than
-// current. A live route always beats a dead one. Among routes with the same
-// liveness, fewer hops wins outright; equal hops are broken first by bitrate
-// (higher available bandwidth is better for streaming), then by RTT (lower
-// latency is better). When a metric cannot be determined (nil probe or 0
-// value), the current route is preferred.
+// accepted reports whether this decision means the candidate route is better.
+func (d routeDecision) accepted() bool { return d <= decisionRTT }
+
+// String returns the metric label value for this decision.
+func (d routeDecision) String() string {
+	switch d {
+	case decisionAlive:
+		return "alive"
+	case decisionHops:
+		return "hops"
+	case decisionBitrate:
+		return "bitrate"
+	case decisionRTT:
+		return "rtt"
+	case decisionDeadCandidate:
+		return "dead_candidate"
+	case decisionInferiorHops:
+		return "inferior_hops"
+	case decisionInferiorBitrate:
+		return "inferior_bitrate"
+	case decisionInferiorRTT:
+		return "inferior_rtt"
+	case decisionEqualOrUnknown:
+		return "equal_or_unknown"
+	case decisionLowBitrateMargin:
+		return "insufficient_bitrate_margin"
+	case decisionLowRTTMargin:
+		return "insufficient_rtt_margin"
+	default:
+		return "unknown"
+	}
+}
+
+// Hysteresis thresholds for route replacement. When routes have equal hops,
+// the candidate must clear these margins to displace the current route.
+// This prevents all edges from converging on the same hub due to small,
+// transient metric differences. Hops and liveness comparisons remain strict
+// (structural, not noisy).
+const (
+	// bitrateMargin is the fractional improvement in EstimatedBitrate
+	// required to displace the current route on bitrate alone.
+	// e.g., 1.2 means the candidate must have >20% higher bitrate.
+	bitrateMargin = 1.2
+
+	// rttMarginAbs is the minimum absolute RTT improvement required
+	// to displace the current route. Prevents churn from sub-ms noise.
+	rttMarginAbs = 5 * time.Millisecond
+
+	// rttMarginRel is the fractional improvement in RTT required
+	// to displace the current route. e.g., 0.8 means candidate RTT must be
+	// less than 80% of current RTT.
+	rttMarginRel = 0.8
+)
+
+// compareRoutes reports whether candidate is a strictly better route than
+// current, returning a routeDecision that encodes both the verdict and the
+// winning (or losing) dimension for logging and metrics.
 //
-// The second return value is the rejection reason when the function returns
-// false. It is empty when the function returns true.
-func isBetterRoute(candidate, current RouteStats) (bool, rejectionReason) {
+// A live route always beats a dead one. Among routes with the same liveness,
+// fewer hops wins outright; equal hops are broken first by bitrate (higher
+// available bandwidth is better for streaming), then by RTT (lower latency is
+// better). Bitrate and RTT comparisons apply hysteresis thresholds so that
+// small, transient metric differences do not cause route churn. When a metric
+// cannot be determined (nil probe or 0 value), the current route is preferred.
+func compareRoutes(candidate, current RouteStats) routeDecision {
 	// A live route always beats a dead one.
 	if candidate.Alive != current.Alive {
 		if candidate.Alive {
-			return true, ""
+			return decisionAlive
 		}
-		return false, rejectionDeadCandidate
+		return decisionDeadCandidate
 	}
 	// Both dead: no benefit in switching.
 	if !candidate.Alive {
-		return false, rejectionDeadCandidate
+		return decisionDeadCandidate
 	}
 	if candidate.Hops < current.Hops {
-		return true, ""
+		return decisionHops
 	}
 	if candidate.Hops > current.Hops {
-		return false, rejectionInferiorHops
+		return decisionInferiorHops
 	}
-	// Higher available bandwidth wins first.
+
+	// Equal hops: bitrate with hysteresis.
 	if candidate.EstimatedBitrate != current.EstimatedBitrate {
-		if candidate.EstimatedBitrate > current.EstimatedBitrate {
-			return true, ""
+		if float64(candidate.EstimatedBitrate) >= float64(current.EstimatedBitrate)*bitrateMargin {
+			return decisionBitrate
 		}
-		return false, rejectionInferiorBitrate
+		if candidate.EstimatedBitrate > current.EstimatedBitrate {
+			return decisionLowBitrateMargin
+		}
+		return decisionInferiorBitrate
 	}
-	// Bandwidth equal or unknown: prefer lower RTT.
+
+	// Bitrate equal or unknown: RTT with hysteresis.
 	if candidate.RTT == 0 || current.RTT == 0 {
-		return false, rejectionEqualOrUnknown
+		return decisionEqualOrUnknown
 	}
-	if candidate.RTT < current.RTT {
-		return true, ""
+	candidateBetter := candidate.RTT < current.RTT
+	absImprovement := current.RTT - candidate.RTT
+	relImprovement := float64(candidate.RTT) / float64(current.RTT)
+
+	if candidateBetter && (absImprovement >= rttMarginAbs || relImprovement <= rttMarginRel) {
+		return decisionRTT
 	}
-	return false, rejectionInferiorRTT
+	if candidateBetter {
+		return decisionLowRTTMargin
+	}
+	return decisionInferiorRTT
 }
 
 func newRelayHandler(ann *moqt.Announcement, sess *moqt.Session, nodeID string, broadSess *broadcastSession, cacheSize int, pool *FramePool, sampler *statsSampler) *relayHandler {
