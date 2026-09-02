@@ -21,12 +21,14 @@ func TestRun_Unit(t *testing.T) {
 	origPlayground := runPlayground
 	origDoctor := runDoctor
 	origLoadgen := runLoadgen
+	origUpdate := runUpdate
 	defer func() {
 		runRelay = origRelay
 		runRTMP = origRTMP
 		runPlayground = origPlayground
 		runDoctor = origDoctor
 		runLoadgen = origLoadgen
+		runUpdate = origUpdate
 	}()
 
 	tests := map[string]struct {
@@ -36,6 +38,7 @@ func TestRun_Unit(t *testing.T) {
 		stubPlayground     func([]string) error
 		stubDoctor         func([]string) error
 		stubLoadgen        func([]string) error
+		stubUpdate         func([]string) error
 		wantCode           int
 		wantStderrContains []string
 	}{
@@ -128,6 +131,25 @@ func TestRun_Unit(t *testing.T) {
 			},
 			wantCode: 0,
 		},
+		"update success": {
+			args:       []string{"update"},
+			stubUpdate: func(_ []string) error { return nil },
+			wantCode:   0,
+		},
+		"update error": {
+			args:               []string{"update"},
+			stubUpdate:         func(_ []string) error { return fmt.Errorf("update-fail") },
+			wantCode:           1,
+			wantStderrContains: []string{"error: update-fail"},
+		},
+		"update passes args": {
+			args: []string{"update", "--check"},
+			stubUpdate: func(a []string) error {
+				assert.Equal(t, []string{"--check"}, a)
+				return nil
+			},
+			wantCode: 0,
+		},
 	}
 
 	for name, tt := range tests {
@@ -156,6 +178,11 @@ func TestRun_Unit(t *testing.T) {
 				runLoadgen = tt.stubLoadgen
 			} else {
 				runLoadgen = func([]string) error { return nil }
+			}
+			if tt.stubUpdate != nil {
+				runUpdate = tt.stubUpdate
+			} else {
+				runUpdate = func([]string) error { return nil }
 			}
 
 			// capture stderr

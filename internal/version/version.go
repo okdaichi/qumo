@@ -1,6 +1,7 @@
 // Package version holds build-time version metadata injected via ldflags.
+// Versions follow SemCalVer: v[major].[minor].[YYMMDD] (e.g. v1.0.260903).
 //
-//	go build -ldflags "-X github.com/qumo-dev/qumo/internal/version.version=v0.1.0"
+//	go build -ldflags "-X github.com/qumo-dev/qumo/internal/version.version=v1.0.260903"
 package version
 
 import (
@@ -15,7 +16,7 @@ var (
 	date    = "unknown"
 )
 
-// Version returns the semver tag (e.g. "v0.1.0").
+// Version returns the SemCalVer tag (e.g. "v1.0.260903").
 func Version() string { return version }
 
 // Commit returns the short git commit hash.

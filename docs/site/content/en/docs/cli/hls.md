@@ -4,11 +4,13 @@ description: Start the HLS/DASH egress server.
 weight: 5
 ---
 
-The HLS/DASH egress: subscribes to a MoQ track's catalog to learn its schema and
-fMP4 init segment, writes each received CMAF group into a qumo-ledger track, and
-serves the ledger's HLS and DASH renderings over HTTP. It is a separate process
-from the relay and the publisher — run it alongside a relay that a CMAF
-publisher (the playground's HLS scenario, or `cmd/seed-moq`) is publishing to.
+The HLS/DASH egress: subscribes to a MoQ track's catalog to learn its schema
+and fMP4 init segment, packages each received group of LOC frames into a CMAF
+(fMP4) fragment, writes those fragments into a qumo-ledger track, and serves
+the ledger's HLS and DASH renderings over HTTP. It is a separate process from
+the relay and the publisher — run it alongside a relay that a publisher (the
+playground's HLS scenario, or `cmd/seed-moq`) is publishing to. Packaging
+happens here, at the subscriber: the publisher sends LOC, not CMAF.
 
 It verifies the relay's certificate by default.
 
@@ -56,8 +58,11 @@ RELAY_CA_FILE=certs/server.crt qumo hls    # trust this relay's cert
 RELAY_TLS_INSECURE=true qumo hls           # dev relay with a self-signed cert
 ```
 
-`cmd/seed-moq`, the dev seeder, presents an ephemeral self-signed certificate —
-point the egress at it with `RELAY_TLS_INSECURE=true`.
+`cmd/seed-moq`, the dev seeder, is a standalone server (not a relay), presents
+an ephemeral self-signed certificate, and publishes under `/live/cam1`. Against
+it, set `RELAY_TLS_INSECURE=true` and `RELAY_TRACK_PATH=/live/cam1` (the egress
+defaults to `/hls/live`, which suits the playground); the default
+`RELAY_URL=https://localhost:4433` already matches seed-moq.
 
 ## Configuration
 

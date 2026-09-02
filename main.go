@@ -12,6 +12,7 @@ import (
 	"github.com/qumo-dev/qumo/internal/loadgen"
 	"github.com/qumo-dev/qumo/internal/playground"
 	"github.com/qumo-dev/qumo/internal/relay"
+	"github.com/qumo-dev/qumo/internal/update"
 	"github.com/qumo-dev/qumo/internal/version"
 )
 
@@ -24,6 +25,7 @@ var (
 	runRTSPPull   = ingest.RunRTSPPull // pull client (DESCRIBE/SETUP/PLAY, camera ingest)
 	runDoctor     = doctor.Run
 	runLoadgen    = loadgen.Run
+	runUpdate     = update.Run
 	runPlayground = func(args []string) error {
 		o, err := playground.ParseFlags(args, playground.Options{
 			Assets:     mustSubAssets(),
@@ -95,6 +97,8 @@ func run(args []string) int {
 		err = runDoctor(cmdArgs)
 	case "loadgen":
 		err = runLoadgen(cmdArgs)
+	case "update":
+		err = runUpdate(cmdArgs)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n", cmd)
 		printUsage()
@@ -120,6 +124,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  playground Start a local demo (relay + web UI) on http://127.0.0.1:8080")
 	fmt.Fprintln(os.Stderr, "  doctor     Explain effective runtime config (GC target) — read-only")
 	fmt.Fprintln(os.Stderr, "  loadgen    Drive an out-of-process capacity load against a relay (subscribe|publish)")
+	fmt.Fprintln(os.Stderr, "  update     Update qumo to the latest release (--check to just check)")
 	fmt.Fprintln(os.Stderr, "  version    Print version information")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Configuration:")
