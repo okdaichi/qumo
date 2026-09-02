@@ -362,37 +362,37 @@ func replaceBinary(path string, newData []byte) error {
 	tmpPath := tmp.Name()
 
 	if _, err := tmp.Write(newData); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmpPath)
+		_ = tmp.Close()         // not actionable: cleaning up temp file on write error
+		_ = os.Remove(tmpPath)  // not actionable: cleaning up temp file on write error
 		return err
 	}
 	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpPath)
+		_ = os.Remove(tmpPath) // not actionable: cleaning up temp file on close error
 		return err
 	}
 
 	// Make the new binary executable (no-op on Windows).
 	// #nosec G302 -- the executable binary needs to be executable by owner and group/others
 	if err := os.Chmod(tmpPath, 0o755); err != nil {
-		_ = os.Remove(tmpPath)
+		_ = os.Remove(tmpPath) // not actionable: cleaning up temp file on chmod error
 		return err
 	}
 
 	if runtime.GOOS == "windows" {
 		// Windows: rename current → .old, rename tmp → current, remove .old.
 		oldPath := path + ".old"
-		_ = os.Remove(oldPath) // clean up any previous .old
+		_ = os.Remove(oldPath) // not actionable: best-effort cleanup of any stale .old from previous run
 		if err := os.Rename(path, oldPath); err != nil {
-			_ = os.Remove(tmpPath)
+			_ = os.Remove(tmpPath) // not actionable: cleaning up temp file on rename error
 			return err
 		}
 		if err := os.Rename(tmpPath, path); err != nil {
 			// Attempt rollback.
-			_ = os.Rename(oldPath, path)
-			_ = os.Remove(tmpPath)
+			_ = os.Rename(oldPath, path) // not actionable: best-effort rollback of old binary
+			_ = os.Remove(tmpPath)       // not actionable: cleaning up temp file on rename error
 			return err
 		}
-		_ = os.Remove(oldPath)
+		_ = os.Remove(oldPath) // not actionable: best-effort cleanup of previous executable
 		return nil
 	}
 

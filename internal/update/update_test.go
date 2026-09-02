@@ -125,21 +125,21 @@ func serveGitHub(t *testing.T, releases []ghRelease, archiveData, checksumData [
 // ---------------------------------------------------------------------------
 
 func TestParseSemver(t *testing.T) {
-	tests := []struct {
+	tests := map[string]struct {
 		input   string
 		want    semver
 		wantErr bool
 	}{
-		{"v1.2.3", semver{1, 2, 3, ""}, false},
-		{"v1.0.260903", semver{1, 0, 260903, ""}, false},
-		{"v1.0.260903-rc.1", semver{1, 0, 260903, "rc.1"}, false},
-		{"v0.5.0-rc.1", semver{0, 5, 0, "rc.1"}, false},
-		{"0.1.0", semver{0, 1, 0, ""}, false},
-		{"bad", semver{}, true},
-		{"v1.2", semver{}, true},
+		"standard semver":              {input: "v1.2.3", want: semver{1, 2, 3, ""}, wantErr: false},
+		"SemCalVer release":            {input: "v1.0.260903", want: semver{1, 0, 260903, ""}, wantErr: false},
+		"SemCalVer pre-release":        {input: "v1.0.260903-rc.1", want: semver{1, 0, 260903, "rc.1"}, wantErr: false},
+		"standard semver pre-release":  {input: "v0.5.0-rc.1", want: semver{0, 5, 0, "rc.1"}, wantErr: false},
+		"semver without v prefix":      {input: "0.1.0", want: semver{0, 1, 0, ""}, wantErr: false},
+		"invalid format non-numeric":   {input: "bad", want: semver{}, wantErr: true},
+		"invalid format missing patch": {input: "v1.2", want: semver{}, wantErr: true},
 	}
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
 			got, err := parseSemver(tt.input)
 			if tt.wantErr {
 				assert.Error(t, err)
@@ -152,23 +152,23 @@ func TestParseSemver(t *testing.T) {
 }
 
 func TestSemverGreaterThan(t *testing.T) {
-	tests := []struct {
+	tests := map[string]struct {
 		a, b string
 		want bool
 	}{
-		{"v1.1.0", "v1.0.0", true},
-		{"v1.0.0", "v1.0.0", false},
-		{"v0.9.0", "v1.0.0", false},
-		{"v1.0.0", "v1.0.0-rc.1", true},   // release > pre-release
-		{"v1.0.0-rc.1", "v1.0.0", false},   // pre-release < release
-		{"v1.0.0-rc.2", "v1.0.0-rc.1", true},
-		{"v1.0.260903", "v1.0.260902", true},
-		{"v1.0.260902", "v1.0.260903", false},
-		{"v1.0.260903", "v1.0.260903-rc.1", true},
-		{"v2.0.0", "v1.99.99", true},
+		"minor bump greater":                      {a: "v1.1.0", b: "v1.0.0", want: true},
+		"same version equal":                      {a: "v1.0.0", b: "v1.0.0", want: false},
+		"lower minor less":                        {a: "v0.9.0", b: "v1.0.0", want: false},
+		"release beats pre-release":               {a: "v1.0.0", b: "v1.0.0-rc.1", want: true},
+		"pre-release less than release":           {a: "v1.0.0-rc.1", b: "v1.0.0", want: false},
+		"higher pre-release beats lower":          {a: "v1.0.0-rc.2", b: "v1.0.0-rc.1", want: true},
+		"SemCalVer later date beats earlier":      {a: "v1.0.260903", b: "v1.0.260902", want: true},
+		"SemCalVer earlier date less than later":  {a: "v1.0.260902", b: "v1.0.260903", want: false},
+		"SemCalVer release beats its pre-release": {a: "v1.0.260903", b: "v1.0.260903-rc.1", want: true},
+		"major bump beats minor/patch":            {a: "v2.0.0", b: "v1.99.99", want: true},
 	}
-	for _, tt := range tests {
-		t.Run(tt.a+"_gt_"+tt.b, func(t *testing.T) {
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
 			a, err := parseSemver(tt.a)
 			require.NoError(t, err)
 			b, err := parseSemver(tt.b)
