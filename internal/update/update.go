@@ -362,18 +362,19 @@ func replaceBinary(path string, newData []byte) error {
 	tmpPath := tmp.Name()
 
 	if _, err := tmp.Write(newData); err != nil {
-		tmp.Close()
-		os.Remove(tmpPath)
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
 		return err
 	}
 	if err := tmp.Close(); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return err
 	}
 
 	// Make the new binary executable (no-op on Windows).
+	// #nosec G302 -- the executable binary needs to be executable by owner and group/others
 	if err := os.Chmod(tmpPath, 0o755); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return err
 	}
 
@@ -382,13 +383,13 @@ func replaceBinary(path string, newData []byte) error {
 		oldPath := path + ".old"
 		_ = os.Remove(oldPath) // clean up any previous .old
 		if err := os.Rename(path, oldPath); err != nil {
-			os.Remove(tmpPath)
+			_ = os.Remove(tmpPath)
 			return err
 		}
 		if err := os.Rename(tmpPath, path); err != nil {
 			// Attempt rollback.
 			_ = os.Rename(oldPath, path)
-			os.Remove(tmpPath)
+			_ = os.Remove(tmpPath)
 			return err
 		}
 		_ = os.Remove(oldPath)

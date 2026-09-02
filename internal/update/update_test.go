@@ -289,12 +289,12 @@ func TestReplaceBinary(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		exe += ".exe"
 	}
-	require.NoError(t, os.WriteFile(exe, []byte("old"), 0o755))
+	require.NoError(t, os.WriteFile(exe, []byte("old"), 0o600))
 
 	newContent := []byte("new binary content")
 	require.NoError(t, replaceBinary(exe, newContent))
 
-	got, err := os.ReadFile(exe)
+	got, err := os.ReadFile(filepath.Clean(exe))
 	require.NoError(t, err)
 	assert.Equal(t, newContent, got)
 }
