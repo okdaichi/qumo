@@ -4,3 +4,10 @@
 
 # Shell scripts must always use LF (prevents CRLF issues on Windows)
 *.sh text eol=lf
+
+# Committed Vite build output is opaque bytes: no line-ending normalization
+# (any mangling on checkout/commit would false-fail the byte-exact freshness
+# gate, scripts/check-webui-dist.sh) and no textual diffs of the minified
+# bundles ("Binary files differ" keeps PR diffs and the gate's failure output
+# readable).
+playground/dist/** -text -diff
