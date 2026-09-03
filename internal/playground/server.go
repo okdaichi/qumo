@@ -381,11 +381,7 @@ func (s *Server) handleAssets(w http.ResponseWriter, r *http.Request) {
 // and a module MIME-type console error with no hint at the cause. The relay
 // and /config keep working, so this is a 500 page, not a shutdown.
 func (s *Server) serveAssetsError(w http.ResponseWriter) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(http.StatusInternalServerError)
-	// The detail comes from the same verifyAssets result logged at startup,
-	// so the terminal and the browser agree on what's missing and how to fix it.
-	fmt.Fprintf(w, `<!doctype html>
+	const page = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -411,5 +407,13 @@ go build
 ./qumo playground</pre>
 </body>
 </html>
-`, html.EscapeString(s.assetsErr.Error()), html.EscapeString(buildAssetsHint))
+`
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusInternalServerError)
+	// The two %s render the same verifyAssets result logged at startup
+	// (missing-file detail + rebuild hint), so the terminal and the browser
+	// agree on what's missing and how to fix it.
+	// not actionable: a failed write to the client connection can't be
+	// recovered — the handler has nothing else to report.
+	_, _ = fmt.Fprintf(w, page, html.EscapeString(s.assetsErr.Error()), html.EscapeString(buildAssetsHint))
 }
