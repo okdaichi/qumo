@@ -2,8 +2,10 @@
 # Rebuild the playground web UI and verify the committed playground/dist
 # matches byte-for-byte. Shared by ci.yml ("Web UI dist freshness") and
 # release.yml (pre-GoReleaser gate) so the PR gate and the tag-time gate
-# cannot drift apart. Requires deno on PATH (node for Vite is assumed to be
-# preinstalled — same recipe as `mage webbuild`, magefiles/magefile.go).
+# cannot drift apart. Requires deno on PATH plus the node version pinned in
+# .node-version — the output must be reproducible, so an arbitrary node on
+# PATH (a dev box, a new runner image) can produce bytes the gate rejects.
+# Same build recipe as `mage webbuild` (magefiles/magefile.go).
 #
 # Why dist must be committed and fresh: Go module archives contain only
 # git-tracked files, so `go install` embeds whatever dist is in git (#376).
@@ -14,7 +16,10 @@
 set -eu
 
 cd "$(dirname "$0")/../playground"
-deno install
+# --frozen: install exactly what deno.lock pins and fail if the lock is out
+# of date (deps bumped in deno.json without re-locking), instead of silently
+# resolving fresh versions and validating a dist built against unpinned deps.
+deno install --frozen
 deno task build
 cd ..
 

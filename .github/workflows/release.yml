@@ -29,14 +29,15 @@ jobs:
 
       # Deno is required by the goreleaser `before` hooks to build the playground
       # web UI (jsr deps + `deno check`). Pinned to match docker/Dockerfile's
-      # DENO_VERSION. Node (for Vite) is pinned to match ci.yml's webui job —
-      # both must run Vite on the same node version or the byte-exact dist
-      # check below can diverge from the PR gate.
+      # DENO_VERSION. Node (for Vite) is pinned to the exact version via
+      # .node-version (shared with ci.yml's webui job) — both must run Vite on
+      # the same node bytes or the byte-exact dist check below can diverge from
+      # the PR gate.
       - name: Set up Node
         # SHA: actions/setup-node@v6
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
-          node-version: '24'
+          node-version-file: .node-version
 
       - name: Set up Deno
         uses: denoland/setup-deno@v2

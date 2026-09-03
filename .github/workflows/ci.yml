@@ -134,15 +134,15 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
       # Node runs Vite. The committed dist must be byte-identical to a fresh
-      # build (see scripts/check-webui-dist.sh), so pin the node version — a
-      # runner-image node bump changing the build output would otherwise fail
-      # every PR with a confusing "dist is stale" error. Same pin in
-      # release.yml.
+      # build (see scripts/check-webui-dist.sh), so pin the EXACT node version
+      # (via .node-version, shared with release.yml) — a runner-image node
+      # bump or major-only pin resolving a different 24.x could change the
+      # build output and fail every PR with a confusing "dist is stale" error.
       - name: Set up Node
         # SHA: actions/setup-node@v6
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
-          node-version: '24'
+          node-version-file: .node-version
 
       # Deno resolves the jsr/npm deps via the committed deno.lock. Pinned to
       # match the DENO_VERSION used by release.yml and docker/Dockerfile.
