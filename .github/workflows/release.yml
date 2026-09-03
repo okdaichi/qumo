@@ -28,8 +28,16 @@ jobs:
           cache: true
 
       # Deno is required by the goreleaser `before` hooks to build the playground
-      # web UI (jsr deps + `deno check`). Node (for Vite) is preinstalled on the
-      # ubuntu runner. Pinned to match docker/Dockerfile's DENO_VERSION.
+      # web UI (jsr deps + `deno check`). Pinned to match docker/Dockerfile's
+      # DENO_VERSION. Node (for Vite) is pinned to match ci.yml's webui job —
+      # both must run Vite on the same node version or the byte-exact dist
+      # check below can diverge from the PR gate.
+      - name: Set up Node
+        # SHA: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '24'
+
       - name: Set up Deno
         uses: denoland/setup-deno@v2
         with:
@@ -39,22 +47,9 @@ jobs:
       # but `go install` embeds whatever dist is COMMITTED at this tag (module
       # zips contain only git-tracked files, #376). Fail fast before publishing
       # if the committed dist doesn't match a fresh build, so both install
-      # paths ship the same UI.
+      # paths ship the same UI. Same script as ci.yml's "Web UI dist freshness".
       - name: Verify committed playground/dist is fresh
-        run: |
-          cd playground
-          deno install
-          deno task build
-          cd ..
-          if ! git diff --exit-code -- playground/dist; then
-            echo "::error::committed playground/dist does not match a fresh build — rebuild and commit it before tagging (go install embeds the committed dist, see #376)"
-            exit 1
-          fi
-          if [ -n "$(git status --porcelain playground/dist)" ]; then
-            git status --porcelain playground/dist
-            echo "::error::playground/dist has uncommitted build output — commit the rebuilt dist before tagging (see #376)"
-            exit 1
-          fi
+        run: sh scripts/check-webui-dist.sh
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6

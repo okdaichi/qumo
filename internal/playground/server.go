@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io/fs"
 	"log/slog"
 	"net"
@@ -382,6 +383,8 @@ func (s *Server) handleAssets(w http.ResponseWriter, r *http.Request) {
 func (s *Server) serveAssetsError(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusInternalServerError)
+	// The detail comes from the same verifyAssets result logged at startup,
+	// so the terminal and the browser agree on what's missing and how to fix it.
 	fmt.Fprintf(w, `<!doctype html>
 <html lang="en">
 <head>
@@ -391,23 +394,22 @@ func (s *Server) serveAssetsError(w http.ResponseWriter) {
 body{font:16px/1.6 system-ui,sans-serif;max-width:42rem;margin:3rem auto;padding:0 1rem;color:#222}
 code{background:#f3f3f3;padding:.1rem .4rem;border-radius:4px;font-size:.9em}
 pre{background:#f3f3f3;padding:1rem;border-radius:8px;overflow-x:auto}
+h1{font-size:1.3rem}
 </style>
 </head>
 <body>
 <h1>qumo playground — web UI not bundled</h1>
-<p>This qumo binary was built without the playground web UI assets, so there is
+<p>This qumo binary was built without the playground web UI, so there is
 nothing to serve here. The relay itself is running; only the browser interface
 is missing.</p>
-<p>This happens when qumo is built with <code>go install</code> (or plain
-<code>go build</code>) from a source checkout, which skips the Vite build that
-produces the bundles.</p>
+<p><code>%s</code></p>
 <p>To get the web UI, rebuild from a source checkout:</p>
 <pre>git clone https://github.com/qumo-dev/qumo
 cd qumo
-mage webbuild      # or: cd playground &amp;&amp; deno install &amp;&amp; deno task build
+%s
 go build
 ./qumo playground</pre>
 </body>
 </html>
-`)
+`, html.EscapeString(s.assetsErr.Error()), html.EscapeString(buildAssetsHint))
 }

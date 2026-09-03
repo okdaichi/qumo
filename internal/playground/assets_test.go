@@ -28,6 +28,27 @@ func TestVerifyAssets(t *testing.T) {
 			},
 			wantErr: true,
 		},
+		"missing non-bundle reference alone does not trip": {
+			// The check is scoped to /assets/ bundle refs (see assets.go): a
+			// missing favicon or other public/ file must not flip a fully-built
+			// dist to the error page.
+			assets: fstest.MapFS{
+				"index.html":    {Data: []byte(`<link rel="icon" href="/vite.svg"><script type="module" src="/assets/app.js"></script>`)},
+				"assets/app.js": {Data: []byte("app")},
+			},
+		},
+		"query strings and fragments are stripped before stat": {
+			assets: fstest.MapFS{
+				"index.html":    {Data: []byte(`<script type="module" src="/assets/app.js?v=1#h"></script>`)},
+				"assets/app.js": {Data: []byte("app")},
+			},
+		},
+		"attribute-name suffixes are not matched": {
+			// data-src / xlink:href must not look like bundle references.
+			assets: fstest.MapFS{
+				"index.html": {Data: []byte(`<img data-src="/assets/lazy.js" xlink:href="/assets/x.js">`)},
+			},
+		},
 		"inlined build with no external references": {
 			assets: fstest.MapFS{
 				"index.html": {Data: []byte(`<!doctype html><title>qumo</title>`)},

@@ -58,16 +58,6 @@ func Run(ctx context.Context, o Options) error {
 		o.RelayAddr = defaultRelayAddr
 	}
 
-	// Binaries built without `mage webbuild` embed the committed placeholder
-	// dist (no Vite bundles), which white-screens the browser tab with an
-	// opaque MIME error (#376). The relay still works, so continue in degraded
-	// mode but say so up front — the server additionally serves an explanatory
-	// error page in place of the UI.
-	if err := verifyAssets(o.Assets); err != nil {
-		slog.Warn("playground web UI is not bundled; the browser will show an error page",
-			"err", err)
-	}
-
 	// 1. Ensure a dev cert whose hash the browser will pin and whose files the
 	//    relay will load. The cert is minted for localhost/loopback; that's fine
 	//    for a public host too, because WebTransport's serverCertificateHashes
@@ -96,6 +86,17 @@ func Run(ctx context.Context, o Options) error {
 	//    request from the browser's Host header, so the server only needs the
 	//    relay port (not a preconfigured host).
 	ui := NewServerWithCerts(o.UIAddr, portOf(o.RelayAddr), cert.HashHex, cert.CertFile, cert.KeyFile, o.Assets)
+
+	// A bundle-less dist (a checkout whose web UI was never built, #376) would
+	// white-screen the browser tab with an opaque MIME error. The relay still
+	// works, so continue in degraded mode but say so up front; the server,
+	// which computed the same check at construction (assetsErr), serves an
+	// explanatory error page in place of the UI.
+	if ui.assetsErr != nil {
+		slog.Warn("playground web UI is not bundled; the browser will show an error page",
+			"err", ui.assetsErr)
+	}
+
 	uiDone := make(chan error, 1)
 	go func() {
 		uiDone <- ui.ListenAndServe()

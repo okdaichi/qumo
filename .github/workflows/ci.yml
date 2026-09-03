@@ -133,36 +133,29 @@ jobs:
         # SHA: actions/checkout@v6
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
-      # Deno resolves the jsr/npm deps via the committed deno.lock; node (for
-      # Vite) is preinstalled on the ubuntu runner. Pinned to match the DENO_VERSION
-      # used by release.yml and docker/Dockerfile.
+      # Node runs Vite. The committed dist must be byte-identical to a fresh
+      # build (see scripts/check-webui-dist.sh), so pin the node version — a
+      # runner-image node bump changing the build output would otherwise fail
+      # every PR with a confusing "dist is stale" error. Same pin in
+      # release.yml.
+      - name: Set up Node
+        # SHA: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '24'
+
+      # Deno resolves the jsr/npm deps via the committed deno.lock. Pinned to
+      # match the DENO_VERSION used by release.yml and docker/Dockerfile.
       - name: Set up Deno
         uses: denoland/setup-deno@v2
         with:
           deno-version: 2.8.1
 
-      - name: Build playground UI
-        run: |
-          cd playground
-          deno install
-          deno task build
-
-      # playground/dist is committed so `go install` embeds the real web UI:
-      # module zips contain only git-tracked files, so a dist-less tag would
-      # embed the placeholder and white-screen `qumo playground` (#376).
-      # Vite's content-hashed output is deterministic for a locked dep set, so
-      # a fresh build must leave the tree byte-identical.
+      # Rebuilds the UI and fails unless the committed playground/dist matches
+      # byte-for-byte — dist is committed so `go install` embeds the real web
+      # UI (module zips contain only git-tracked files, #376).
       - name: Verify committed dist is fresh
-        run: |
-          if ! git diff --exit-code -- playground/dist; then
-            echo "::error::playground/dist is stale — run 'cd playground && deno install && deno task build' and commit the result (required for go install, see #376)"
-            exit 1
-          fi
-          if [ -n "$(git status --porcelain playground/dist)" ]; then
-            git status --porcelain playground/dist
-            echo "::error::playground/dist has uncommitted build output — commit the rebuilt dist (required for go install, see #376)"
-            exit 1
-          fi
+        run: sh scripts/check-webui-dist.sh
 
   security:
     name: Security Scan

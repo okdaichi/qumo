@@ -125,6 +125,9 @@ func TestServer_ServesErrorPageWhenAssetsUnbundled(t *testing.T) {
 	require.Equal(t, http.StatusInternalServerError, rec.Code)
 	assert.Equal(t, "text/html; charset=utf-8", rec.Header().Get("Content-Type"))
 	assert.Contains(t, rec.Body.String(), "web UI not bundled")
+	// The page renders the same verifyAssets detail logged at startup: the
+	// missing files and the rebuild command.
+	assert.Contains(t, rec.Body.String(), "/assets/index-4RJU1QOf.js")
 	assert.Contains(t, rec.Body.String(), "mage webbuild")
 }
 
