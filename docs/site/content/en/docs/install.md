@@ -43,9 +43,14 @@ mage build        # builds bin/qumo with version info
 
 Requirements for building from source:
 
-- **Go 1.27+**
-- **Deno** — the binary embeds a web UI built by Deno + Vite (`mage build`)
-- **Mage** — build automation: `go install github.com/magefile/mage@latest`
+- **Go 1.27+** — on its own this is enough. `playground/dist` (the Vite bundles
+  the binary embeds) is committed, so a plain `go build` produces a binary with
+  the real web UI.
+- **Deno** and **Mage** — only for `mage build`, which rebuilds the web UI
+  before compiling. Install Mage with
+  `go install github.com/magefile/mage@latest`. Needed if you are *changing*
+  the playground UI; see `playground/README.md` for the rebuild-and-commit
+  workflow.
 {{< /tab >}}
 
 {{< /tabs >}}

@@ -49,9 +49,14 @@ how static peers, Nomad discovery, and the remote resolver fit together.
 
 | Variable | Default | Description |
 |---|---|---|
-| `LOCAL_RESOLVER_ADDR` | `http://localhost:4646` | Nomad HTTP API address (set automatically when running inside Nomad). |
+| `LOCAL_RESOLVER_ADDR` | (empty) | Nomad HTTP API address. Takes precedence over `NOMAD_ADDR`. |
+| `NOMAD_ADDR` | (empty) | Nomad sets this inside an allocation; used when `LOCAL_RESOLVER_ADDR` is unset. |
 | `LOCAL_RESOLVER_SERVICE_NAME` | `qumo-relay` | Nomad service name to query for peer discovery. |
 | `LOCAL_RESOLVER_INTERVAL` | `15s` | Polling interval. |
+
+The address resolves in that order — `LOCAL_RESOLVER_ADDR`, then `NOMAD_ADDR`,
+then `http://localhost:4646` if neither is set. Inside a Nomad allocation the
+middle one is normally what applies, with no configuration of your own.
 
 See [Deployment → Nomad]({{< relref "deployment/nomad" >}}).
 
@@ -86,7 +91,7 @@ See [Deployment → TLS & mTLS]({{< relref "deployment/tls" >}}).
 | `GROUP_CACHE_SIZE` | `8` | Completed groups each track's ring retains for late/backfill subscribers. Raise to absorb longer subscriber startup lag, at the cost of per-track memory. |
 | `FRAME_CAPACITY` | `1500` | Frame buffer capacity in bytes (roughly one network MTU). |
 | `RELAY_UDP_RCVBUF` | `262144` | UDP receive buffer (`SO_RCVBUF`) for the relay's QUIC listener socket. Raise on deployments pushing beyond ~15K concurrent sessions in burst. Set to `0` to use the unmodified OS default. |
-| `RELAY_GOGC` | (unset) | GC target percentage. Opt-in: if unset (and `GOGC` is unset), the Go runtime default (100) is used. A fan-out relay's goroutine stacks dominate RSS, so GC-scan CPU grows with session count; `RELAY_GOGC=800..1600` reached ~18–20K sessions on an 8-core host. `GOGC` (the runtime's own env var) always wins if set. Do **not** use `GOMEMLIMIT` for this workload — it forces constant GC and collapses throughput. |
+| `RELAY_GOGC` | (unset) | GC target percentage. Opt-in: if unset (and `GOGC` is unset), the Go runtime default (100) is used. A fan-out relay's goroutine stacks dominate RSS, so GC-scan CPU grows with session count; `RELAY_GOGC=600..1600` reached ~18–20K sessions on an 8-core host. `GOGC` (the runtime's own env var) always wins if set. Do **not** use `GOMEMLIMIT` for this workload — it forces constant GC and collapses throughput. |
 
 Run `qumo doctor` to see the effective GC target, which input won, and why —
 read-only, it changes nothing. See [Observability]({{< relref "observability" >}}).
@@ -95,7 +100,15 @@ read-only, it changes nothing. See [Observability]({{< relref "observability" >}
 
 | Variable | Default | Description |
 |---|---|---|
-| `RELAY_PPROF` | `0` | Opt-in `net/http/pprof` endpoints (`/debug/pprof/...`) alongside `/metrics`. Off by default — enable only on a trusted/loopback interface. |
+| `RELAY_PPROF` | (unset) | Opt-in `net/http/pprof` endpoints (`/debug/pprof/...`) alongside `/metrics`. Off by default — enable only on a trusted/loopback interface. |
+
+{{< callout type="warning" >}}
+`RELAY_PPROF` is checked for **emptiness, not truthiness**: any non-empty value
+enables pprof, including `RELAY_PPROF=0` and `RELAY_PPROF=false`. To keep it
+off, leave the variable **unset** — do not set it to `0`, which switches
+profiling *on* and exposes heap object graphs and goroutine stacks on the
+relay's HTTP port.
+{{< /callout >}}
 
 ## CORS — WebTransport origin check
 

@@ -134,9 +134,11 @@ func Help() error {
 // is built first (WebBuild) so the binary ships with the real UI; without it
 // `go:embed` would embed only the placeholder index.html.
 func Build() error {
-	// Capture the git-derived version BEFORE WebBuild. WebBuild overwrites the
-	// committed playground/dist/index.html placeholder, so reading it after would
-	// make `git describe --dirty` (used by gitTag) append "-dirty" to the version
+	// Capture the git-derived version BEFORE WebBuild. WebBuild rewrites the
+	// committed playground/dist tree in place; a rebuild from the same locked dep
+	// set is byte-identical (that is what CI's freshness gate asserts), but a
+	// stale or mid-edit tree is not, and reading the version after would let
+	// `git describe --dirty` (used by gitTag) append "-dirty" to the version
 	// embedded into the binary. Reading first keeps release builds clean
 	// (e.g. "v0.4.0", not "v0.4.0-dirty") when built from a clean tag checkout.
 	version := gitTag()
