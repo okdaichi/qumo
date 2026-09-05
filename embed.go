@@ -10,7 +10,7 @@ import "embed"
 // embeds the real UI — module zips contain only git-tracked files. CI keeps it
 // fresh (ci.yml "Web UI dist freshness"). As a safety net for checkouts that
 // somehow lack the bundles, `qumo playground` detects a bundle-less dist at
-// runtime (internal/playground verifyAssets) and warns + serves an explanatory
+// runtime (internal/playground.VerifyAssets) and warns + serves an explanatory
 // page instead of the broken UI.
 //
 //go:embed all:playground/dist

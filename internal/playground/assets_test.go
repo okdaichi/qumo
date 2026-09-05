@@ -66,7 +66,7 @@ func TestVerifyAssets(t *testing.T) {
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
-			err := verifyAssets(tt.assets)
+			err := VerifyAssets(tt.assets)
 			if tt.wantErr {
 				assert.Error(t, err)
 				return
@@ -79,7 +79,7 @@ func TestVerifyAssets(t *testing.T) {
 func TestVerifyAssets_ErrorsListMissingFilesAndFix(t *testing.T) {
 	// The error is user-facing (surfaced as a startup warning); it must name
 	// the missing files and tell the user how to build the bundles.
-	err := verifyAssets(fstest.MapFS{
+	err := VerifyAssets(fstest.MapFS{
 		"index.html": {Data: []byte(`<script src="/assets/missing.js"></script>`)},
 	})
 

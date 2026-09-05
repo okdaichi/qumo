@@ -11,3 +11,7 @@
 # bundles ("Binary files differ" keeps PR diffs and the gate's failure output
 # readable).
 playground/dist/** -text -diff
+# ...except index.html: 14 lines of readable HTML whose hashed-bundle <script>/
+# <link> swap is the most informative line in a UI-bump PR. Keep -text (no
+# normalization, same as the bundles) but restore textual diffs.
+playground/dist/index.html -text diff

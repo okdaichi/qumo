@@ -806,9 +806,16 @@ func WebBuild() error {
 	// The project is Deno-managed (deno.lock is the source of truth), so install
 	// deps with `deno install` — `npm install` cannot resolve the @deno/vite-plugin
 	// jsr deps — then run the build script (`deno check src && vite build`).
+	//
+	// --frozen matches scripts/check-webui-dist.sh, the CI gate that rebuilds the
+	// UI and rejects a dist that differs by a byte: an unfrozen install can
+	// resolve newer versions inside the `^` ranges in deno.json, producing a dist
+	// CI then calls stale for reasons the contributor cannot reproduce. To take a
+	// dependency bump, run `deno install` (no --frozen) in playground/ by hand and
+	// commit the updated deno.lock alongside the rebuilt dist.
 	webDir := "playground"
 	for _, args := range [][]string{
-		{"deno", "install"},
+		{"deno", "install", "--frozen"},
 		{"deno", "task", "build"},
 	} {
 		cmd := exec.Command(args[0], args[1:]...)

@@ -33,7 +33,7 @@ type Server struct {
 	httpSrv   *http.Server
 
 	// assetsErr records that the embedded dist tree is the committed
-	// placeholder (bundles never built — see verifyAssets). While set, the UI
+	// placeholder (bundles never built — see VerifyAssets). While set, the UI
 	// routes serve an explanatory error page instead of the broken index.html.
 	assetsErr error
 
@@ -70,7 +70,7 @@ func NewServerWithCerts(addr, relayPort, certHash, certFile, keyFile string, ass
 		certFile:  certFile,
 		keyFile:   keyFile,
 		assets:    assets,
-		assetsErr: verifyAssets(assets),
+		assetsErr: VerifyAssets(assets),
 		addr:      addr,
 	}
 
@@ -94,7 +94,7 @@ func NewServerWithCerts(addr, relayPort, certHash, certFile, keyFile string, ass
 // pinned SHA-256 of the relay cert. assets must be the embedded dist filesystem
 // already sub-rooted at its content root (files at the FS root, incl. index.html).
 func NewServer(addr, relayPort, certHash string, assets fs.FS) *Server {
-	s := &Server{relayPort: relayPort, certHash: certHash, assets: assets, assetsErr: verifyAssets(assets), addr: addr}
+	s := &Server{relayPort: relayPort, certHash: certHash, assets: assets, assetsErr: VerifyAssets(assets), addr: addr}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/config", s.handleConfig)
@@ -410,7 +410,7 @@ go build
 `
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusInternalServerError)
-	// The two %s render the same verifyAssets result logged at startup
+	// The two %s render the same VerifyAssets result logged at startup
 	// (missing-file detail + rebuild hint), so the terminal and the browser
 	// agree on what's missing and how to fix it.
 	// not actionable: a failed write to the client connection can't be

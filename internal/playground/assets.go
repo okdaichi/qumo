@@ -18,7 +18,7 @@ var assetRefPattern = regexp.MustCompile(`\s(?:src|href)="(/assets/[^"?#]+)`)
 // a binary that was built without them.
 const buildAssetsHint = "run `mage webbuild` (or: cd playground && deno install && deno task build), then rebuild qumo from source"
 
-// verifyAssets reports whether fsys — the embedded dist tree, sub-rooted at
+// VerifyAssets reports whether fsys — the embedded dist tree, sub-rooted at
 // its content root — actually contains the /assets/ bundles index.html
 // references. Binaries built from a checkout whose dist was never built embed
 // only the placeholder index.html, whose hashed /assets/... paths don't exist;
@@ -26,12 +26,16 @@ const buildAssetsHint = "run `mage webbuild` (or: cd playground && deno install 
 // MIME-type error in the browser (#376). A nil return means the referenced
 // bundles are embedded.
 //
+// Exported so package main can run this same check against the real embedded
+// FS (embed_test.go): //go:embed paths cannot traverse with "..", so the embed
+// — and therefore any test of it — can only live at the repo root.
+//
 // Deliberately narrow: it is a safety net against a bundle-less dist, not a
 // full asset inventory. It only sees what index.html references directly, so
 // an indirect asset missing from a partial dist (a CSS url() target, a lazy
 // chunk) still slips through — CI's "Web UI dist freshness" job is the real
 // guarantee that the committed dist is complete.
-func verifyAssets(fsys fs.FS) error {
+func VerifyAssets(fsys fs.FS) error {
 	index, err := fs.ReadFile(fsys, "index.html")
 	if err != nil {
 		return fmt.Errorf("playground/dist: index.html missing: %w", err)

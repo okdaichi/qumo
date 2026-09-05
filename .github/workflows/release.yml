@@ -28,27 +28,22 @@ jobs:
           cache: true
 
       # Deno is required by the goreleaser `before` hooks to build the playground
-      # web UI (jsr deps + `deno check`). Pinned to match docker/Dockerfile's
-      # DENO_VERSION. Node (for Vite) is pinned to the exact version via
-      # .node-version (shared with ci.yml's webui job) — both must run Vite on
-      # the same node bytes or the byte-exact dist check below can diverge from
-      # the PR gate.
-      - name: Set up Node
-        # SHA: actions/setup-node@v6
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
-        with:
-          node-version-file: .node-version
-
+      # web UI (jsr deps + `deno check`; Vite itself runs on the Deno runtime,
+      # no Node involved). Pinned to match docker/Dockerfile's DENO_VERSION and
+      # ci.yml's webui job — the byte-exact dist check below must run the same
+      # toolchain as the PR gate or the two can disagree.
       - name: Set up Deno
         uses: denoland/setup-deno@v2
         with:
           deno-version: 2.8.1
 
-      # The release binary gets a fresh UI from the goreleaser before-hooks,
-      # but `go install` embeds whatever dist is COMMITTED at this tag (module
-      # zips contain only git-tracked files, #376). Fail fast before publishing
-      # if the committed dist doesn't match a fresh build, so both install
-      # paths ship the same UI. Same script as ci.yml's "Web UI dist freshness".
+      # Belt-and-braces, NOT the gate: by the time this runs the tag is already
+      # public, and `go install ...@<tag>` resolves it through the module proxy
+      # whether or not this job succeeds — a stale dist would already be
+      # reachable. ci.yml's "Web UI dist freshness" (same script) is the check
+      # that actually prevents a stale dist from reaching a tag; this one only
+      # stops the release ARTIFACTS from shipping a UI that disagrees with the
+      # committed one, and turns a bad tag into a loud failure worth deleting.
       - name: Verify committed playground/dist is fresh
         run: sh scripts/check-webui-dist.sh
 

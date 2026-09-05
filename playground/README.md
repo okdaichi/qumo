@@ -35,8 +35,25 @@ There are two ways to run the demo:
   plain `go build` embed the real UI — Go module archives contain only
   git-tracked files. If you change anything under `playground/src` (or the
   locked deps), run `mage webbuild` and commit the regenerated `dist/`; CI's
-  "Web UI dist freshness" job fails a PR whose committed dist doesn't match a
-  fresh build.
+  "Web UI dist freshness" job rebuilds the UI and fails a PR whose committed
+  dist doesn't match byte-for-byte.
+
+  Because that check is byte-exact, rebuild with the same toolchain CI uses:
+
+  - **deno 2.8.1** (pinned in `.github/workflows/ci.yml`, `release.yml` and
+    `docker/Dockerfile`). A different deno usually produces identical output,
+    but only this version is guaranteed to.
+  - **No Node needed.** `deno task build` runs Vite on the Deno runtime via
+    `@deno/vite-plugin`, with the npm deps resolved from `deno.lock`.
+  - `mage webbuild` runs `deno install --frozen`, so it builds against exactly
+    the locked dep set. To take a dependency bump, run `deno install` (without
+    `--frozen`) in `playground/` by hand and commit the updated `deno.lock`
+    together with the rebuilt `dist/`.
+
+  If CI still reports a stale dist after a clean local rebuild, don't hand-edit
+  the bundles: download the `webui-dist` artifact from the failed "Web UI dist
+  freshness" run, unpack it over `playground/dist`, and commit that — those are
+  the exact bytes the gate compares against.
 
   Flags (`qumo playground -h`):
 
