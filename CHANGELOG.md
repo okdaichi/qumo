@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.6.260906] - 2026-09-06
+
 ### Fixed
 - **`go install` now embeds the real playground web UI (#376)** — the built
   `playground/dist` is committed to the repository (Go module archives contain
