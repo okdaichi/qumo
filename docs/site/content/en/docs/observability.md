@@ -49,7 +49,7 @@ All metrics are under the `qumo_relay_` prefix.
 |---|---|---|
 | `qumo_relay_broadcasts_active` | Gauge | Current number of active relay broadcast routes. |
 | `qumo_relay_route_replacements_total` | Counter | Existing routes replaced by a strictly better candidate. |
-| `qumo_relay_route_rejections_total{reason}` | Counter | Route candidates rejected because they weren't better than the existing route. |
+| `qumo_relay_route_rejections_total{reason}` | Counter | Route candidates that did not displace the existing route, by reason. Includes candidates that were better but not by the hysteresis margin — see [Peer topology]({{< relref "deployment/peer-topology" >}}#route-election). |
 | `qumo_relay_routes_retained` | Gauge | Route-election losers currently held as alternates, pending promotion. |
 | `qumo_relay_route_promotions_total` | Counter | Retained alternates promoted to active after the incumbent's announcement ended. |
 

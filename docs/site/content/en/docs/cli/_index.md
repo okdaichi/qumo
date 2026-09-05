@@ -1,6 +1,6 @@
 ---
 title: CLI reference
-description: qumo's subcommands — relay, rtmp, rtsp, rtsp-push, hls, playground, doctor, loadgen, version.
+description: qumo's subcommands — relay, rtmp, rtsp, rtsp-push, hls, playground, doctor, loadgen, update, version.
 weight: 5
 cascade:
   type: docs
@@ -18,6 +18,7 @@ Commands:
   playground Start a local demo (relay + web UI) on http://127.0.0.1:8080
   doctor     Explain effective runtime config (GC target) — read-only
   loadgen    Drive an out-of-process capacity load against a relay (subscribe|publish)
+  update     Update qumo to the latest release (--check to just check)
   version    Print version information
 ```
 
@@ -33,5 +34,6 @@ All commands are configured via environment variables — see
 	{{< card link="playground" title="playground" icon="lightning-bolt" subtitle="One-command local demo." >}}
 	{{< card link="doctor" title="doctor" icon="beaker" subtitle="Explain effective runtime config." >}}
 	{{< card link="loadgen" title="loadgen" icon="chart-bar" subtitle="Out-of-process capacity load generator." >}}
+	{{< card link="update" title="update" icon="refresh" subtitle="Self-update to the latest release." >}}
 	{{< card link="version" title="version" icon="tag" subtitle="Print build-time version info." >}}
 {{< /cards >}}

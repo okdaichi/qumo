@@ -26,9 +26,15 @@ discovery uses the separate remote resolver instead (see
 
 | Variable | Default | Description |
 |---|---|---|
-| `LOCAL_RESOLVER_ADDR` | `http://localhost:4646` | Nomad HTTP API address (e.g. `http://nomad.service.consul:4646`). |
+| `LOCAL_RESOLVER_ADDR` | (empty) | Nomad HTTP API address (e.g. `http://nomad.service.consul:4646`). Overrides `NOMAD_ADDR`. |
+| `NOMAD_ADDR` | (empty) | Set by Nomad inside an allocation; used when `LOCAL_RESOLVER_ADDR` is unset. |
 | `LOCAL_RESOLVER_SERVICE_NAME` | `qumo-relay` | Nomad service name to query for peer discovery. |
 | `LOCAL_RESOLVER_INTERVAL` | `15s` | Polling interval. |
+
+Running inside a Nomad allocation you normally set neither: Nomad exports
+`NOMAD_ADDR` itself, and the relay falls back to it, then to
+`http://localhost:4646` if that is absent too. Set `LOCAL_RESOLVER_ADDR` only
+to point at an API address Nomad did not provide.
 
 See [Configuration → Local resolver]({{< relref "../configuration" >}}#local-resolver--nomad-native-discovery)
 for the full reference. `--role hub`/`--role edge` is a CLI flag on
