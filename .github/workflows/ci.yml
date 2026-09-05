@@ -125,6 +125,42 @@ jobs:
       - name: Check binary
         run: ./bin/qumo version
 
+  webui:
+    name: Web UI dist freshness
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        # SHA: actions/checkout@v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      # Deno is the whole toolchain: `deno task build` runs Vite on the Deno
+      # runtime (@deno/vite-plugin) with the npm deps resolved from deno.lock,
+      # so no Node is involved. The committed dist must be byte-identical to a
+      # fresh build (scripts/check-webui-dist.sh), so pin the EXACT deno
+      # version — shared with release.yml and docker/Dockerfile's DENO_VERSION.
+      - name: Set up Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: 2.8.1
+
+      # Rebuilds the UI and fails unless the committed playground/dist matches
+      # byte-for-byte — dist is committed so `go install` embeds the real web
+      # UI (module zips contain only git-tracked files, #376).
+      - name: Verify committed dist is fresh
+        run: sh scripts/check-webui-dist.sh
+
+      # The gate is byte-exact, so a contributor whose local toolchain differs
+      # can be stuck with a "dist is stale" failure they cannot reproduce.
+      # Publishing the freshly built tree gives them an escape hatch: unpack it
+      # over playground/dist and commit (documented in playground/README.md).
+      - name: Upload freshly built dist
+        if: failure()
+        # SHA: actions/upload-artifact@v6
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: webui-dist
+          path: playground/dist
+
   security:
     name: Security Scan
     runs-on: ubuntu-latest

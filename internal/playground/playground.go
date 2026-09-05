@@ -86,6 +86,17 @@ func Run(ctx context.Context, o Options) error {
 	//    request from the browser's Host header, so the server only needs the
 	//    relay port (not a preconfigured host).
 	ui := NewServerWithCerts(o.UIAddr, portOf(o.RelayAddr), cert.HashHex, cert.CertFile, cert.KeyFile, o.Assets)
+
+	// A bundle-less dist (a checkout whose web UI was never built, #376) would
+	// white-screen the browser tab with an opaque MIME error. The relay still
+	// works, so continue in degraded mode but say so up front; the server,
+	// which computed the same check at construction (assetsErr), serves an
+	// explanatory error page in place of the UI.
+	if ui.assetsErr != nil {
+		slog.Warn("playground web UI is not bundled; the browser will show an error page",
+			"err", ui.assetsErr)
+	}
+
 	uiDone := make(chan error, 1)
 	go func() {
 		uiDone <- ui.ListenAndServe()

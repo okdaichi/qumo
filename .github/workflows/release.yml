@@ -28,12 +28,24 @@ jobs:
           cache: true
 
       # Deno is required by the goreleaser `before` hooks to build the playground
-      # web UI (jsr deps + `deno check`). Node (for Vite) is preinstalled on the
-      # ubuntu runner. Pinned to match docker/Dockerfile's DENO_VERSION.
+      # web UI (jsr deps + `deno check`; Vite itself runs on the Deno runtime,
+      # no Node involved). Pinned to match docker/Dockerfile's DENO_VERSION and
+      # ci.yml's webui job — the byte-exact dist check below must run the same
+      # toolchain as the PR gate or the two can disagree.
       - name: Set up Deno
         uses: denoland/setup-deno@v2
         with:
           deno-version: 2.8.1
+
+      # Belt-and-braces, NOT the gate: by the time this runs the tag is already
+      # public, and `go install ...@<tag>` resolves it through the module proxy
+      # whether or not this job succeeds — a stale dist would already be
+      # reachable. ci.yml's "Web UI dist freshness" (same script) is the check
+      # that actually prevents a stale dist from reaching a tag; this one only
+      # stops the release ARTIFACTS from shipping a UI that disagrees with the
+      # committed one, and turns a bad tag into a loud failure worth deleting.
+      - name: Verify committed playground/dist is fresh
+        run: sh scripts/check-webui-dist.sh
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6

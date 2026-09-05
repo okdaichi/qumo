@@ -7,10 +7,13 @@ before:
     - go mod tidy
     # Build the playground web UI so the Go binary embeds the real UI via
     # //go:embed all:playground/dist (otherwise it embeds only the placeholder).
-    # Needs deno (jsr deps + `deno check`) and node (Vite) on the runner.
+    # Needs deno on the runner (jsr deps + `deno check`; Vite itself runs on
+    # the Deno runtime via @deno/vite-plugin, so no node is required).
     # Wrapped in sh -c because goreleaser exec's hooks without a shell (cd is
     # a shell builtin, so "cd playground && ..." fails with "cd not found").
-    - sh -c "cd playground && deno install"
+    # --frozen: build the release UI from exactly the dep set deno.lock pins,
+    # the same one the freshness gate above verified the committed dist against.
+    - sh -c "cd playground && deno install --frozen"
     - sh -c "cd playground && deno task build"
 
 builds:

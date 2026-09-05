@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"html"
 	"io/fs"
 	"log/slog"
 	"net"
@@ -29,6 +31,11 @@ type Server struct {
 	assets    fs.FS
 	addr      string
 	httpSrv   *http.Server
+
+	// assetsErr records that the embedded dist tree is the committed
+	// placeholder (bundles never built — see VerifyAssets). While set, the UI
+	// routes serve an explanatory error page instead of the broken index.html.
+	assetsErr error
 
 	// RTSP pull state (playground-only, in-process).
 	pullMu     sync.Mutex
@@ -63,6 +70,7 @@ func NewServerWithCerts(addr, relayPort, certHash, certFile, keyFile string, ass
 		certFile:  certFile,
 		keyFile:   keyFile,
 		assets:    assets,
+		assetsErr: VerifyAssets(assets),
 		addr:      addr,
 	}
 
@@ -86,7 +94,7 @@ func NewServerWithCerts(addr, relayPort, certHash, certFile, keyFile string, ass
 // pinned SHA-256 of the relay cert. assets must be the embedded dist filesystem
 // already sub-rooted at its content root (files at the FS root, incl. index.html).
 func NewServer(addr, relayPort, certHash string, assets fs.FS) *Server {
-	s := &Server{relayPort: relayPort, certHash: certHash, assets: assets, addr: addr}
+	s := &Server{relayPort: relayPort, certHash: certHash, assets: assets, assetsErr: VerifyAssets(assets), addr: addr}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/config", s.handleConfig)
@@ -344,6 +352,12 @@ func (s *Server) handlePullStatus(w http.ResponseWriter, r *http.Request) {
 // path that isn't a real file. There is no client-side router today, but the
 // fallback keeps deep links working and future-proofs SPA routing.
 func (s *Server) handleAssets(w http.ResponseWriter, r *http.Request) {
+	// Placeholder dist (bundles never built): serve an explanatory page instead
+	// of index.html, whose hashed asset references would white-screen the tab.
+	if s.assetsErr != nil {
+		s.serveAssetsError(w)
+		return
+	}
 	// http.FileServer already serves index.html for "/" and existing files; we
 	// only need to synthesize the SPA fallback for non-existent paths.
 	if r.URL.Path == "/" {
@@ -360,4 +374,46 @@ func (s *Server) handleAssets(w http.ResponseWriter, r *http.Request) {
 	r2 := r.Clone(r.Context())
 	r2.URL.Path = "/"
 	http.FileServerFS(s.assets).ServeHTTP(w, r2)
+}
+
+// serveAssetsError writes the in-browser explanation for a binary built
+// without the Vite bundles (#376): without it the browser shows a blank page
+// and a module MIME-type console error with no hint at the cause. The relay
+// and /config keep working, so this is a 500 page, not a shutdown.
+func (s *Server) serveAssetsError(w http.ResponseWriter) {
+	const page = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>qumo playground — web UI not bundled</title>
+<style>
+body{font:16px/1.6 system-ui,sans-serif;max-width:42rem;margin:3rem auto;padding:0 1rem;color:#222}
+code{background:#f3f3f3;padding:.1rem .4rem;border-radius:4px;font-size:.9em}
+pre{background:#f3f3f3;padding:1rem;border-radius:8px;overflow-x:auto}
+h1{font-size:1.3rem}
+</style>
+</head>
+<body>
+<h1>qumo playground — web UI not bundled</h1>
+<p>This qumo binary was built without the playground web UI, so there is
+nothing to serve here. The relay itself is running; only the browser interface
+is missing.</p>
+<p><code>%s</code></p>
+<p>To get the web UI, rebuild from a source checkout:</p>
+<pre>git clone https://github.com/qumo-dev/qumo
+cd qumo
+%s
+go build
+./qumo playground</pre>
+</body>
+</html>
+`
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusInternalServerError)
+	// The two %s render the same VerifyAssets result logged at startup
+	// (missing-file detail + rebuild hint), so the terminal and the browser
+	// agree on what's missing and how to fix it.
+	// not actionable: a failed write to the client connection can't be
+	// recovered — the handler has nothing else to report.
+	_, _ = fmt.Fprintf(w, page, html.EscapeString(s.assetsErr.Error()), html.EscapeString(buildAssetsHint))
 }
