@@ -104,3 +104,57 @@ func TestServer_SPAFallbackForUnknownPath(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.Contains(t, rec.Body.String(), "<title>qumo</title>")
 }
+
+// newPlaceholderAssets mimics the committed placeholder dist: an index.html
+// whose hashed asset references have no matching files (a binary built
+// without `mage webbuild`, see #376).
+func newPlaceholderAssets() fstest.MapFS {
+	return fstest.MapFS{
+		"index.html": {Data: []byte(`<script type="module" src="/assets/index-4RJU1QOf.js"></script>`)},
+	}
+}
+
+func TestServer_ServesErrorPageWhenAssetsUnbundled(t *testing.T) {
+	srv := NewServer("127.0.0.1:0", "4433", "", newPlaceholderAssets())
+
+	// Serving the placeholder index.html directly would white-screen the tab
+	// with a module MIME error; the UI route must explain the problem instead.
+	rec := httptest.NewRecorder()
+	srv.httpSrv.Handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	require.Equal(t, http.StatusInternalServerError, rec.Code)
+	assert.Equal(t, "text/html; charset=utf-8", rec.Header().Get("Content-Type"))
+	assert.Contains(t, rec.Body.String(), "web UI not bundled")
+	// The page renders the same VerifyAssets detail logged at startup: the
+	// missing files and the rebuild command.
+	assert.Contains(t, rec.Body.String(), "/assets/index-4RJU1QOf.js")
+	assert.Contains(t, rec.Body.String(), "mage webbuild")
+}
+
+func TestServer_ServesErrorPageWhenAssetsUnbundled_DeepLink(t *testing.T) {
+	srv := NewServer("127.0.0.1:0", "4433", "", newPlaceholderAssets())
+
+	rec := httptest.NewRecorder()
+	srv.httpSrv.Handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/assets/index-4RJU1QOf.js", nil))
+
+	// The missing bundle request itself must get the error page (text/html),
+	// not the SPA fallback that produced #376's MIME-type console error.
+	require.Equal(t, http.StatusInternalServerError, rec.Code)
+	assert.Contains(t, rec.Body.String(), "web UI not bundled")
+}
+
+func TestServer_ConfigStillServedWhenAssetsUnbundled(t *testing.T) {
+	srv := NewServer("127.0.0.1:0", "4433", "deadbeef", newPlaceholderAssets())
+
+	// The relay and /config keep working in degraded mode; only the UI routes
+	// are replaced by the error page.
+	req := httptest.NewRequest(http.MethodGet, "/config", nil)
+	req.Host = "localhost:8080"
+	rec := httptest.NewRecorder()
+	srv.httpSrv.Handler.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var cfg Config
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&cfg))
+	assert.Equal(t, "https://localhost:4433", cfg.RelayURL)
+}

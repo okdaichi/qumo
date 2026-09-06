@@ -8,13 +8,11 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
-# Vite build output. Ignore its contents but keep the committed placeholder
-# (index.html + .gitkeep) so `go:embed all:playground/dist` in the Go binary
-# always has a match on a fresh clone. Ignoring the directory itself (just
-# `dist`) would also exclude the placeholder, hence `dist/*` + negations.
-dist/*
-!dist/.gitkeep
-!dist/index.html
+# dist/ (Vite build output) is COMMITTED, not ignored: Go module archives
+# contain only git-tracked files, so `go install` embeds the real web UI only
+# if the bundles are in git (#376). CI verifies the committed dist matches a
+# fresh build ("Web UI dist freshness"). After changing playground/src or the
+# locked deps, run `mage webbuild` and commit the regenerated dist/.
 dist-ssr
 *.local
 

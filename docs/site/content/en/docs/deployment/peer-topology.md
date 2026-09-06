@@ -65,9 +65,26 @@ graph TD
 
 When more than one peer path can serve the same broadcast, the relay elects
 one active route and keeps the losers as retained alternates, promoted if the
-incumbent's announcement ends. This is visible via the
-`qumo_relay_route_replacements_total`, `qumo_relay_routes_retained`, and
-`qumo_relay_route_promotions_total` metrics — see
+incumbent's announcement ends.
+
+Replacement is **not** a plain better/worse comparison. Liveness and hop count
+are structural, so they decide outright — a live route always beats a dead one,
+and fewer hops wins. Bitrate and RTT are noisy, so they only displace an
+incumbent by clearing a hysteresis margin:
+
+- **Bitrate** breaks a hop-count tie. The candidate must reach at least **120%**
+  of the incumbent's estimated bitrate.
+- **RTT** is consulted only when estimated bitrate is *equal* (or unknown on
+  either side). The candidate must be lower by **at least 5 ms** *or* be under
+  **80%** of the incumbent's RTT — either margin suffices.
+
+Without those margins every edge converges on whichever hub momentarily
+measures best, and the mesh flaps. A candidate that is genuinely better but
+sits inside a margin does not take over, and is counted as a rejection.
+
+This is visible via the
+`qumo_relay_route_replacements_total`, `qumo_relay_route_rejections_total`,
+`qumo_relay_routes_retained`, and `qumo_relay_route_promotions_total` metrics — see
 [Observability]({{< relref "../observability" >}}).
 
 ## Graceful migration

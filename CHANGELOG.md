@@ -18,6 +18,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   selection logic. Prerequisite for multi-region topologies (see
   discussion #379).
 
+### Fixed
+- **Docs site: corrected claims that contradicted the code** — verified every
+  documented default, metric name, and flag against the source and a running
+  binary. `RELAY_PPROF` was listed with a default of `0`, implying `0` disables
+  it; the relay checks the variable for *emptiness*, so `RELAY_PPROF=0` in fact
+  turns pprof **on** and exposes heap/goroutine dumps — the row now reads
+  `(unset)` and carries a warning callout. `LOCAL_RESOLVER_ADDR` was credited
+  with being "set automatically when running inside Nomad"; Nomad sets
+  `NOMAD_ADDR`, which the relay falls back to, and which was undocumented.
+  The GC guidance said `RELAY_GOGC=800..1600` on one page and `600..1600` on
+  two others; the code says 600. The CLI reference's usage transcript omitted
+  `qumo update` entirely, which now has its own page. Route election is
+  described with the hysteresis margins added in #373 (bitrate 120%, RTT 5 ms
+  absolute *or* 80% relative), and `qumo_relay_route_rejections_total` no
+  longer claims rejected candidates "weren't better". Building from source no
+  longer claims to require Deno: `playground/dist` is committed, so a plain
+  `go build` embeds the real UI, and Deno/Mage are needed only for
+  `mage webbuild`/`mage build`.
+
+## [v0.6.260906] - 2026-09-06
+
+### Fixed
+- **`go install` now embeds the real playground web UI (#376)** — the built
+  `playground/dist` is committed to the repository (Go module archives contain
+  only git-tracked files, so a dist-less tag embedded the placeholder and
+  white-screened `qumo playground` with a module MIME-type error). A new CI
+  job ("Web UI dist freshness") rebuilds the UI and fails when the committed
+  dist doesn't match, and the release workflow verifies the same before
+  publishing a tag; `playground/README.md` documents the rebuild-and-commit
+  workflow (`mage webbuild`), the pinned toolchain, and how to recover the
+  CI-built bundles when a local rebuild disagrees. `go test ./...` also
+  asserts the embedded tree really contains the bundles, so the regression
+  is caught without a JS toolchain.
+- **`qumo playground` placeholder-dist detection (`internal/playground`)** —
+  as a safety net, the playground command detects a bundle-less dist at
+  startup (no Vite output embedded), logs a warning naming the missing files
+  and the rebuild command, and serves an explanatory error page in place of
+  the broken UI. The relay and `/config` continue to work.
+
 ## [v0.6.260903] - 2026-09-03
 
 ### Added
