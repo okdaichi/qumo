@@ -531,10 +531,17 @@ func TestDiscoverPeers_HubDialsAllRemoteHubs(t *testing.T) {
 
 	var wg sync.WaitGroup
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	go server.discoverPeers(ctx, &wg, 1*time.Hour, server.remoteResolver)
 
-	// Wait for the first tick to mark all peers as dialing.
-	time.Sleep(20 * time.Millisecond)
+	// Not synctest: maintainPeer's dial goroutines run real address
+	// resolution inside gomoqt, which a bubble cannot advance. Entries are
+	// only ever added until cancel(), so a bounded wait on the count is safe.
+	require.Eventually(t, func() bool {
+		server.connectedMu.Lock()
+		defer server.connectedMu.Unlock()
+		return len(server.connected) == len(peers)
+	}, 2*time.Second, 5*time.Millisecond, "expected all remote hubs to be marked dialing")
 
 	server.connectedMu.Lock()
 	got := make([]string, 0, len(server.connected))
