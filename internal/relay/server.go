@@ -285,13 +285,6 @@ func (s *Server) discoverPeers(ctx context.Context, wg *sync.WaitGroup, interval
 		}
 	}
 
-	// connectFirst dials only the first peer from the slice.
-	connectFirst := func(peers []ResolvedPeer) {
-		if len(peers) > 0 {
-			connect(peers[:1])
-		}
-	}
-
 	tick := func() {
 		switch s.Config.Role {
 		case "edge":
@@ -305,11 +298,15 @@ func (s *Server) discoverPeers(ctx context.Context, wg *sync.WaitGroup, interval
 			}
 
 		case "hub":
-			// Hub nodes connect to remote hubs (cross-cluster) via remote resolver.
+			// Hub nodes connect to ALL remote hubs (cross-cluster) via the remote
+			// resolver. Multiple remote announcements of the same broadcast are
+			// resolved by route election (compareRoutes), so connecting broadly is
+			// safe: it removes the single-remote-peer dependency and the
+			// resolver-order herding where every hub lands on the same remote peer.
 			// No local hub-to-hub connections (reduces hops/latency within cluster).
 			if resolver == s.remoteResolver {
 				if peers, err := resolver.ResolvePeers(ctx, PeerQuery{Role: "hub"}); err == nil {
-					connectFirst(peers)
+					connect(peers)
 				}
 			}
 			// When local resolver (Nomad) is the resolver being used, hubs

@@ -512,6 +512,45 @@ func TestDiscoverPeers_RoleBasedRouting(t *testing.T) {
 	}
 }
 
+// TestDiscoverPeers_HubDialsAllRemoteHubs verifies that a hub node dials
+// every resolved remote hub, not just the first. Addresses are recorded in
+// server.connected synchronously by connect() before the dial goroutine
+// starts, so the snapshot is taken before cancel() lets maintainPeer's
+// cleanup remove them.
+func TestDiscoverPeers_HubDialsAllRemoteHubs(t *testing.T) {
+	peers := []ResolvedPeer{
+		{ID: "hub-1", Address: "moqt://hub-1:4433", Region: "us-east", Role: "hub"},
+		{ID: "hub-2", Address: "moqt://hub-2:4433", Region: "eu-west", Role: "hub"},
+		{ID: "hub-3", Address: "moqt://hub-3:4433", Region: "ap-south", Role: "hub"},
+	}
+
+	server := newTestServer("localhost:4433")
+	server.Config = &Config{Role: "hub"}
+	server.remoteResolver = &stubResolver{peers: peers}
+	server.init()
+
+	var wg sync.WaitGroup
+	ctx, cancel := context.WithCancel(context.Background())
+	go server.discoverPeers(ctx, &wg, 1*time.Hour, server.remoteResolver)
+
+	// Wait for the first tick to mark all peers as dialing.
+	time.Sleep(20 * time.Millisecond)
+
+	server.connectedMu.Lock()
+	got := make([]string, 0, len(server.connected))
+	for addr := range server.connected {
+		got = append(got, addr)
+	}
+	server.connectedMu.Unlock()
+
+	cancel()
+	wg.Wait()
+
+	assert.ElementsMatch(t,
+		[]string{"moqt://hub-1:4433", "moqt://hub-2:4433", "moqt://hub-3:4433"},
+		got, "hub should dial all resolved remote hubs, not just the first")
+}
+
 // TestServer_Address_Formats tests various address formats
 func TestServer_Address_Formats(t *testing.T) {
 	tests := []struct {

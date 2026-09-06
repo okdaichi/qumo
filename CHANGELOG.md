@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Hub role dials all remote hubs, not just the first (`internal/relay`).**
+  Cross-cluster hub↔hub links previously dialed only the first resolved
+  remote peer — a single point of failure for the region's inter-cluster
+  connectivity, and resolver-order herding where every hub landed on the
+  same remote peer. Hubs now dial every resolved remote hub; multiple
+  remote announcements of the same broadcast are resolved per-track by
+  route election (`compareRoutes`), so broad connectivity needs no new
+  selection logic. Prerequisite for multi-region topologies (see
+  discussion #379).
+
 ## [v0.6.260903] - 2026-09-03
 
 ### Added
