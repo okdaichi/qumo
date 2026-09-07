@@ -21,7 +21,7 @@ func TestNewRemoteResolver(t *testing.T) {
 		t.Setenv("REMOTE_RESOLVE_INTERVAL", "")
 		t.Setenv("REMOTE_TLS_ENABLED", "")
 
-		r := NewRemoteResolver(nil)
+		r := NewRemoteResolver(nil, "")
 		assert.Nil(t, r)
 	})
 
@@ -31,7 +31,7 @@ func TestNewRemoteResolver(t *testing.T) {
 		t.Setenv("REMOTE_RESOLVE_INTERVAL", "30s")
 		t.Setenv("REMOTE_TLS_ENABLED", "true")
 
-		r := NewRemoteResolver(&tls.Config{})
+		r := NewRemoteResolver(&tls.Config{}, "")
 		require.NotNil(t, r)
 		assert.Equal(t, "https://resolver.example.com:8443", r.url)
 		assert.Equal(t, "my-secret-token", r.authToken)
@@ -41,7 +41,7 @@ func TestNewRemoteResolver(t *testing.T) {
 	t.Run("normalizes URL with missing scheme", func(t *testing.T) {
 		t.Setenv("REMOTE_RESOLVER_URL", "resolver.example.com:8443")
 
-		r := NewRemoteResolver(nil)
+		r := NewRemoteResolver(nil, "")
 		require.NotNil(t, r)
 		assert.Equal(t, "https://resolver.example.com:8443", r.url)
 	})
@@ -49,7 +49,7 @@ func TestNewRemoteResolver(t *testing.T) {
 	t.Run("normalizes URL with trailing slash", func(t *testing.T) {
 		t.Setenv("REMOTE_RESOLVER_URL", "https://resolver.example.com/")
 
-		r := NewRemoteResolver(nil)
+		r := NewRemoteResolver(nil, "")
 		require.NotNil(t, r)
 		assert.Equal(t, "https://resolver.example.com", r.url)
 	})
@@ -58,7 +58,7 @@ func TestNewRemoteResolver(t *testing.T) {
 		t.Setenv("REMOTE_RESOLVER_URL", "https://resolver.example.com")
 		t.Setenv("REMOTE_RESOLVE_INTERVAL", "")
 
-		r := NewRemoteResolver(nil)
+		r := NewRemoteResolver(nil, "")
 		require.NotNil(t, r)
 		assert.Equal(t, 15*time.Second, r.interval)
 	})
@@ -127,6 +127,33 @@ func TestRemoteResolver_ResolvePeers(t *testing.T) {
 		assert.Equal(t, "us-east", peers[0].Region)
 		assert.Equal(t, "hub", peers[0].Role)
 		assert.Empty(t, gotAuthHeader, "no auth header when token unset")
+	})
+
+	t.Run("sends hub id and preserves base query", func(t *testing.T) {
+		var gotHub, gotExtra, gotPath string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotPath = r.URL.Path
+			gotHub = r.URL.Query().Get("hub")
+			gotExtra = r.URL.Query().Get("extra")
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(remotePeerResponse{})
+		}))
+		defer srv.Close()
+
+		// Base URL carries its own path and query; neither may be mangled by
+		// the /peers append, and hub must be sent as a proper query parameter.
+		r := &RemoteResolver{
+			url:        srv.URL + "/api?extra=1",
+			hubID:      "hub-9",
+			interval:   15 * time.Second,
+			httpClient: srv.Client(),
+		}
+
+		_, err := r.ResolvePeers(context.Background(), PeerQuery{})
+		require.NoError(t, err)
+		assert.Equal(t, "/api/peers", gotPath)
+		assert.Equal(t, "hub-9", gotHub)
+		assert.Equal(t, "1", gotExtra)
 	})
 
 	t.Run("sends auth token", func(t *testing.T) {

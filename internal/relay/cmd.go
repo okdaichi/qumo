@@ -143,7 +143,7 @@ func Run(args []string) error {
 
 	// Create peer resolvers.
 	localResolver := NewLocalResolver()
-	remoteResolver := NewRemoteResolver(remoteResolverTLS)
+	remoteResolver := NewRemoteResolver(remoteResolverTLS, nodeID)
 
 	// Credential client: credential introspection + usage metering (optional).
 	credentialClient := NewCredentialClient()
