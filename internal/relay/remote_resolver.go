@@ -41,6 +41,7 @@ type remotePeer struct {
 //	CA_FILE                 - PEM CA file for mTLS (used when REMOTE_TLS_ENABLED=true)
 type RemoteResolver struct {
 	url        string
+	hubID      string
 	authToken  string
 	interval   time.Duration
 	httpClient *http.Client
@@ -49,7 +50,11 @@ type RemoteResolver struct {
 // NewRemoteResolver creates a RemoteResolver from environment variables.
 // It returns nil when REMOTE_RESOLVER_URL is not set (remote discovery disabled).
 // The optional TLS config enables mTLS when the relay has a CA_FILE configured.
-func NewRemoteResolver(tlsConfig *tls.Config) *RemoteResolver {
+// hubID is this relay's node ID (RELAY_NAME); it is sent as the hub query
+// parameter so the registry can skip the requester's own row and bound the
+// mesh degree per peer instead of returning the full hub list. Empty disables
+// the parameter.
+func NewRemoteResolver(tlsConfig *tls.Config, hubID string) *RemoteResolver {
 	rawURL := os.Getenv("REMOTE_RESOLVER_URL")
 	if rawURL == "" {
 		return nil
@@ -81,6 +86,7 @@ func NewRemoteResolver(tlsConfig *tls.Config) *RemoteResolver {
 
 	return &RemoteResolver{
 		url:       rawURL,
+		hubID:     hubID,
 		authToken: authToken,
 		interval:  interval,
 		httpClient: &http.Client{
@@ -106,12 +112,21 @@ func (r *RemoteResolver) Interval() time.Duration {
 // Instead we trust the server's hub-only contract and treat a missing per-peer
 // role as the queried role.
 func (r *RemoteResolver) ResolvePeers(ctx context.Context, query PeerQuery) ([]ResolvedPeer, error) {
-	u, err := url.Parse(r.url + "/peers")
+	// Parse the base URL and append the path segment instead of string-
+	// concatenating: a base URL that already carries a query (e.g. an
+	// operator-supplied "?hub=") must not be mangled into the path, and its
+	// other parameters are preserved below.
+	base, err := url.Parse(r.url)
 	if err != nil {
 		return nil, fmt.Errorf("remote: parse URL: %w", err)
 	}
+	u := *base
+	u.Path = strings.TrimSuffix(base.Path, "/") + "/peers"
 
-	qs := u.Query()
+	qs := base.Query()
+	if r.hubID != "" {
+		qs.Set("hub", r.hubID)
+	}
 	if query.Limit > 0 {
 		qs.Set("limit", strconv.Itoa(query.Limit))
 	}

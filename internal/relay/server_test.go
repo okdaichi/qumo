@@ -261,24 +261,6 @@ func TestServer_MarkUnconnected(t *testing.T) {
 	assert.True(t, server.markConnected(addr), "should be connectable again after markUnconnected")
 }
 
-func TestFilterPeersByAddr(t *testing.T) {
-	peers := []ResolvedPeer{
-		{Address: "moqt://relay-a:4433"},
-		{Address: "moqt://relay-b:4433"},
-		{Address: "moqt://relay-c:4433"},
-	}
-
-	exclude := map[string]struct{}{
-		"moqt://relay-b:4433": {},
-		"moqt://relay-d:4433": {},
-	}
-
-	filtered := filterPeersByAddr(peers, exclude)
-
-	assert.Len(t, filtered, 2)
-	assert.Equal(t, "moqt://relay-a:4433", filtered[0].Address)
-	assert.Equal(t, "moqt://relay-c:4433", filtered[1].Address)
-}
 
 // TestServer_MarkConnected_Concurrent tests that markConnected is safe for concurrent use
 // and that only one caller wins for a given address.
@@ -513,19 +495,25 @@ func TestDiscoverPeers_RoleBasedRouting(t *testing.T) {
 }
 
 // TestDiscoverPeers_HubDialsAllRemoteHubs verifies that a hub node dials
-// every resolved remote hub, not just the first. Addresses are recorded in
-// server.connected synchronously by connect() before the dial goroutine
-// starts, so the snapshot is taken before cancel() lets maintainPeer's
-// cleanup remove them.
+// every remote hub the tie-break assigns to it: self is excluded (the
+// registry lists every hub, including the requester) and hubs whose node ID
+// sorts below ours are left to place the call themselves. Addresses are
+// recorded in server.connected by the dial goroutines spawned from the first
+// tick, so the snapshot is taken before cancel() lets maintainPeer's cleanup
+// remove them.
 func TestDiscoverPeers_HubDialsAllRemoteHubs(t *testing.T) {
+	// hub-2 is us: hub-0 and hub-1 sort lower (their side dials us), hub-2 is
+	// self, hub-3 and hub-4 sort higher (we dial them).
 	peers := []ResolvedPeer{
-		{ID: "hub-1", Address: "moqt://hub-1:4433", Region: "us-east", Role: "hub"},
-		{ID: "hub-2", Address: "moqt://hub-2:4433", Region: "eu-west", Role: "hub"},
-		{ID: "hub-3", Address: "moqt://hub-3:4433", Region: "ap-south", Role: "hub"},
+		{ID: "hub-0", Address: "moqt://hub-0:4433", Region: "us-east", Role: "hub"},
+		{ID: "hub-1", Address: "moqt://hub-1:4433", Region: "eu-west", Role: "hub"},
+		{ID: "hub-2", Address: "moqt://hub-2:4433", Region: "ap-south", Role: "hub"},
+		{ID: "hub-3", Address: "moqt://hub-3:4433", Region: "us-west", Role: "hub"},
+		{ID: "hub-4", Address: "moqt://hub-4:4433", Region: "sa-east", Role: "hub"},
 	}
 
 	server := newTestServer("localhost:4433")
-	server.Config = &Config{Role: "hub"}
+	server.Config = &Config{Role: "hub", NodeID: "hub-2"}
 	server.remoteResolver = &stubResolver{peers: peers}
 	server.init()
 
@@ -540,8 +528,8 @@ func TestDiscoverPeers_HubDialsAllRemoteHubs(t *testing.T) {
 	require.Eventually(t, func() bool {
 		server.connectedMu.Lock()
 		defer server.connectedMu.Unlock()
-		return len(server.connected) == len(peers)
-	}, 2*time.Second, 5*time.Millisecond, "expected all remote hubs to be marked dialing")
+		return len(server.connected) == 2
+	}, 2*time.Second, 5*time.Millisecond, "expected the two tie-break-assigned hubs to be marked dialing")
 
 	server.connectedMu.Lock()
 	got := make([]string, 0, len(server.connected))
@@ -554,8 +542,48 @@ func TestDiscoverPeers_HubDialsAllRemoteHubs(t *testing.T) {
 	wg.Wait()
 
 	assert.ElementsMatch(t,
-		[]string{"moqt://hub-1:4433", "moqt://hub-2:4433", "moqt://hub-3:4433"},
-		got, "hub should dial all resolved remote hubs, not just the first")
+		[]string{"moqt://hub-3:4433", "moqt://hub-4:4433"},
+		got, "hub should dial only self-excluded, tie-break-assigned remote hubs")
+}
+
+// TestRemoteHubPeers covers the registry-list filter directly: self-exclusion,
+// the mutual-dial tie-break, ID-less peers (cannot be tie-broken, dialed),
+// and the empty-node-ID pass-through.
+func TestRemoteHubPeers(t *testing.T) {
+	peers := []ResolvedPeer{
+		{ID: "hub-a", Address: "moqt://hub-a:4433"},
+		{ID: "hub-b", Address: "moqt://hub-b:4433"},
+		{ID: "hub-c", Address: "moqt://hub-c:4433"},
+		{ID: "", Address: "moqt://anon:4433"},
+	}
+
+	tests := map[string]struct {
+		nodeID string
+		want   []string
+	}{
+		"empty node ID disables filtering": {
+			nodeID: "",
+			want:   []string{"moqt://hub-a:4433", "moqt://hub-b:4433", "moqt://hub-c:4433", "moqt://anon:4433"},
+		},
+		"self excluded, lower IDs deferred to their side, ID-less dialed": {
+			nodeID: "hub-b",
+			want:   []string{"moqt://hub-c:4433", "moqt://anon:4433"},
+		},
+		"lowest node ID dials everything but self": {
+			nodeID: "hub-a",
+			want:   []string{"moqt://hub-b:4433", "moqt://hub-c:4433", "moqt://anon:4433"},
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			got := remoteHubPeers(peers, tt.nodeID)
+			addrs := make([]string, 0, len(got))
+			for _, p := range got {
+				addrs = append(addrs, p.Address)
+			}
+			assert.ElementsMatch(t, tt.want, addrs)
+		})
+	}
 }
 
 // TestServer_Address_Formats tests various address formats
